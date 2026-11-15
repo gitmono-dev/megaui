@@ -92,6 +92,8 @@ docker build -f apps/collab-server/Dockerfile -t megaui-collab:local .
 
 推送稳定标签 `v<major>.<minor>.<patch>` 会运行 `.github/workflows/docker.yml`。它为 `linux/amd64` 和 `linux/arm64` 构建 `apps/web/Dockerfile` 的 `runner` 目标，再把镜像发布到 `${DOCKER_USER}/megaui`（Docker Hub 上的 `genedna/megaui`）。只有该标签是最高稳定版本时才会移动 `latest`。
 
+**双仓协同发布：** mega2 与 MegaUI 使用同一稳定版本号。发布前两个仓库必须存在同名 tag，且最新 `main` CI 均为 `success`。任一仓库缺少同名 tag、CI 运行中或失败时，`release-gate` 会阻止镜像发布。
+
 ### 企业登录（可选）
 
 设置 `AUTH_MODE=enterprise` 后，密码登录被飞书私聊配对取代：用户向机器人发送一次性 `/login` 指令，再输入机器人返回的 8 位验证码。本地开发可使用 `apps/feishu-mock` 提供的回环模拟器，无需真实的飞书租户。详见[企业身份：配置合同](docs/implementation/enterprise-auth.md)与[飞书 Mock](docs/implementation/feishu-simulator.md)。

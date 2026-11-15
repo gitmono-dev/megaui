@@ -40,6 +40,8 @@ apps/web  与  apps/collab-server 是两个独立可发布应用，不通过源�
 
 本工作区使用 Libra 原生工作流（VCS-01，有 `.libra`、无 `.git`）：`libra status`、`libra add <相关路径>`、`libra commit -s -m "<type>(<scope>): <summary>"`、`libra push origin <branch>`。提交前只暂存相关路径，不得使用 `commit -a`（GC-12）；发现无关脏状态时保留并报告，不得清理、重置或混入提交。其它 checkout 先识别元数据，不按 GitHub 托管地址猜 VCS。
 
+**双仓同版本发布（ER-08 强制门禁）：** `gitmono-dev/megaui` 与 `gitmono-dev/mega2` 使用同一稳定版本号发布。任一仓库发布 `v<major>.<minor>.<patch>` 前，另一个仓库必须已经存在同名 tag，且两个仓库最新 `main` CI 均为 `success`；版本不一致、CI 缺失、运行中或失败时不得创建或推送发布 tag、GitHub Release 或 Docker 镜像。不得用旧 CI、局部测试或其它 workflow 冒充最新质量门。`.github/workflows/docker.yml` 的 `release-gate` 是机器门禁，必须先于任何构建或推送成功；发布保持串行，禁止绕过该门禁。
+
 **签名策略（ER-07）：** `-s` 只记录 `Signed-off-by`，与加密签名分别核验。先读取 `commit.gpgSign`，未显式配置时再检查 `vault.signing`；若 `vault.signing=true`，不得把它记作无签名。每次提交冻结 SHA，以 `libra log -1 --pretty=raw <SHA>` 核对 DCO 和 `gpgsig`；已启用签名却缺少 `gpgsig` 时不得推送，不能自行关闭签名绕过。签名头仅是结构证据。
 
 提交信息统一采用 `<type>(<scope>): <summary>`（VCS-01）；`type` 取 `feat` / `fix` / `docs` / `chore` / `refactor` / `test` / `build` / `ci` 之一。

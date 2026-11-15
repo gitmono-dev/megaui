@@ -92,6 +92,8 @@ docker build -f apps/collab-server/Dockerfile -t megaui-collab:local .
 
 Pushing a stable `v<major>.<minor>.<patch>` tag runs `.github/workflows/docker.yml`. It builds `apps/web/Dockerfile` target `runner` for `linux/amd64` and `linux/arm64`, then publishes `${DOCKER_USER}/megaui` (Docker Hub `genedna/megaui`) with the version tags. `latest` moves only when the tag is the highest stable release.
 
+**Coordinated releases:** mega2 and MegaUI use the same stable version number. Before publishing, both repositories must have the same tag and successful latest CI on `main`. The `release-gate` job blocks image publication if either repository is missing the matching tag or has failing or incomplete CI.
+
 ### Enterprise sign-in (optional)
 
 Set `AUTH_MODE=enterprise` to replace password sign-in with Feishu private-chat pairing: the user sends a one-time `/login` command to the bot and enters the 8-character code it returns. For local development, `apps/feishu-mock` provides a loopback simulator so no real Feishu tenant is needed. See [Enterprise identity: configuration contract](docs/implementation/enterprise-auth.md) and [Feishu mock](docs/implementation/feishu-simulator.md) (Chinese).
