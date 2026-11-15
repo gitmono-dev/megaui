@@ -38,16 +38,38 @@ function lookup(data: Record<string, unknown>, path: string): unknown {
   return node;
 }
 
-// Group 1 = raw (triple-brace) path, group 2 = escaped (double-brace) path.
-const PLACEHOLDER = /\{\{\{\s*([^{}]+?)\s*\}\}\}|\{\{\s*([^{}]+?)\s*\}\}/g;
+function readPlaceholder(template: string, start: number): { end: number; raw: boolean; path: string } | undefined {
+  const raw = template.startsWith("{{{", start);
+  const openLength = raw ? 3 : 2;
+  const close = raw ? "}}}" : "}}";
+  const end = template.indexOf(close, start + openLength);
+  if (end < 0) return undefined;
+  const path = template.slice(start + openLength, end).trim();
+  if (!path || path.includes("{") || path.includes("}")) return undefined;
+  return { end: end + close.length, raw, path };
+}
 
 export function renderTemplate(template: string, data: Record<string, unknown>): string {
-  return template.replace(PLACEHOLDER, (_match, rawPath: string | undefined, escapedPath: string | undefined) => {
-    const isRaw = rawPath !== undefined;
-    const path = (isRaw ? rawPath : escapedPath) as string;
-    const value = lookup(data, path);
-    if (value === undefined || value === null) throw new EmailTemplateRenderError(path);
+  let output = "";
+  let cursor = 0;
+  while (cursor < template.length) {
+    const start = template.indexOf("{{", cursor);
+    if (start < 0) {
+      output += template.slice(cursor);
+      break;
+    }
+    output += template.slice(cursor, start);
+    const placeholder = readPlaceholder(template, start);
+    if (!placeholder) {
+      output += "{{";
+      cursor = start + 2;
+      continue;
+    }
+    const value = lookup(data, placeholder.path);
+    if (value === undefined || value === null) throw new EmailTemplateRenderError(placeholder.path);
     const text = String(value);
-    return isRaw ? text : escapeHtml(text);
-  });
+    output += placeholder.raw ? text : escapeHtml(text);
+    cursor = placeholder.end;
+  }
+  return output;
 }

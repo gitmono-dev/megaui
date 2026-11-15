@@ -44,14 +44,14 @@ export const MEGA_NAV_ITEMS: readonly MegaNavItemConfig[] = [
 function normalizePath(path: string): string {
   const withoutQuery = path.split(/[?#]/u, 1)[0] ?? ""
   const withLeadingSlash = withoutQuery.startsWith("/") ? withoutQuery : `/${withoutQuery}`
-  const collapsed = withLeadingSlash.replace(/\/{2,}/gu, "/")
-  return collapsed.length > 1 ? collapsed.replace(/\/+$/u, "") : collapsed
+  const segments = withLeadingSlash.split("/").filter(Boolean)
+  return segments.length > 0 ? `/${segments.join("/")}` : "/"
 }
 
 /** Joins a locale-aware workspace base with a route without duplicating slashes. */
 export function workspaceHref(workspaceBase: string, path = ""): string {
   const base = normalizePath(workspaceBase)
-  const suffix = path.replace(/^\/+|\/+$/gu, "")
+  const suffix = path.split("/").filter(Boolean).join("/")
   return suffix ? `${base === "/" ? "" : base}/${suffix}` : base
 }
 

@@ -19,6 +19,13 @@ import {
   type Spread,
 } from 'lexical'
 
+
+function trimTrailingSlashes(value: string): string {
+  let end = value.length
+  while (end > 0 && value.charCodeAt(end - 1) === 47) end -= 1
+  return value.slice(0, end)
+}
+
 /** CE-40 unified wiki/entity reference kinds (BlockRef lands in CE-51). */
 export type RefNodeKind = 'doc' | 'issue' | 'cl' | 'user' | 'block'
 export type DocRefNotation = 'wikilink' | 'tag'
@@ -38,7 +45,7 @@ export type SerializedRefNode = Spread<{ ref: RefNodeValue }, SerializedLexicalN
 
 function resolvedHref(ref: RefNodeValue, workspaceBase: string): string | undefined {
   if (!ref.targetId) return undefined
-  const base = workspaceBase.replace(/\/+$/, '') || '/workspace'
+  const base = trimTrailingSlashes(workspaceBase) || '/workspace'
   switch (ref.kind) {
     case 'doc':
       return `${base}/docs/${encodeURIComponent(ref.targetId)}`

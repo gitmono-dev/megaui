@@ -67,7 +67,21 @@ export function resolveMega2BaseUrl(
       "MEGA2_PUBLIC_BASE_URL is required to reach the mega2 code backend",
     );
   }
-  return baseUrl.replace(/\/$/, "");
+  return trimTrailingSlashes(baseUrl);
+}
+
+function trimEdgeSlashes(value: string): string {
+  let start = 0;
+  let end = value.length;
+  while (start < end && value.charCodeAt(start) === 47) start += 1;
+  while (end > start && value.charCodeAt(end - 1) === 47) end -= 1;
+  return value.slice(start, end);
+}
+
+function trimTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47) end -= 1;
+  return value.slice(0, end);
 }
 
 /** Normalize mega relative paths (`project/foo`) to mega2 absolute paths (`/project/foo`). */
@@ -75,7 +89,7 @@ export function normalizeRepoPath(path?: string): string {
   if (!path || path === "/") {
     return "/";
   }
-  const trimmed = path.replace(/^\/+/, "").replace(/\/+$/, "");
+  const trimmed = trimEdgeSlashes(path);
   return trimmed ? `/${trimmed}` : "/";
 }
 

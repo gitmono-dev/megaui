@@ -53,6 +53,12 @@ function requireNonEmpty(value: string | undefined, name: string): string {
   return value;
 }
 
+function trimTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47) end -= 1;
+  return value.slice(0, end);
+}
+
 export class S3Storage {
   private readonly client: S3Client;
   private readonly bucket: string;
@@ -66,7 +72,7 @@ export class S3Storage {
     requireNonEmpty(cfg.accessKeyId, "accessKeyId");
     requireNonEmpty(cfg.accessKeySecret, "accessKeySecret");
     this.bucket = requireNonEmpty(cfg.bucket, "bucket");
-    this.publicUrl = cfg.publicUrl?.replace(/\/+$/, "") || undefined;
+    this.publicUrl = trimTrailingSlashes(cfg.publicUrl?.trim() ?? "") || undefined;
     this.defaultExpiration = cfg.defaultExpiration ?? 3600;
     this.getSignedUrl = options.getSignedUrl ?? awsGetSignedUrl;
 

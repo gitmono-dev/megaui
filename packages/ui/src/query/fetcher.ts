@@ -81,7 +81,7 @@ async function readPayload(response: Response): Promise<unknown> {
 }
 
 function megaUrl(path: MegaPath, query?: MegaQueryParams): string {
-  const segments = (typeof path === 'string' ? path.replace(/^\/+|\/+$/g, '').split('/') : path)
+  const segments = (typeof path === 'string' ? path.split('/') : path)
     .filter(Boolean)
     .map((segment) => encodeURIComponent(segment))
   const params = new URLSearchParams()

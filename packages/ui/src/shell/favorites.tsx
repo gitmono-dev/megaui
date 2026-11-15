@@ -66,9 +66,11 @@ export function deriveFavorite(
   workspaceBase: string,
   navLabels: Record<MegaNavId, string>,
 ): FavoriteEntry | undefined {
-  const base = workspaceBase.replace(/\/+$/, "")
-  if (pathname !== base && !pathname.startsWith(`${base}/`)) return undefined
-  const segments = pathname.slice(base.length).split("/").filter(Boolean).map((segment) => decodeURIComponent(segment))
+  let baseEnd = workspaceBase.length
+  while (baseEnd > 0 && workspaceBase.charCodeAt(baseEnd - 1) === 47) baseEnd -= 1
+  const normalizedBase = workspaceBase.slice(0, baseEnd)
+  if (pathname !== normalizedBase && !pathname.startsWith(`${normalizedBase}/`)) return undefined
+  const segments = pathname.slice(normalizedBase.length).split("/").filter(Boolean).map((segment) => decodeURIComponent(segment))
   const href = pathname
   const [first, second] = segments
 

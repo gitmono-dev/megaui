@@ -75,5 +75,5 @@ export function toMegaSettingsCssVariables(settings: MegaSettings): CSSPropertie
 }
 
 export function createMegaSettingsInitScript(): string {
-  return `(function(){try{var raw=localStorage.getItem(${JSON.stringify(MEGA_SETTINGS_STORAGE_KEY)});var s=${JSON.stringify(DEFAULT_MEGA_SETTINGS)};if(raw){var p=JSON.parse(raw);s.mode=p.mode==="dark"||p.mode==="system"?p.mode:"light";s.density=p.density==="compact"?"compact":"comfortable";s.accent=${JSON.stringify(MEGA_ACCENTS.map(({ id }) => id))}.indexOf(p.accent)>=0?p.accent:"default";}localStorage.setItem(${JSON.stringify(MEGA_THEME_MODE_STORAGE_KEY)},s.mode);document.documentElement.dataset.megaDensity=s.density;}catch(e){}})();`;
+  return '(function(){try{var raw=localStorage.getItem("mega-settings");var s={"mode":"light","density":"comfortable","accent":"default"};if(raw){var p=JSON.parse(raw);s.mode=p.mode==="dark"||p.mode==="system"?p.mode:"light";s.density=p.density==="compact"?"compact":"comfortable";s.accent=["default","claude","perplexity","cosmic-night","modern-minimal","ocean-breeze"].indexOf(p.accent)>=0?p.accent:"default";}localStorage.setItem("mega-theme-mode",s.mode);document.documentElement.dataset.megaDensity=s.density;}catch(e){}})();';
 }

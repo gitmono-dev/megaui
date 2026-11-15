@@ -17,6 +17,13 @@ import {
   type Spread,
 } from 'lexical'
 
+
+function trimTrailingSlashes(value: string): string {
+  let end = value.length
+  while (end > 0 && value.charCodeAt(end - 1) === 47) end -= 1
+  return value.slice(0, end)
+}
+
 /** CE-52 embed payload — page embed omits targetBlockId; block embed sets it. */
 export interface EmbedValue {
   targetDocId: string
@@ -27,7 +34,7 @@ export interface EmbedValue {
 export type SerializedEmbedNode = Spread<{ embed: EmbedValue }, SerializedLexicalNode>
 
 export function embedHref(value: EmbedValue, workspaceBase: string): string {
-  const base = workspaceBase.replace(/\/+$/, '') || '/workspace'
+  const base = trimTrailingSlashes(workspaceBase) || '/workspace'
   const docPath = `${base}/docs/${encodeURIComponent(value.targetDocId)}`
   if (value.targetBlockId) {
     return `${docPath}?block=${encodeURIComponent(value.targetBlockId)}`

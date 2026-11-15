@@ -18,6 +18,13 @@ import {
   type Spread,
 } from 'lexical'
 
+
+function trimTrailingSlashes(value: string): string {
+  let end = value.length
+  while (end > 0 && value.charCodeAt(end - 1) === 47) end -= 1
+  return value.slice(0, end)
+}
+
 /** CE-51 block reference payload (two-id shape — not RefNode). */
 export interface BlockRefValue {
   targetDocId: string
@@ -36,7 +43,7 @@ export type SerializedBlockRefNode = Spread<{ blockRef: BlockRefValue }, Seriali
 export type BlockRefLiveStatus = 'ok' | 'unresolved' | 'forbidden'
 
 export function blockRefHref(value: BlockRefValue, workspaceBase: string): string {
-  const base = workspaceBase.replace(/\/+$/, '') || '/workspace'
+  const base = trimTrailingSlashes(workspaceBase) || '/workspace'
   return `${base}/docs/${encodeURIComponent(value.targetDocId)}?block=${encodeURIComponent(value.targetBlockId)}`
 }
 

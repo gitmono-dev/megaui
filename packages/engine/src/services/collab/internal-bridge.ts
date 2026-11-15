@@ -53,8 +53,10 @@ export interface CollabInternalBridgeResult {
   status?: number;
 }
 
-function trimTrailingSlash(url: string): string {
-  return url.replace(/\/+$/, "");
+function trimTrailingSlashes(url: string): string {
+  let end = url.length;
+  while (end > 0 && url.charCodeAt(end - 1) === 47) end -= 1;
+  return url.slice(0, end);
 }
 
 function resolveEnv(config?: CollabInternalBridgeConfig): CollabBridgeEnv {
@@ -65,9 +67,9 @@ export function resolveCollabInternalUrl(
   config?: CollabInternalBridgeConfig,
 ): string | null {
   const explicit = config?.internalUrl?.trim();
-  if (explicit) return trimTrailingSlash(explicit);
+  if (explicit) return trimTrailingSlashes(explicit);
   const fromEnv = resolveEnv(config).MEGA_COLLAB_INTERNAL_URL?.trim();
-  return fromEnv ? trimTrailingSlash(fromEnv) : null;
+  return fromEnv ? trimTrailingSlashes(fromEnv) : null;
 }
 
 export function resolveCollabInternalToken(
@@ -87,10 +89,20 @@ export function isCollabBridgeConfigured(
   );
 }
 
+function isUnicodeSpace(value: string): boolean {
+  return value.length === 1 && value.trim() === "";
+}
+
 function readBearer(header: string | null | undefined): string | null {
   if (!header) return null;
-  const match = /^Bearer\s+(.+)$/i.exec(header.trim());
-  return match?.[1]?.trim() || null;
+  const trimmed = header.trim();
+  if (trimmed.slice(0, 6).toLowerCase() !== "bearer") return null;
+  const rest = trimmed.slice(6);
+  if (!isUnicodeSpace(rest[0] ?? "")) return null;
+  let index = 0;
+  while (index < rest.length && isUnicodeSpace(rest[index] ?? "")) index += 1;
+  const token = rest.slice(index).trim();
+  return token || null;
 }
 
 /**

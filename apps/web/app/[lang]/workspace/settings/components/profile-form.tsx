@@ -23,6 +23,15 @@ function ensureAuthSuccess(result: unknown, fallback: string): void {
   }
 }
 
+function safeAvatarSource(value: string): string {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:" ? url.href : "";
+  } catch {
+    return "";
+  }
+}
+
 type UploadApiErrorCode =
   | "UPLOAD_NO_FILE"
   | "UPLOAD_FILE_TOO_LARGE"
@@ -163,8 +172,8 @@ export function ProfileForm({ enterprise }: { readonly enterprise?: boolean } = 
           <p style={{ color: MEGA_TOKENS.muted, marginBottom: 0 }}>{text.directoryManagedDescription}</p>
         </div>
       ) : null}
-      {avatarUrl ? (
-        <img alt="" data-mega-settings="avatar-preview" src={avatarUrl} style={{ borderRadius: "50%", height: 64, objectFit: "cover", width: 64 }} />
+      {safeAvatarSource(avatarUrl) ? (
+        <img alt="" data-mega-settings="avatar-preview" src={safeAvatarSource(avatarUrl)} style={{ borderRadius: "50%", height: 64, objectFit: "cover", width: 64 }} />
       ) : null}
       <label>
         {text.avatarUploadCta}
