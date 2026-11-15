@@ -1,0 +1,1 @@
+CREATE INDEX "enterprise_pairings_scope_retention_idx" ON "enterprise_pairings" USING btree ("scope","deployment_role","retain_until","id");

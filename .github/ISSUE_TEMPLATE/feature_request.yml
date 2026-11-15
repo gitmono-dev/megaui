@@ -1,0 +1,37 @@
+name: Feature request / 功能建议
+description: Suggest an idea or an improvement / 提出想法或改进
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For larger changes, agreeing on the direction in an issue first saves everyone time.
+        较大的改动请先在 Issue 中对齐方向，再动手实现。
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem and motivation / 问题与动机
+      description: What are you trying to do, and what gets in the way today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution / 建议方案
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered / 已考虑的替代方案
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope and non-goals / 范围与非目标
+      description: Which packages or apps would change? What is explicitly out of scope?
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: Contribution / 贡献意向
+      options:
+        - label: I am willing to work on this / 我愿意参与实现

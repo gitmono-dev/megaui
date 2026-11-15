@@ -1,0 +1,308 @@
+/*
+ * Application visual language, measured from the document page.
+ * Values live in mega.css. Explicit surface/role selectors keep these rules
+ * away from authored content, editor tools, syntax colors and diagrams.
+ * !important is limited to replacing legacy inline presentation values.
+ */
+:where([data-mega-shell="workspace-content"]) > :is(main, [data-mega-docs="page"]),
+[data-mega-surface] {
+  background: var(--mega-subtle) !important;
+  color: var(--mega-text);
+  min-height: 100%;
+  min-width: 0;
+}
+
+/* Page titles share the document title's hierarchy; content headings do not. */
+:where([data-mega-shell="workspace-content"], [data-mega-surface]) h1:not([data-mega-content] h1, [data-mega-code="readme"] h1) {
+  color: var(--mega-text);
+  font-size: var(--mega-page-title-size) !important;
+  font-weight: 800 !important;
+  letter-spacing: -0.02em !important;
+  line-height: 1.2 !important;
+  overflow-wrap: anywhere;
+}
+
+:where([data-mega-settings="page"], [data-mega-session="page"], [data-mega-chat], [data-mega-agent="sources"]) h2,
+[data-mega-home="card"] h2 {
+  font-size: var(--mega-section-title-size) !important;
+  font-weight: 700 !important;
+  line-height: 1.5;
+  margin-block: 20px 8px;
+}
+
+:where([data-mega-shell="workspace-content"]) :is(input, select, textarea):not(
+  [type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"],
+  [data-mega-content] *, [data-mega-docs="page-write"] *, [data-mega-docs="detail"] *
+),
+[data-mega-surface] :is([data-slot="input"], [data-slot="textarea"]) {
+  background: var(--mega-bg);
+  border: 1px solid var(--mega-border);
+  border-radius: var(--mega-control-radius) !important;
+  color: var(--mega-text);
+  font-family: inherit;
+  font-size: var(--mega-field-font-size) !important;
+  line-height: 1.5;
+  min-height: var(--mega-density-row-height);
+  max-width: 100%;
+  padding: 6px 10px;
+  box-shadow: none;
+}
+
+:where([data-mega-shell="workspace-content"], [data-mega-surface]) :is(input, select, textarea)::placeholder {
+  color: var(--mega-muted);
+}
+
+:where([data-mega-shell="workspace-content"]) button:not(
+  [data-mega-content] button, [data-mega-docs="page-write"] button, [data-mega-docs="detail"] button,
+  [data-mega-control], [data-mega-settings="accent-swatch"], [role="checkbox"], [role="switch"]
+),
+[data-mega-home="hero"] > a,
+[data-mega-surface] [data-slot="button"] {
+  align-items: center;
+  background: var(--mega-bg);
+  border: 1px solid var(--mega-border);
+  border-radius: var(--mega-control-radius) !important;
+  color: var(--mega-text);
+  cursor: pointer;
+  display: inline-flex;
+  font-family: inherit;
+  font-size: var(--mega-control-font-size) !important;
+  font-weight: 600;
+  justify-content: center;
+  line-height: 1.5;
+  min-height: var(--mega-density-row-height);
+  padding: 5px 12px;
+  box-shadow: none;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+:where([data-mega-shell="workspace-content"], [data-mega-surface]) :is(button, input, select, textarea, a):focus-visible {
+  outline: 2px solid var(--mega-selected-border);
+  outline-offset: 2px;
+}
+
+:where([data-mega-shell="workspace-content"], [data-mega-surface]) button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+:where([data-mega-shell="workspace-content"]) button:not(
+  [data-mega-content] button, [data-mega-docs="page-write"] button, [data-mega-docs="detail"] button,
+  [data-mega-settings="accent-swatch"]
+):hover:not(:disabled),
+[data-mega-surface] [data-slot="button"]:hover:not(:disabled) {
+  background: var(--mega-accent-tint-5);
+  border-color: var(--mega-accent-tint-44);
+}
+
+/* Explicit actions, not every submit/last button: cancel and destructive actions
+ * must retain their meaning, including when rendered inside a nested form. */
+:is(
+  [data-mega-issues="new"], [data-mega-issues="new-submit"],
+  [data-mega-inbox="quick-reply-send"],
+  [data-mega-agent="new-thread"], [data-mega-agent="composer-send"],
+  [data-mega-tags="open-draft"], [data-mega-tags="draft-submit"], [data-mega-tags="publish"],
+  [data-mega-cls="new"], [data-mega-cls="new-submit"], [data-mega-cls="merge-action"],
+  [data-mega-settings="save"], [data-mega-settings="notifications-save"],
+  [data-mega-settings="ssh-add"], [data-mega-settings="tokens-generate"],
+  [data-mega-chat="create-submit"], [data-mega-chat="composer-send"],
+  [data-mega-chat="thread-composer-send"], [data-mega-chat="invite-submit"],
+  [data-mega-surface] [data-slot="button"][data-variant="default"]
+) {
+  background: var(--mega-accent) !important;
+  border-color: var(--mega-accent) !important;
+  color: var(--mega-accent-foreground) !important;
+}
+
+:is(
+  [data-mega-issues="new"], [data-mega-issues="new-submit"], [data-mega-inbox="quick-reply-send"],
+  [data-mega-agent="new-thread"], [data-mega-agent="composer-send"],
+  [data-mega-tags="open-draft"], [data-mega-tags="draft-submit"], [data-mega-tags="publish"],
+  [data-mega-cls="new"], [data-mega-cls="new-submit"], [data-mega-cls="merge-action"],
+  [data-mega-settings="save"], [data-mega-settings="notifications-save"],
+  [data-mega-settings="ssh-add"], [data-mega-settings="tokens-generate"],
+  [data-mega-chat="create-submit"], [data-mega-chat="composer-send"],
+  [data-mega-chat="thread-composer-send"], [data-mega-chat="invite-submit"],
+  [data-mega-surface] [data-slot="button"][data-variant="default"]
+):hover:not(:disabled) {
+  background: color-mix(in srgb, var(--mega-accent) 90%, var(--mega-text)) !important;
+}
+
+:is([data-mega-issues="tab-active"], [data-mega-settings="page"] button[aria-pressed="true"]):not([data-mega-settings="accent-swatch"]) {
+  background: var(--mega-active-bg) !important;
+  border-color: var(--mega-accent-tint-44);
+  color: var(--mega-active-fg) !important;
+}
+
+:is([data-mega-settings="token-delete"], [data-mega-settings="ssh-delete"], [data-mega-settings="token-delete-confirm"], [data-mega-settings="ssh-delete-confirm"], [data-mega-chat="member-remove"], [data-mega-chat="member-leave"]) {
+  color: var(--mega-danger) !important;
+}
+
+[data-mega-issues="list"] { grid-template-columns: minmax(0, 1fr); }
+[data-mega-issues="row"] { min-width: 0; padding: 8px 12px; }
+[data-mega-issues="row"] [data-slot="issue-card"] { min-width: 0; }
+[data-mega-cls="tabs"] a {
+  border-radius: var(--mega-control-radius);
+  font-size: var(--mega-control-font-size);
+  padding: 5px 12px;
+}
+[data-mega-cls="tab-active"] { background: var(--mega-active-bg); color: var(--mega-active-fg) !important; }
+
+/* White panels use the comment card's quiet border, radius and padding. */
+:is(
+  [data-mega-home="card"], [data-mega-settings="card"],
+  [data-mega-agent="conversation"], [data-mega-agent="sources"],
+  [data-mega-tags="card"], [data-mega-code="quick-card"],
+  [data-mega-session="usage"], [data-mega-session="decisions"],
+  [data-mega-session="evidence"], [data-mega-session="citations"]
+),
+[data-mega-inbox="page"] > section,
+[data-mega-surface] [data-slot="card"] {
+  background: var(--mega-bg);
+  border: 1px solid var(--mega-border) !important;
+  border-radius: var(--mega-panel-radius) !important;
+  padding: var(--mega-panel-padding);
+  box-shadow: none;
+  min-width: 0;
+}
+
+:is([data-mega-settings="card"], [data-mega-session="page"] > section) > :first-child {
+  margin-top: 0;
+}
+
+[data-mega-session="page"] > section + section {
+  margin-top: 16px;
+}
+
+:is([data-mega-issues="list"], [data-mega-cls="table"], [data-mega-tags="list"], [data-mega-code="root-table"]) {
+  background: var(--mega-bg);
+  border: 1px solid var(--mega-border);
+  border-radius: var(--mega-panel-radius);
+}
+
+:is([data-mega-issues="row"], [data-mega-cls="row"], [data-mega-code="root-row"], [data-mega-code="dir-row"], [data-mega-inbox="row"], [data-mega-agent="rail-item"]):hover {
+  background: var(--mega-accent-tint-5);
+}
+
+:is([data-mega-code="header"], [data-mega-cls="chrome"], [data-mega-issues="chrome"]) {
+  background: var(--mega-subtle);
+  border-bottom: 1px solid var(--mega-border);
+  padding: var(--mega-page-gutter) !important;
+}
+
+:is([data-mega-issues="page"] > div:first-child, [data-mega-issues="detail"], [data-mega-tags="page"], [data-mega-cls="page"] > div:first-child, [data-mega-settings="page"], [data-mega-session="page"], [data-mega-chat="create"], [data-mega-docs="graph"]) {
+  padding: var(--mega-page-gutter) !important;
+}
+
+[data-mega-home="page"] > div:first-child {
+  background: var(--mega-subtle) !important;
+  padding: var(--mega-page-gutter) !important;
+}
+
+[data-mega-home="hero-mark"] { background: var(--mega-accent) !important; }
+[data-mega-home="hero"] { flex-wrap: wrap; }
+[data-mega-home="hero"] > a { padding: 5px 12px !important; }
+[data-mega-home="hero"] > div { min-width: min(100%, 240px); }
+
+[data-mega-inbox="page"] {
+  gap: 20px !important;
+  padding: var(--mega-page-gutter) !important;
+}
+
+:is([data-mega-agent="thread"], [data-mega-chat="channel"], [data-mega-chat="dm"]) {
+  gap: 16px !important;
+  padding: 24px !important;
+}
+
+:is([data-mega-agent="rail"], [data-mega-code="tree"]) { background: var(--mega-subtle); }
+[data-mega-code="content"] { background: var(--mega-bg); }
+[data-mega-settings="page"] > div { min-width: 0; }
+[data-mega-settings="card"] :is(input, select, textarea) { margin-top: 6px; }
+[data-mega-settings="card"] :is(input[type="checkbox"], input[type="radio"]) { margin: 0; }
+[data-mega-settings="card"] label { font-size: var(--mega-density-font-size); }
+
+/* Reading-oriented lists use a bounded measure; code and multi-pane editors
+ * retain their full working width. */
+:is([data-mega-issues="page"] > div:first-child, [data-mega-cls="page"] > div:first-child, [data-mega-tags="page"], [data-mega-session="page"], [data-mega-home="page"] > div) {
+  max-width: 1200px;
+  width: 100%;
+  margin-inline: auto;
+}
+[data-mega-settings="page"] { max-width: 1080px; width: 100%; margin-inline: auto; }
+[data-mega-issues="page"] > div:first-child > div:first-child,
+[data-mega-cls="page"] > div:first-child > div:first-child,
+[data-mega-tags="page"] > header { flex-wrap: wrap; }
+[data-mega-settings="nav"] button { justify-content: flex-start; }
+
+/* Portalled menus share the document block menu's compact surface. */
+:is([data-slot="dropdown-menu-content"], [data-slot="dropdown-menu-sub-content"], [data-slot="select-content"], [data-slot="popover-content"]) {
+  background: var(--mega-bg);
+  color: var(--mega-text);
+  border: 1px solid var(--mega-border);
+  border-radius: var(--mega-radius-md);
+  font-size: var(--mega-density-font-size);
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--mega-text) 12%, transparent);
+}
+:is([data-slot="dropdown-menu-item"], [data-slot="select-item"]) { min-height: var(--mega-density-row-height); font-size: var(--mega-density-font-size); }
+:is([data-slot="dropdown-menu-item"], [data-slot="select-item"])[data-highlighted] { background: var(--mega-accent-tint-5); color: var(--mega-text); }
+
+/* List/dialog/toolbars wrap instead of compressing their labels off-screen. */
+:is([data-mega-issues="tabs"], [data-mega-agent="composer"], [data-mega-settings="card"] > div, [data-mega-chat="header"]) { flex-wrap: wrap; }
+:is([data-mega-issues="new-dialog"], [data-mega-cls="new-dialog"]) form {
+  background: var(--mega-bg);
+  border: 1px solid var(--mega-border);
+  border-radius: var(--mega-panel-radius) !important;
+  box-shadow: var(--mega-overlay-shadow);
+  max-width: calc(100vw - 32px);
+}
+
+/* Public/auth routes use the same surface language, independent of shell state. */
+[data-mega-surface] { --primary: var(--mega-accent); --ring: var(--mega-selected-border); }
+[data-mega-surface] [data-slot="card-title"] {
+  font-size: var(--mega-page-title-size);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+[data-mega-surface] [data-slot="card-description"] { color: var(--mega-muted); font-size: var(--mega-field-font-size); }
+[data-mega-surface] :is([data-slot="card-header"], [data-slot="card-content"], [data-slot="card-footer"]) { padding-inline: 0; }
+[data-mega-surface] [data-slot="button"][data-variant="link"] { background: transparent; border-color: transparent; color: var(--mega-accent); }
+
+@media (max-width: 1024px) {
+  [data-mega-shell="workspace"], [data-mega-surface] { --mega-page-gutter: 24px; }
+  [data-mega-agent="thread"] { flex-wrap: wrap; height: auto !important; }
+  [data-mega-agent="rail"] { width: 100% !important; flex-basis: 100%; }
+  [data-mega-agent="sources"] { width: 100% !important; flex-basis: 100%; }
+  [data-mega-cls="detail"] > div:has(> [data-mega-cls="sidebar"]) { grid-template-columns: minmax(0, 1fr) !important; }
+}
+
+@media (max-width: 840px) {
+  [data-mega-settings="page"], [data-mega-inbox="page"] { flex-direction: column !important; }
+  [data-mega-agent="composer-input"], [data-mega-chat="composer-input"], [data-mega-chat="thread-composer-input"] { flex-basis: 100% !important; width: 100%; min-height: 80px; }
+  [data-mega-chat="composer"], [data-mega-chat="thread-composer"] { flex-wrap: wrap; }
+  [data-mega-settings="nav"] { flex-direction: row !important; flex-wrap: wrap; min-width: 0 !important; }
+  [data-mega-inbox="page"] > section { min-width: 0 !important; width: 100% !important; }
+  [data-mega-code="page"]:has([data-mega-code="tree"]) { grid-template-columns: minmax(0, 1fr) !important; }
+  [data-mega-code="tree"] { border-bottom: 1px solid var(--mega-border); border-right: 0 !important; max-height: 180px; }
+}
+
+@media (max-width: 640px) {
+  [data-mega-shell="workspace"], [data-mega-surface] { --mega-page-gutter: 16px; }
+  [data-mega-shell="workspace"] { flex-direction: column; }
+  /* Keep all rail links reachable in its own scroll area on narrow screens. */
+  [data-mega-shell="workspace-rail"] { width: 100% !important; min-width: 0 !important; max-width: none !important; height: 200px !important; border-right: 0 !important; border-bottom: 1px solid var(--mega-border); }
+  [data-mega-shell="rail-main-nav"] { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  [data-mega-shell="workspace-content"] { min-height: 0; }
+  [data-mega-shell="rail-row-wrap"] { min-width: 0; }
+  [data-mega-agent="thread"] > section { flex-basis: 100%; }
+  :is([data-mega-agent="thread"], [data-mega-chat="channel"], [data-mega-chat="dm"]) { padding: 16px !important; }
+  [data-mega-home="card-grid"] { grid-template-columns: minmax(0, 1fr) !important; }
+  [data-mega-home="kpi-strip"] { flex-wrap: wrap; }
+  [data-mega-docs="page"] { flex-direction: column; }
+  [data-mega-docs="sidebar"] { width: 100% !important; min-width: 0 !important; max-height: 160px; overflow: auto; }
+  [data-mega-docs="article"] { padding-inline: 16px !important; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :where([data-mega-shell="workspace-content"], [data-mega-surface]) button { transition: none; }
+}

@@ -1,0 +1,28 @@
+{
+  "name": "@megaui/database",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT OR Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./test-support": "./src/test-support/isolated-pg.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit",
+    "lint": "eslint .",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "node --import tsx ./src/enterprise-scope-cli.ts && drizzle-kit migrate",
+    "db:push": "node ./scripts/db-push-disabled.mjs"
+  },
+  "dependencies": {
+    "@megaui/core": "workspace:*",
+    "drizzle-orm": "^0.45.2",
+    "pg": "^8.23.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.23.1",
+    "drizzle-kit": "^0.31.10"
+  }
+}

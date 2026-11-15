@@ -1,0 +1,455 @@
+/*
+ * megaui:libs/ui/styles/mega.css@0ff3a9d
+ *
+ * Mega workspace tokens.
+ *
+ * CSS is the canonical source of truth. TypeScript consumers must import
+ * the `var(--mega-*)` references from `../tokens/mega-tokens` instead of
+ * copying values.
+ */
+:root {
+  /* Workspace surfaces — Tailwind gray scale from the approved design. */
+  --mega-bg: #ffffff;
+  --mega-subtle: #f9fafb;
+  --mega-border: #e5e7eb;
+  --mega-text: #111827;
+  --mega-muted: #6b7280;
+  /* Primer colors are intentionally limited to code and diff surfaces. */
+  --mega-code-bg: #f6f8fa;
+  --mega-code-text: #1f2328;
+
+  /* Accent is customizable by consumers; active states derive from it. */
+  --mega-accent: #2563eb;
+  --mega-accent-foreground: #ffffff;
+  --mega-accent-tint-5: color-mix(in srgb, var(--mega-accent) 5%, transparent);
+  --mega-accent-tint-8: color-mix(in srgb, var(--mega-accent) 8%, transparent);
+  --mega-accent-tint-10: color-mix(in srgb, var(--mega-accent) 10%, transparent);
+  --mega-accent-tint-14: color-mix(in srgb, var(--mega-accent) 14%, transparent);
+  --mega-accent-tint-18: color-mix(in srgb, var(--mega-accent) 18%, transparent);
+  --mega-accent-tint-22: color-mix(in srgb, var(--mega-accent) 22%, transparent);
+  --mega-accent-tint-44: color-mix(in srgb, var(--mega-accent) 44%, transparent);
+  --mega-accent-tint-55: color-mix(in srgb, var(--mega-accent) 55%, transparent);
+  --mega-active-bg: var(--mega-accent-tint-8);
+  --mega-active-fg: var(--mega-accent);
+  --mega-selected-border: var(--mega-accent);
+
+  /* Semantic status colors. */
+  --mega-success: #16a34a;
+  --mega-danger: #dc2626;
+  --mega-warning: #eab308;
+  --mega-merged: #8b5cf6;
+
+  /* Unified diff colors. */
+  --mega-diff-add-bg: #e6ffec;
+  --mega-diff-add-fg: #116329;
+  --mega-diff-del-bg: #ffebe9;
+  --mega-diff-del-fg: #82071e;
+  --mega-diff-hunk-bg: #ddf4ff;
+  --mega-diff-hunk-fg: #6e7781;
+
+  /* Console remains a terminal surface in either document theme. */
+  --mega-console-bg: #0f172a;
+  --mega-console-text: #e5e7eb;
+  --mega-console-muted: #94a3b8;
+  --mega-console-success: #86efac;
+  --mega-console-warning: #fbbf24;
+  --mega-console-danger: #fca5a5;
+  --mega-console-line-number: #475569;
+
+  /* Timeline layer colors: Snapshot, Event, and Libra. */
+  --mega-layer-snapshot: #2563eb;
+  --mega-layer-event: #ea580c;
+  --mega-layer-libra: #7c3aed;
+
+  /* Object-kind palette (Intent/Plan/Task/Run + Snapshot/Event kinds). */
+  --mega-kind-intent: #7c3aed;
+  --mega-kind-plan: #2563eb;
+  --mega-kind-task: #0891b2;
+  --mega-kind-run: #ea580c;
+  --mega-kind-patch-set: #16a34a;
+  --mega-kind-provenance: #64748b;
+  --mega-kind-context-snapshot: #0d9488;
+  --mega-kind-intent-event: #7c3aed;
+  --mega-kind-task-event: #0891b2;
+  --mega-kind-run-event: #ea580c;
+  --mega-kind-plan-step-event: #2563eb;
+  --mega-kind-run-usage: #a16207;
+  --mega-kind-tool-invocation: #6366f1;
+  --mega-kind-evidence: #eab308;
+  --mega-kind-decision: #db2777;
+  --mega-kind-context-frame: #0d9488;
+
+  /* Density defaults; consumers may override these on the workspace root. */
+  --mega-density-row-height: 28px;
+  --mega-density-row-padding-x: 10px;
+  --mega-density-font-size: 13px;
+  --mega-density-compact-row-height: 24px;
+  --mega-density-compact-row-padding-x: 8px;
+  --mega-density-compact-font-size: 12.5px;
+  --mega-density-code-font-size: 12.5px;
+  --mega-density-code-line-height: 1.55;
+  --mega-font-mono: ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
+
+  /* Reusable atomic-component spacing and shape scale. */
+  --mega-space-1: 1px;
+  --mega-space-3: 3px;
+  --mega-space-4: 4px;
+  --mega-space-5: 5px;
+  --mega-space-6: 6px;
+  --mega-space-8: 8px;
+  --mega-radius-sm: 3px;
+  --mega-radius-md: 4px;
+  --mega-radius-pill: 10px;
+
+}
+
+:root, [data-mega-settings="provider"] {
+  /* Recompute derived values where workspace density overrides are applied. */
+  /* Document-page visual baseline, shared by every application surface. */
+  --mega-page-title-size: calc(var(--mega-density-font-size) + 17px);
+  --mega-section-title-size: calc(var(--mega-density-font-size) + 1px);
+  --mega-control-font-size: calc(var(--mega-density-font-size) - 1px);
+  --mega-field-font-size: calc(var(--mega-density-font-size) - 0.5px);
+  --mega-control-radius: calc(var(--mega-radius-md) * 1.75);
+  --mega-panel-radius: calc(var(--mega-radius-md) * 2.5);
+  --mega-page-gutter: calc(var(--mega-space-8) * 4);
+  --mega-panel-padding: calc(var(--mega-space-8) * 2) calc(var(--mega-space-8) * 2.5);
+  --mega-overlay-shadow: 0 12px 32px color-mix(in srgb, var(--mega-text) 16%, transparent);
+}
+
+[data-mega-control="search-field"]:focus-within,
+[data-mega-control="filter-query-bar"]:focus-within {
+  outline: 2px solid var(--mega-selected-border);
+  outline-offset: 1px;
+}
+
+[data-mega-control="side-nav-item"] {
+  background: transparent;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+[data-mega-control="side-nav-item"][data-variant="default"][data-active="true"] {
+  background: var(--mega-active-bg);
+}
+
+[data-mega-control="side-nav-item"][data-active="false"]:not([aria-disabled="true"]):hover {
+  background: var(--mega-accent-tint-5);
+}
+
+[data-mega-control="side-nav-item"]:focus-visible,
+[data-mega-shell="rail-search"]:focus-visible,
+[data-mega-shell="rail-profile-link"]:focus-visible,
+[data-mega-shell="rail-retry"]:focus-visible {
+  outline: 2px solid var(--mega-selected-border);
+  outline-offset: 1px;
+}
+
+[data-mega-control="side-nav-item"][data-mention="true"] {
+  font-weight: 600;
+}
+
+[data-mega-control="side-nav-item"][data-active="true"] {
+  font-weight: 700;
+}
+
+[data-mega-shell="rail-search"] {
+  background: var(--mega-subtle);
+  border: 1px solid var(--mega-border);
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+[data-mega-shell="rail-search"]:hover {
+  background: var(--mega-accent-tint-5);
+  border-color: var(--mega-accent-tint-44);
+}
+
+[data-mega-shell="rail-profile-link"] {
+  border-radius: var(--mega-radius-md);
+  transition: background-color 120ms ease;
+}
+
+[data-mega-shell="rail-profile-link"]:hover {
+  background: var(--mega-accent-tint-5);
+}
+
+[data-mega-shell="rail-profile-link"][aria-current="page"] {
+  /* DEBT-11: upstream used undefined --mega-selected-bg; use defined active token. */
+  background: var(--mega-active-bg);
+  color: var(--mega-active-fg);
+}
+
+.mega-rail-section-action {
+  align-items: center;
+  border-radius: var(--mega-radius-sm);
+  color: var(--mega-muted);
+  display: inline-flex;
+  justify-content: center;
+  min-height: 18px;
+  min-width: 18px;
+}
+
+.mega-rail-section-action:hover {
+  background: var(--mega-accent-tint-5);
+  color: var(--mega-active-fg);
+}
+
+.mega-rail-section-action:focus-visible {
+  outline: 2px solid var(--mega-selected-border);
+  outline-offset: 1px;
+}
+
+[data-mega-shell="rail-retry"] {
+  background: var(--mega-accent);
+  border: none;
+  border-radius: var(--mega-radius-md);
+  color: var(--mega-accent-foreground);
+  cursor: pointer;
+  font-size: calc(var(--mega-density-font-size) - 1px);
+  font-weight: 600;
+  margin-top: var(--mega-space-6);
+  min-height: 24px;
+  padding: 0 var(--mega-space-8);
+}
+
+[data-mega-shell="rail-skeleton-row"] {
+  align-items: center;
+  display: flex;
+  gap: var(--mega-space-8);
+  height: var(--mega-density-row-height);
+  margin: 0 var(--mega-space-6);
+  padding: 0 var(--mega-density-row-padding-x);
+}
+
+[data-mega-shell="rail-skeleton-icon"],
+[data-mega-shell="rail-skeleton-label"],
+[data-mega-shell="rail-user-skeleton"] {
+  animation: mega-rail-pulse 1.4s ease-in-out infinite;
+  background: var(--mega-border);
+  display: inline-block;
+}
+
+[data-mega-shell="rail-skeleton-icon"],
+[data-mega-shell="rail-user-skeleton"] {
+  border-radius: var(--mega-radius-md);
+  height: 16px;
+  width: 16px;
+}
+
+[data-mega-shell="rail-skeleton-label"] {
+  border-radius: var(--mega-radius-sm);
+  height: 8px;
+  width: 62%;
+}
+
+[data-mega-shell="rail-user-skeleton"] {
+  height: 20px;
+  width: 20px;
+}
+
+@keyframes mega-rail-pulse {
+  0%, 100% { opacity: .45; }
+  50% { opacity: .9; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-mega-control="side-nav-item"],
+  [data-mega-shell="rail-search"],
+  [data-mega-shell="rail-skeleton-icon"],
+  [data-mega-shell="rail-skeleton-label"],
+  [data-mega-shell="rail-user-skeleton"] {
+    animation: none;
+    transition: none;
+  }
+}
+
+[data-mega-composite="message-row"] {
+  transition: background-color 120ms ease;
+}
+
+[data-mega-composite="message-row"]:hover,
+[data-mega-composite="message-row"]:focus-within {
+  background: var(--mega-subtle);
+}
+
+/* Command palette: the dialog portals outside the workspace container, so
+   every surface below reads only --mega-* tokens. */
+[data-mega-palette="root"] {
+  background: var(--mega-bg);
+  border: 1px solid var(--mega-border);
+  color: var(--mega-text);
+  font-size: var(--mega-density-font-size);
+}
+
+[data-mega-palette="root"] [cmdk-input-wrapper] {
+  border-bottom: 1px solid var(--mega-border);
+}
+
+[data-mega-palette="root"] [cmdk-input] {
+  background: transparent;
+  color: var(--mega-text);
+}
+
+[data-mega-palette="root"] [cmdk-input]::placeholder {
+  color: var(--mega-muted);
+}
+
+[data-mega-palette="root"] [cmdk-group-heading] {
+  color: var(--mega-muted);
+  font-size: calc(var(--mega-density-font-size) - 2.5px);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: var(--mega-space-6) var(--mega-space-8) var(--mega-space-3);
+  text-transform: uppercase;
+}
+
+[data-mega-palette="root"] [cmdk-item] {
+  align-items: center;
+  border-radius: var(--mega-radius-md);
+  color: var(--mega-text);
+  cursor: pointer;
+  display: flex;
+  gap: var(--mega-space-6);
+  min-height: var(--mega-density-row-height);
+  padding: 0 var(--mega-density-row-padding-x);
+}
+
+[data-mega-palette="root"] [cmdk-item][data-selected="true"] {
+  background: var(--mega-active-bg);
+  color: var(--mega-active-fg);
+}
+
+[data-mega-palette="item-icon"] {
+  align-items: center;
+  color: var(--mega-muted);
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+[data-mega-palette="root"] [cmdk-item][data-selected="true"] [data-mega-palette="item-icon"] {
+  color: var(--mega-active-fg);
+}
+
+[data-mega-palette="item-label"] {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+[data-mega-palette="item-ref"],
+[data-mega-palette="item-path"] {
+  font-family: var(--mega-font-mono);
+  font-size: calc(var(--mega-density-font-size) - 1px);
+}
+
+[data-mega-palette="item-ref"] {
+  color: var(--mega-accent);
+  font-weight: 600;
+}
+
+[data-mega-palette="item-badge"] {
+  border: 1px solid var(--mega-border);
+  border-radius: 999px;
+  color: var(--mega-muted);
+  font-size: calc(var(--mega-density-font-size) - 2px);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  margin-right: 0.35rem;
+  padding: 0 0.35rem;
+  text-transform: uppercase;
+}
+
+[data-mega-palette="item-title"] {
+  margin-right: 0.35rem;
+}
+
+[data-mega-palette="item-snippet"] {
+  color: var(--mega-muted);
+  display: block;
+  font-size: calc(var(--mega-density-font-size) - 1px);
+  margin-top: 0.15rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+[data-mega-palette="snippet-mark"] {
+  background: var(--mega-accent-tint-10);
+  color: inherit;
+  font-weight: 600;
+}
+
+[data-mega-palette="status"],
+[data-mega-palette="empty"] {
+  color: var(--mega-muted);
+  font-size: calc(var(--mega-density-font-size) - 1px);
+  padding: var(--mega-space-8);
+  text-align: center;
+}
+
+/* Virtualized file tree: hover, accent-derived active, visible focus. */
+[data-mega-tree="row"][data-active="true"] {
+  background: var(--mega-active-bg);
+}
+
+[data-mega-tree="row"][data-active="false"]:hover {
+  background: var(--mega-accent-tint-5);
+}
+
+/* Focus lives on the tree container; the active-descendant row shows the ring. */
+[data-mega-tree="scroll"]:focus [data-mega-tree="row"][data-focused="true"] {
+  outline: 2px solid var(--mega-selected-border);
+  outline-offset: -2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-mega-tree="chevron"] {
+    transition: none;
+  }
+}
+
+/* Code root view: designed row hover and focus affordances. */
+[data-mega-code="root-row"] {
+  transition: background-color 120ms ease;
+}
+
+[data-mega-code="root-row"]:hover,
+[data-mega-code="quick-card"][href]:hover {
+  background: var(--mega-subtle);
+}
+
+[data-mega-code="root-row"]:focus-visible,
+[data-mega-code="quick-card"]:focus-visible,
+[data-mega-code="search-chip"]:focus-visible,
+[data-mega-code="sort-toggle"]:focus-visible,
+[data-mega-code="star"]:focus-visible,
+[data-mega-code="branch-chip"]:focus-visible,
+[data-mega-code="new-cl"]:focus-visible {
+  outline: 2px solid var(--mega-selected-border);
+  outline-offset: 1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-mega-code="root-row"] {
+    transition: none;
+  }
+}
+
+/* Applications toggle `.dark` on the document root. */
+.dark {
+  --mega-bg: #0d1117;
+  --mega-subtle: #11161c;
+  --mega-border: #1f2937;
+  --mega-text: #e5e7eb;
+  --mega-muted: #9ca3af;
+  --mega-code-bg: #0b0f14;
+  --mega-code-text: #e6edf3;
+
+  --mega-diff-add-bg: #0f2e1e;
+  --mega-diff-add-fg: #aff5b4;
+  --mega-diff-del-bg: #3d1a1a;
+  --mega-diff-del-fg: #ffb3b0;
+  --mega-diff-hunk-bg: #1e2936;
+  --mega-diff-hunk-fg: #8b949e;
+}

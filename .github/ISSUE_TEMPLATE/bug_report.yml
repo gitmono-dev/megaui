@@ -1,0 +1,64 @@
+name: Bug report / 缺陷报告
+description: Something does not work as expected / 行为与预期不符
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please do **not** include real credentials, tokens, or personal data.
+        For security problems use the private report link instead of this form.
+        感谢反馈。请不要包含真实凭据、令牌或个人数据；安全问题请使用私密报告入口。
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened? / 发生了什么？
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce / 复现步骤
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component / 组件
+      options:
+        - apps/web (web app / BFF)
+        - apps/collab-server
+        - apps/feishu-mock
+        - packages/*
+        - docs
+        - CI / tooling
+        - Not sure / 不确定
+    validations:
+      required: true
+  - type: dropdown
+    id: auth-mode
+    attributes:
+      label: Auth mode / 认证模式
+      options:
+        - legacy (email and password)
+        - enterprise (Feishu pairing)
+        - Not applicable / 不适用
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit / 版本或提交
+      placeholder: e.g. main @ 1a2b3c4
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment / 环境
+      description: Node.js version, OS, browser, how you run the app (dev server, Docker, ...).
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots / 日志或截图
+      description: Redact secrets and personal data first.
+      render: shell

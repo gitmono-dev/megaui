@@ -1,0 +1,29 @@
+{
+  "name": "@megaui/collab-server",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT OR Apache-2.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "tsx --tsconfig ./tsconfig.json src/index.ts",
+    "start": "NODE_ENV=production tsx --tsconfig ./tsconfig.json src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.json",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@hocuspocus/server": "4.6.0",
+    "@megaui/core": "workspace:*",
+    "yjs": "13.6.32"
+  },
+  "devDependencies": {
+    "@hocuspocus/provider": "4.6.0",
+    "@types/node": "^26.4.1",
+    "tsx": "^4.19.3",
+    "typescript": "^5.9.2"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

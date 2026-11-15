@@ -1,0 +1,58 @@
+# Dependencies
+node_modules
+**/node_modules
+npm-debug.log*
+
+# Build output
+.next
+**/.next
+.turbo
+**/.turbo
+dist
+**/dist
+out
+**/out
+**/*.tsbuildinfo
+
+# Environment variables (secrets must never enter the build context).
+# Keep explicit AC entries plus a wildcard so .env.production / .env.*.local
+# cannot slip into COPY layers; only tracked samples are un-ignored.
+.env
+.env.local
+.env.test
+.env.*
+!env.example
+!.env.test.example
+
+# VCS
+.git
+.gitignore
+.libra
+.libraignore
+.pnpm-store
+
+# IDE / OS
+.vscode
+.idea
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Docs (not needed inside the image)
+docs
+*.md
+
+# Tests / coverage
+**/tests
+**/coverage
+.github
+
+# Logs
+logs
+*.log
+
+# Playwright
+/playwright-report/
+/test-results/
+/blob-report/

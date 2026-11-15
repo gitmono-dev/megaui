@@ -1,0 +1,25 @@
+{
+  "name": "@megaui/content",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT OR Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@lexical/code-core": "^0.51.0",
+    "@lexical/table": "^0.51.0",
+    "@megaui/core": "workspace:*",
+    "lexical": "^0.51.0"
+  },
+  "devDependencies": {
+    "@lexical/headless": "^0.51.0",
+    "@types/node": "^26.4.1"
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "name": "@megaui/engine",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT OR Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./testing": "./src/testing/index.ts",
+    "./seed": "./src/seed.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit",
+    "lint": "eslint .",
+    "seed": "tsx ./src/seed.ts",
+    "enterprise:worker": "tsx ./src/workers/enterprise.ts",
+    "enterprise:admin": "tsx ./src/cli/enterprise-admin.ts",
+    "enterprise:approve": "tsx ./src/cli/approval-authority.ts",
+    "bench:search": "vitest run --root ../.. packages/engine/src/services/search/cjk.test.ts -t bench:search"
+  },
+  "dependencies": {
+    "@ai-sdk/openai-compatible": "^3.0.43",
+    "@megaui/content": "workspace:*",
+    "@megaui/core": "workspace:*",
+    "@megaui/database": "workspace:*",
+    "@megaui/email": "workspace:*",
+    "drizzle-orm": "^0.45.2",
+    "pg": "^8.23.0",
+    "tsx": "^4.21.0",
+    "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.23.1"
+  }
+}

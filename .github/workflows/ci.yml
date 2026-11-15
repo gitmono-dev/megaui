@@ -1,0 +1,331 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: quality
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 30
+    env:
+      NODE_ENV: test
+      MEGAUI_APP_NAME: megaui
+      APP_BASE_URL: http://127.0.0.1:3000
+      BETTER_AUTH_URL: http://127.0.0.1:3000
+      BETTER_AUTH_SECRET: ci-test-secret-at-least-32-bytes-long!!
+      BETTER_AUTH_TRUSTED_ORIGINS: http://127.0.0.1:3000
+      EMAIL_PROVIDER: test
+      EMAIL_DEFAULT_FROM: noreply@example.com
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.32.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Start PostgreSQL (self-hosted)
+        env:
+          POSTGRES_CONTAINER: megaui-ci-postgres-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          container_runtime=""
+          docker_host=""
+          if docker info >/dev/null 2>&1; then
+            container_runtime="docker"
+            docker_host="default"
+          else
+            for socket in "/run/user/$UID/docker.sock" "$HOME/.docker/run/docker.sock"; do
+              if [[ -S "$socket" ]] && DOCKER_HOST="unix://$socket" docker info >/dev/null 2>&1; then
+                container_runtime="docker"
+                docker_host="unix://$socket"
+                export DOCKER_HOST="$docker_host"
+                printf 'MEGAUI_DOCKER_HOST=%s\n' "$docker_host" >> "$GITHUB_ENV"
+                break
+              fi
+            done
+          fi
+
+          if [[ -z "$container_runtime" ]] && command -v podman >/dev/null 2>&1 && podman info >/dev/null 2>&1; then
+            container_runtime="podman"
+          fi
+
+          if [[ -n "$container_runtime" ]]; then
+            printf 'MEGAUI_CONTAINER_RUNTIME=%s\n' "$container_runtime" >> "$GITHUB_ENV"
+            "$container_runtime" rm -f "$POSTGRES_CONTAINER" >/dev/null 2>&1 || true
+            "$container_runtime" run --detach --name "$POSTGRES_CONTAINER" \
+              --label "com.megaui.ci.run=${{ github.run_id }}" \
+              --env POSTGRES_USER=megaui \
+              --env POSTGRES_PASSWORD=megaui \
+              --env POSTGRES_DB=website \
+              --publish 127.0.0.1::5432 \
+              postgres:16 >/dev/null
+            host_port="$("$container_runtime" inspect --format '{{(index (index .NetworkSettings.Ports "5432/tcp") 0).HostPort}}' "$POSTGRES_CONTAINER")"
+            test -n "$host_port"
+            printf 'DATABASE_URL=postgres://megaui:megaui@127.0.0.1:%s/website\n' "$host_port" >> "$GITHUB_ENV"
+            for attempt in $(seq 1 60); do
+              if "$container_runtime" exec "$POSTGRES_CONTAINER" pg_isready -U megaui -d website >/dev/null 2>&1; then
+                exit 0
+              fi
+              sleep 1
+            done
+            echo "PostgreSQL container did not become ready" >&2
+            exit 1
+          fi
+
+          pg_bindir=""
+          if command -v pg_config >/dev/null 2>&1; then
+            pg_bindir="$(pg_config --bindir 2>/dev/null || true)"
+          fi
+          if [[ ! -x "$pg_bindir/initdb" ]]; then
+            for candidate in /usr/lib/postgresql/*/bin /usr/local/pgsql/bin /opt/homebrew/opt/postgresql*/bin /home/linuxbrew/.linuxbrew/opt/postgresql*/bin; do
+              if [[ -x "$candidate/initdb" && -x "$candidate/pg_ctl" && -x "$candidate/createdb" ]]; then
+                pg_bindir="$candidate"
+                break
+              fi
+            done
+          fi
+          if [[ -x "$pg_bindir/initdb" && -x "$pg_bindir/pg_ctl" && -x "$pg_bindir/createdb" ]]; then
+            pgdata="$RUNNER_TEMP/megaui-pg-${{ github.run_id }}"
+            pgpass="$RUNNER_TEMP/megaui-pg-pass-${{ github.run_id }}"
+            pgport="$(shuf -i 20000-45000 -n 1)"
+            printf 'megaui\n' > "$pgpass"
+            chmod 600 "$pgpass"
+            "$pg_bindir/initdb" -D "$pgdata" --username=megaui --pwfile="$pgpass" --auth-host=scram-sha-256 --auth-local=trust >/dev/null
+            "$pg_bindir/pg_ctl" -D "$pgdata" -o "-h 127.0.0.1 -p $pgport" -l "$RUNNER_TEMP/megaui-pg-${{ github.run_id }}.log" start >/dev/null
+            "$pg_bindir/createdb" -h 127.0.0.1 -p "$pgport" -U megaui website
+            printf 'MEGAUI_PG_MODE=native\nMEGAUI_PGDATA=%s\nMEGAUI_PG_BINDIR=%s\n' "$pgdata" "$pg_bindir" >> "$GITHUB_ENV"
+            printf 'DATABASE_URL=postgres://megaui:megaui@127.0.0.1:%s/website\n' "$pgport" >> "$GITHUB_ENV"
+            for attempt in $(seq 1 60); do
+              if "$pg_bindir"/pg_isready -h 127.0.0.1 -p "$pgport" -U megaui -d website >/dev/null 2>&1; then
+                exit 0
+              fi
+              sleep 1
+            done
+          fi
+
+          if command -v node >/dev/null 2>&1; then
+            embedded_root="$RUNNER_TEMP/megaui-embedded-postgres-${{ github.run_id }}"
+            embedded_data="$RUNNER_TEMP/megaui-embedded-pg-${{ github.run_id }}"
+            embedded_port="$(shuf -i 20000-45000 -n 1)"
+            mkdir -p "$embedded_root" "$embedded_data"
+            timeout 180 npm install --prefix "$embedded_root" --no-save --no-package-lock embedded-postgres@16.15.0-beta.19
+            embedded_script="$embedded_root/start.mjs"
+            cat > "$embedded_script" <<'NODE'
+          import EmbeddedPostgres from "embedded-postgres";
+
+          const pg = new EmbeddedPostgres({
+            databaseDir: process.env.MEGAUI_PGDATA,
+            user: "megaui",
+            password: "megaui",
+            port: Number(process.env.MEGAUI_PGPORT),
+            persistent: false,
+            autoRehydrateSymlinks: true,
+          });
+          let stopping = false;
+          const stop = async () => {
+            if (stopping) return;
+            stopping = true;
+            try {
+              await pg.stop();
+            } finally {
+              process.exit(0);
+            }
+          };
+          process.on("SIGTERM", stop);
+          process.on("SIGINT", stop);
+          try {
+            await pg.initialise();
+            await pg.start();
+            await pg.createDatabase("website");
+            console.log("MEGAUI_EMBEDDED_PG_READY");
+            setInterval(() => {}, 1000);
+          } catch (error) {
+            console.error(error);
+            await stop();
+          }
+          NODE
+            MEGAUI_PGDATA="$embedded_data" MEGAUI_PGPORT="$embedded_port" \
+              nohup node --no-warnings --preserve-symlinks "$embedded_script" \
+              > "$RUNNER_TEMP/megaui-embedded-pg-${{ github.run_id }}.log" 2>&1 &
+            embedded_pid=$!
+            printf 'MEGAUI_PG_MODE=embedded\nMEGAUI_PG_PID=%s\nMEGAUI_PGDATA=%s\nMEGAUI_EMBEDDED_ROOT=%s\n' \
+              "$embedded_pid" "$embedded_data" "$embedded_root" >> "$GITHUB_ENV"
+            printf 'DATABASE_URL=postgres://megaui:megaui@127.0.0.1:%s/website\n' "$embedded_port" >> "$GITHUB_ENV"
+            for attempt in $(seq 1 180); do
+              if grep -q '^MEGAUI_EMBEDDED_PG_READY$' "$RUNNER_TEMP/megaui-embedded-pg-${{ github.run_id }}.log"; then
+                exit 0
+              fi
+              if ! kill -0 "$embedded_pid" >/dev/null 2>&1; then
+                cat "$RUNNER_TEMP/megaui-embedded-pg-${{ github.run_id }}.log" >&2 || true
+                exit 1
+              fi
+              sleep 1
+            done
+            cat "$RUNNER_TEMP/megaui-embedded-pg-${{ github.run_id }}.log" >&2 || true
+            echo "Embedded PostgreSQL did not become ready" >&2
+            exit 1
+          fi
+          echo "No runner-user PostgreSQL, Docker, Podman, or embedded runtime is available" >&2
+          exit 1
+
+      - name: Install ripgrep (ER-11)
+        timeout-minutes: 2
+        run: bash scripts/install-ci-ripgrep.sh
+
+      - name: Install (CMD-00)
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify system Chrome
+        run: |
+          test -x /opt/google/chrome/chrome || {
+            echo "Chrome is required at /opt/google/chrome/chrome on the self-hosted runner" >&2
+            exit 1
+          }
+
+      - name: Typecheck (CMD-01)
+        run: pnpm turbo run typecheck
+
+      - name: Build (CMD-02)
+        run: pnpm turbo run build
+
+      - name: Lint (CMD-03)
+        run: pnpm turbo run lint
+
+      - name: Unit tests (CMD-05)
+        env:
+          VITEST_MAX_WORKERS: '2'
+        run: pnpm vitest run
+
+      - name: Mock API E2E (FSM-05)
+        run: pnpm exec playwright test --config playwright.feishu-mock.config.ts
+
+      - name: Mock API E2E type gate (FSM-05)
+        run: >
+          pnpm exec tsc --noEmit --ignoreConfig --target ES2022 --lib ES2022 --module ESNext
+          --moduleResolution Bundler --moduleDetection force --strict
+          --noUncheckedIndexedAccess --skipLibCheck --esModuleInterop
+          --resolveJsonModule --isolatedModules --types node
+          playwright.feishu-mock.config.ts
+          apps/web/tests/e2e/feishu-mock.spec.ts
+          apps/web/tests/e2e/helpers/feishu-mock.ts
+
+      - name: Enterprise auth E2E project (FS-26 / FS-89)
+        env:
+          NODE_OPTIONS: --import=tsx
+        run: >
+          pnpm exec playwright test
+          apps/web/tests/e2e/enterprise-auth.spec.ts
+          apps/web/tests/e2e/enterprise-auth-fixture.spec.ts
+          --config=playwright.enterprise-auth.config.ts
+          --workers=1 --trace=off
+
+      - name: Legacy auth fixture E2E project (FS-26 / FS-89)
+        env:
+          NODE_OPTIONS: --import=tsx
+        run: >
+          pnpm exec playwright test apps/web/tests/e2e/legacy-auth-fixture.spec.ts
+          --config=playwright.legacy-auth.config.ts
+          --workers=1 --trace=off
+
+      - name: Legacy auth page E2E with owned Web/PG (FS-26 / WA-02)
+        env:
+          NODE_OPTIONS: --import=tsx
+        run: >
+          pnpm exec tsx apps/web/tests/helpers/owned-web.ts e2e
+          apps/web/tests/e2e/auth-flow.spec.ts
+
+      - name: Live provider status (FS-26)
+        run: >
+          echo "FS-26 live Feishu/production gate: NOT EXECUTED (DEFER-FS-03)"
+
+      - name: Secret residue guard (ER-11)
+        run: |
+          set -euo pipefail
+          # Production surfaces must not assign secret keys. Sample files
+          # (env.example / .env.test.example) are checked for material patterns
+          # and placeholder format via scripts/check-env-placeholders.sh.
+          # Fail-closed: rg exit 0 = hit (fail), 1 = zero hits (ok), >1 = error.
+          set +e
+          rg -n "AI_API_KEY=|BETTER_AUTH_SECRET=|ACCESS_KEY_SECRET=|GOOGLE_CLIENT_SECRET=|GITHUB_CLIENT_SECRET=|SMTP_PASS=|RESEND_API_KEY=|MEGA2_INTERNAL_MAIL_BEARER=|MEGA_COLLAB_INTERNAL_TOKEN=|S3_ACCESS_KEY_SECRET=" \
+            apps packages scripts package.json pnpm-workspace.yaml \
+            --glob '!**/.next/**' \
+            --glob '!**/.turbo/**' \
+            --glob '!**/node_modules/**'
+          rc=$?
+          set -e
+          if [ "$rc" -eq 0 ]; then
+            echo "Secret-like assignments found in production surfaces" >&2
+            exit 1
+          fi
+          if [ "$rc" -ne 1 ]; then
+            echo "ERROR: production secret scan rg failed with exit $rc" >&2
+            exit "$rc"
+          fi
+          set +e
+          rg -n "sk-|AKIA|BEGIN " env.example .env.test.example
+          rc=$?
+          set -e
+          if [ "$rc" -eq 0 ]; then
+            echo "Material secret patterns found in sample env files" >&2
+            exit 1
+          fi
+          if [ "$rc" -ne 1 ]; then
+            echo "ERROR: sample material scan rg failed with exit $rc" >&2
+            exit "$rc"
+          fi
+          bash scripts/check-env-placeholders.sh env.example .env.test.example
+          echo "Secret residue guard: clean"
+
+      - name: Enterprise secret guard (FS-51)
+        run: bash scripts/check-enterprise-secrets.sh
+
+      - name: Brand residue guard (OPS-02)
+        run: bash scripts/check-brand-residue.sh
+
+      - name: Public assets guard (OPS-02)
+        run: bash scripts/check-public-assets.sh
+
+      - name: Docs relative links (OPS-02)
+        run: bash scripts/check-docs-links.sh
+
+      - name: License allowlist (OPS-02)
+        run: bash scripts/check-licenses.sh
+
+      - name: Stop containers
+        if: always()
+        env:
+          POSTGRES_CONTAINER: megaui-ci-postgres-${{ github.run_id }}
+        run: |
+          if [[ "${MEGAUI_PG_MODE:-}" == native && -n "${MEGAUI_PGDATA:-}" && -n "${MEGAUI_PG_BINDIR:-}" ]]; then
+            "$MEGAUI_PG_BINDIR"/pg_ctl -D "$MEGAUI_PGDATA" -m fast stop >/dev/null 2>&1 || true
+            rm -rf "$MEGAUI_PGDATA"
+          elif [[ "${MEGAUI_PG_MODE:-}" == embedded && -n "${MEGAUI_PG_PID:-}" ]]; then
+            kill "$MEGAUI_PG_PID" >/dev/null 2>&1 || true
+            for attempt in $(seq 1 30); do
+              kill -0 "$MEGAUI_PG_PID" >/dev/null 2>&1 || break
+              sleep 1
+            done
+            rm -rf "${MEGAUI_PGDATA:-}" "${MEGAUI_EMBEDDED_ROOT:-}"
+          elif [[ "${MEGAUI_CONTAINER_RUNTIME:-}" == podman ]]; then
+            podman rm -f "$POSTGRES_CONTAINER" >/dev/null 2>&1 || true
+          elif [[ -n "${MEGAUI_DOCKER_HOST:-}" ]]; then
+            DOCKER_HOST="$MEGAUI_DOCKER_HOST" docker rm -f "$POSTGRES_CONTAINER" >/dev/null 2>&1 || true
+          else
+            docker rm -f "$POSTGRES_CONTAINER" >/dev/null 2>&1 || true
+          fi
