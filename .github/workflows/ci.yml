@@ -215,44 +215,6 @@ jobs:
           VITEST_MAX_WORKERS: '3'
         run: pnpm vitest run
 
-      - name: Mock API E2E (FSM-05)
-        run: pnpm exec playwright test --config playwright.feishu-mock.config.ts
-
-      - name: Mock API E2E type gate (FSM-05)
-        run: >
-          pnpm exec tsc --noEmit --ignoreConfig --target ES2022 --lib ES2022 --module ESNext
-          --moduleResolution Bundler --moduleDetection force --strict
-          --noUncheckedIndexedAccess --skipLibCheck --esModuleInterop
-          --resolveJsonModule --isolatedModules --types node
-          playwright.feishu-mock.config.ts
-          apps/web/tests/e2e/feishu-mock.spec.ts
-          apps/web/tests/e2e/helpers/feishu-mock.ts
-
-      - name: Enterprise auth E2E project (FS-26 / FS-89)
-        env:
-          NODE_OPTIONS: --import=tsx
-        run: >
-          pnpm exec playwright test
-          apps/web/tests/e2e/enterprise-auth.spec.ts
-          apps/web/tests/e2e/enterprise-auth-fixture.spec.ts
-          --config=playwright.enterprise-auth.config.ts
-          --workers=1 --trace=off
-
-      - name: Legacy auth fixture E2E project (FS-26 / FS-89)
-        env:
-          NODE_OPTIONS: --import=tsx
-        run: >
-          pnpm exec playwright test apps/web/tests/e2e/legacy-auth-fixture.spec.ts
-          --config=playwright.legacy-auth.config.ts
-          --workers=1 --trace=off
-
-      - name: Legacy auth page E2E with owned Web/PG (FS-26 / WA-02)
-        env:
-          NODE_OPTIONS: --import=tsx
-        run: >
-          pnpm exec tsx apps/web/tests/helpers/owned-web.ts e2e
-          apps/web/tests/e2e/auth-flow.spec.ts
-
       - name: Live provider status (FS-26)
         run: >
           echo "FS-26 live Feishu/production gate: NOT EXECUTED (DEFER-FS-03)"

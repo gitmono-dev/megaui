@@ -54,10 +54,10 @@ FS-31 将企业登录邮件限定为双语安全通知：只包含时间、设�
 
 quality 的完整单元测试以三个 worker 执行；八组 BFF 契约各自拥有数据库、无实际环境文件的源副本和 mint 进程，审批清理验证仅观察本 run 临时目录。完整收集范围与全部质量门保持，job 时限为 120 分钟。隔离、故障清理和超时恢复规则见 [CI 全量测试隔离与并行](./ci-test-isolation.md)。
 
-FS-26 在同一 self-hosted quality job 追加 enterprise pairing/verify、legacy Cookie 和 owned
-Web/PG auth-page 三个 E2E project；每个 project/fixture 失败或清理失败都会阻断 CI。真实飞书、
-provider、canary 与生产 live 门固定记录为未执行（`DEFER-FS-03`），不把缺失环境当作成功。详见
-[企业认证与双模式 E2E 持续集成](./enterprise-auth.md#企业认证与双模式-e2e-持续集成)。
+FS-26 的 enterprise pairing/verify、legacy Cookie 和 owned Web/PG auth-page 三个 E2E project
+不在 quality job 中执行，按 CMD-07 在本地运行；本地运行时任一 project/fixture 或清理失败都视为失败。
+真实飞书、provider、canary 与生产 live 门固定记录为未执行（`DEFER-FS-03`），不把缺失环境当作成功。详见
+[企业认证与双模式 E2E](./enterprise-auth.md#企业认证与双模式-e2e)。
 
 ### 开发最终树发布与计划收口
 

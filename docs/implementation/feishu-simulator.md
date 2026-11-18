@@ -185,7 +185,7 @@
 
 - `playwright.feishu-mock.config.ts` 只收集 `feishu-mock.spec.ts`，workers 2、fullyParallel，trace/video/screenshot 全部关闭；不启动网站、浏览器或数据库。
 - `apps/web/tests/e2e/feishu-mock.spec.ts` 用真实 CLI 与真实 HTTP 跑完整协议：签发 tenant token、目录分页读取、单人读取、provider 定向消息写入成员 inbox、控制面发送 p2p 事件并由 callback 目标接收；reset 后 token/cursor/inbox/uuid/event/fault 全部清空且旧 generation 的 token 不再获准；同一 worker 内第二个实例的端口、状态与凭据互不影响。
-- quality 作业实际执行这两步：Mock API E2E，以及三个 TS 文件（`playwright.feishu-mock.config.ts`、`feishu-mock.spec.ts`、`helpers/feishu-mock.ts`）的独立类型门。
+- quality 作业不再执行 Mock API E2E 及三个 TS 文件（`playwright.feishu-mock.config.ts`、`feishu-mock.spec.ts`、`helpers/feishu-mock.ts`）的独立类型门；两者按 CMD-07 在本地运行（命令见下文「验证 Mock API E2E」）。
 
 ## 源码边界
 

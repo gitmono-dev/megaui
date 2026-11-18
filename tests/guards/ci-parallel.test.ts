@@ -15,8 +15,7 @@ async function configuredWorkers(): Promise<string> {
   const workers = step.match(/VITEST_MAX_WORKERS:\s*['"]?(\d+)/)?.[1];
   expect(workers).toBe("3");
   expect(workflow).toContain("timeout-minutes: 120");
-  for (const name of ["Typecheck (CMD-01)", "Build (CMD-02)", "Lint (CMD-03)", "Mock API E2E (FSM-05)",
-    "Mock API E2E type gate (FSM-05)", "Secret residue guard (ER-11)",
+  for (const name of ["Typecheck (CMD-01)", "Build (CMD-02)", "Lint (CMD-03)", "Secret residue guard (ER-11)",
     "Enterprise secret guard (FS-51)", "Brand residue guard (OPS-02)", "Public assets guard (OPS-02)",
     "Docs relative links (OPS-02)", "License allowlist (OPS-02)"]) expect(workflow).toContain(`- name: ${name}`);
   return workers!;

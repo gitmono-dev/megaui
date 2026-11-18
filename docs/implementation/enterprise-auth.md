@@ -1019,17 +1019,16 @@ collab、SMTP，也不取 Cookie。由于 Playwright 直接加载 workspace Type
 本地命令显式使用 `NODE_OPTIONS=--import=tsx`；该变量只作用于测试编排进程，Web 子进程仍由
 白名单构造。
 
-## 企业认证与双模式 E2E 持续集成
+## 企业认证与双模式 E2E
 
-FS-26 在 self-hosted Linux quality job 中保留每个 run 的 PostgreSQL 资源，并分别执行
-`playwright.enterprise-auth.config.ts` 的 enterprise 认证 project、`playwright.legacy-auth.config.ts`
-的 legacy Cookie project，以及通过 `apps/web/tests/helpers/owned-web.ts` 启动独立 Web/PG 的
-legacy auth-page project。enterprise project 只收集企业 pairing/verify 测试，不调用 legacy
-signup、reset 或 session-mint helper；legacy project 才覆盖既有邮箱密码 Cookie 合同。任一
-project、隔离 fixture 或清理失败都会使 job 失败，没有 `continue-on-error` 或 live 缺失回退。
+self-hosted Linux quality job 不再执行任何 Playwright E2E：`playwright.enterprise-auth.config.ts` 的 enterprise
+认证 project、`playwright.legacy-auth.config.ts` 的 legacy Cookie project，以及通过
+`apps/web/tests/helpers/owned-web.ts` 启动独立 Web/PG 的 legacy auth-page project 均按 CMD-07 在本地运行。
+enterprise project 只收集企业 pairing/verify 测试，不调用 legacy signup、reset 或 session-mint helper；
+legacy project 才覆盖既有邮箱密码 Cookie 合同。本地运行时任一 project、隔离 fixture 或清理失败都视为失败。
 
 CI 末尾只输出固定的 `FS-26 live Feishu/production gate: NOT EXECUTED (DEFER-FS-03)` 状态；真实
-租户、provider、canary 和生产部署不在本期 job 中，也不会把未执行当作成功。可重复的本地命令为：
+租户、provider、canary 和生产部署不在本期 job 中，也不会把未执行当作成功。三个 E2E project 的本地命令为：
 
 ```sh
 NODE_OPTIONS=--import=tsx pnpm exec playwright test apps/web/tests/e2e/enterprise-auth.spec.ts apps/web/tests/e2e/enterprise-auth-fixture.spec.ts --config=playwright.enterprise-auth.config.ts --workers=1 --trace=off
