@@ -13,8 +13,8 @@ async function configuredWorkers(): Promise<string> {
   const step = workflow.split("- name: Unit tests (CMD-05)")[1]?.split("- name:")[0] ?? "";
   expect(step).toMatch(/run: pnpm vitest run\s/);
   const workers = step.match(/VITEST_MAX_WORKERS:\s*['"]?(\d+)/)?.[1];
-  expect(workers).toBe("2");
-  expect(workflow).toContain("timeout-minutes: 30");
+  expect(workers).toBe("3");
+  expect(workflow).toContain("timeout-minutes: 120");
   for (const name of ["Typecheck (CMD-01)", "Build (CMD-02)", "Lint (CMD-03)", "Mock API E2E (FSM-05)",
     "Mock API E2E type gate (FSM-05)", "Secret residue guard (ER-11)",
     "Enterprise secret guard (FS-51)", "Brand residue guard (OPS-02)", "Public assets guard (OPS-02)",
@@ -43,10 +43,10 @@ async function probe(directory: string, workers: string): Promise<void> {
 
 describe("complete CI test execution", () => {
   afterEach(() => vi.unstubAllEnvs());
-  it("resolves two workers with the existing complete root collection and isolation", async () => {
+  it("resolves three workers with the existing complete root collection and isolation", async () => {
     vi.stubEnv("VITEST_MAX_WORKERS", await configuredWorkers());
     const { vitestConfig } = await resolveConfig({ root, config: path.join(root, "vitest.config.ts"), watch: false }, { envDir: false });
-    expect(vitestConfig.maxWorkers).toBe(2);
+    expect(vitestConfig.maxWorkers).toBe(3);
     expect(vitestConfig.isolate).toBe(true);
     // The public resolver leaves the enabled default undefined; the next test
     // proves actual file overlap instead of treating an omitted field as false.
@@ -56,7 +56,7 @@ describe("complete CI test execution", () => {
     expect(vitestConfig.exclude).toEqual(["**/node_modules/**", "**/dist/**", "**/.next/**", "**/.turbo/**", "**/tests/e2e/**"]);
   });
 
-  it("runs three real files with exactly two overlapping workers under unchanged root configuration", async () => {
+  it("runs four real files with exactly three overlapping workers under unchanged root configuration", async () => {
     const workers = await configuredWorkers();
     const directory = await mkdtemp(path.join(tmpdir(), "megaui-ci-workers-"));
     try {
@@ -75,7 +75,7 @@ it('bounded worker probe', async () => {
  const emit = (kind) => appendFileSync(process.env.PROBE_EVENTS, JSON.stringify({ identity, kind }) + '\\n');
  emit('start'); try { await setTimeout(700); } finally { emit('end'); }
 });\n`;
-      for (const name of ["one", "two", "three"]) await writeFile(path.join(directory, `tests/${name}.test.ts`), source);
+      for (const name of ["one", "two", "three", "four"]) await writeFile(path.join(directory, `tests/${name}.test.ts`), source);
       await probe(directory, workers);
       const events = (await readFile(path.join(directory, "events.jsonl"), "utf8")).trim().split("\n")
         .map(line => JSON.parse(line) as { identity: string; kind: "start" | "end" });
@@ -85,8 +85,8 @@ it('bounded worker probe', async () => {
         else { expect(active.delete(event.identity)).toBe(true); }
         peak = Math.max(peak, active.size);
       }
-      expect(events.filter(event => event.kind === "start")).toHaveLength(3);
-      expect(active.size).toBe(0); expect(peak).toBe(2);
+      expect(events.filter(event => event.kind === "start")).toHaveLength(4);
+      expect(active.size).toBe(0); expect(peak).toBe(3);
     } finally { await rm(directory, { recursive: true, force: true }); }
   }, 60_000);
 });

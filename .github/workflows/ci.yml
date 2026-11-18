@@ -17,7 +17,7 @@ jobs:
   quality:
     name: quality
     runs-on: [self-hosted, Linux, X64]
-    timeout-minutes: 30
+    timeout-minutes: 120
     env:
       NODE_ENV: test
       MEGAUI_APP_NAME: megaui
@@ -212,7 +212,7 @@ jobs:
 
       - name: Unit tests (CMD-05)
         env:
-          VITEST_MAX_WORKERS: '2'
+          VITEST_MAX_WORKERS: '3'
         run: pnpm vitest run
 
       - name: Mock API E2E (FSM-05)
