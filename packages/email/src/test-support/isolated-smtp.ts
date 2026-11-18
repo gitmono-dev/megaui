@@ -42,6 +42,8 @@ async function mappedPort(name: string): Promise<number> {
   throw new Error("FS88 SMTP did not publish a loopback port");
 }
 
+class SmtpClosedError extends Error {}
+
 function readReply(socket: Socket): Promise<string> {
   return new Promise((resolve, reject) => {
     let data = "";
@@ -50,10 +52,36 @@ function readReply(socket: Socket): Promise<string> {
       if (data.includes("\n")) { cleanup(); resolve(data); }
     };
     const onError = (error: Error) => { cleanup(); reject(error); };
+    // Docker's port proxy accepts the TCP connection before the in-container server listens, then
+    // closes it without data or an error; surface that as a distinct failure instead of waiting out the timer.
+    const onClose = () => { cleanup(); reject(new SmtpClosedError("FS88 SMTP connection closed before reply")); };
     const timer = setTimeout(() => { cleanup(); reject(new Error("FS88 SMTP probe timed out")); }, 5_000);
-    const cleanup = () => { clearTimeout(timer); socket.off("data", onData); socket.off("error", onError); };
-    socket.on("data", onData); socket.once("error", onError);
+    const cleanup = () => {
+      clearTimeout(timer); socket.off("data", onData); socket.off("error", onError);
+      socket.off("end", onClose); socket.off("close", onClose);
+    };
+    socket.on("data", onData); socket.once("error", onError); socket.once("end", onClose); socket.once("close", onClose);
   });
+}
+
+const NOT_READY_CODES = new Set(["ECONNREFUSED", "ECONNRESET", "EPIPE"]);
+
+// The published port exists as soon as the container starts, but `node -e` inside it may not have
+// bound 2525 yet (slow on a loaded CI runner). Wait for the real 220 greeting before probing.
+async function waitForGreeting(port: number): Promise<void> {
+  const deadline = Date.now() + 60_000;
+  for (;;) {
+    const socket = createConnection({ host: "127.0.0.1", port });
+    try {
+      await readReply(socket);
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      const notReady = error instanceof SmtpClosedError || (code !== undefined && NOT_READY_CODES.has(code));
+      if (!notReady || Date.now() >= deadline) throw error;
+    } finally { socket.destroy(); }
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
 }
 
 export async function createIsolatedSmtp(runId: string): Promise<IsolatedSmtp> {
@@ -73,6 +101,7 @@ export async function createIsolatedSmtp(runId: string): Promise<IsolatedSmtp> {
     } finally { socket.destroy(); }
   };
   try {
+    await waitForGreeting(port);
     await probe();
   } catch (error) {
     await command(["rm", "-f", containerName]).catch(() => undefined);
