@@ -1,6 +1,6 @@
 # AGENTS.md
 
-本文件是 megaui 仓库对自动化 Agent 与人类贡献者的工程约束速查。仓库不再收录内部计划文档；下面的 `ER-*` / `GC-*` / `G-*` 与 `CMD-*` / `DIR-*` 基线以本文件为准。
+本文件是 megaui 仓库对自动化 Agent 与人类贡献者的工程约束速查。仓库只在 `docs/plan/` 收录日期计划及其索引（见下方「计划维护」），不收录其它内部计划文档；下面的 `ER-*` / `GC-*` / `G-*` 与 `CMD-*` / `DIR-*` 基线以本文件为准。
 
 ## 模板条款引用
 
@@ -24,7 +24,7 @@
 | DIR-04 | `packages/i18n/src/locales/`；语言集 `zh-CN` + `en`（ADR-ARCH-07） | i18n 词典目录与语言集 |
 | DIR-05 | `env.example` | 环境变量样例；校验方式 = CMD-02 构建期加载 `apps/web/lib/env.ts`（由 `apps/web/next.config.ts` import） |
 | DIR-06 | 单元：`apps/**/tests/unit/` + `packages/**` 的 `*.test.ts` + `tests/guards/`（仓库级跨包守卫测试，如包依赖方向守卫）；E2E：`apps/web/tests/e2e/`；契约：`apps/web/tests/contract/` 与 `packages/**` 的 `*.contract.test.ts` | 测试文件落点，与 CMD-04/06/07 的收集范围一致 |
-| DIR-07 | `docs/`（中文单语；含 `docs/implementation/`） | 文档目录 |
+| DIR-07 | `docs/`（中文单语；含 `docs/implementation/` 与 `docs/plan/`） | 文档目录 |
 
 **包依赖方向（ADR-ARCH-01，由 `.dependency-cruiser.cjs` 守卫）：**
 
@@ -70,4 +70,4 @@ VCS-01：版本控制系统为 Libra，默认分支 `main`；canonical 仓库 `g
 
 ## 计划维护
 
-本仓库不收录内部计划文档。产品行为以源码、测试和 `docs/implementation` 为准。
+日期计划 `docs/plan/plan-YYYYMMDD.md` 与索引 `docs/plan/README.md` 收录于本仓库：计划经评审 `PASS` 后以只含计划与索引的精确签名提交进入 `main`（引入本条款的那次提交同时包含本文件）；执行期间，各任务卡按该计划的状态收敛规则，在本卡的精确提交中更新计划的状态字段（状态记录不属于产品文档同步）。计划中不得包含凭据或未脱敏的真实租户数据。其它内部计划文档不收录。计划只描述任务、依赖与验收，产品行为仍以源码、测试和 `docs/implementation` 为准。
