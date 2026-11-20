@@ -32,10 +32,11 @@
 // and `active` rows, clearing their sensitive fields, and deletes the rows created more than 24
 // hours ago.
 //
-// The verify side (FSL-124, FSL-151) is `consumeFeishuLoginCode`: one transaction that locks the
-// newest row of a flow `FOR UPDATE`, compares the code HMAC in constant time, counts a wrong code
-// (the fifth one voids the row clearing its sensitive fields) or consumes the row clearing its
-// sensitive fields and looks up the identity binding before it commits; and
+// The verify side (FSL-124, FSL-151, FSL-125) is `consumeFeishuLoginCode`: one transaction that
+// locks the newest row of a flow `FOR UPDATE`, compares the code HMAC in constant time, counts a
+// wrong code (the fifth one voids the row clearing its sensitive fields) or consumes the row
+// clearing its sensitive fields and looks up the identity binding before it commits, creating the
+// user and its binding in the same transaction when the member has none (FSL-125); and
 // `recordFeishuLoginSession`, which marks a session as issued by the Feishu login (FSL-147).
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
@@ -550,13 +551,23 @@ export interface FeishuLoginConsumeInput {
    * inside the transaction, after the row was consumed; its result must be 64 lowercase hex.
    */
   readonly openIdHmac: (openId: string) => string;
+  /**
+   * The ID of the Better Auth user to create when `(app_id, open_id_hmac)` has no binding
+   * (FSL-125 first login; the verify endpoint always passes one). Without it an unbound member
+   * rolls the transaction back and the result is `unbound`, which only callers that probe whether
+   * a code is valid without signing anyone up use.
+   */
+  readonly newUserId?: string;
 }
 
 /** A row turns `void` with the wrong code that brings `failed_attempts` to this value (FSL-151). */
 export const FEISHU_LOGIN_MAX_FAILED_ATTEMPTS = 5;
 
 export type FeishuLoginConsumeResult =
-  /** The row is now `consumed` with its sensitive fields cleared; the binding names the user. */
+  /**
+   * The row is now `consumed` with its sensitive fields cleared; the binding names the user (an
+   * existing one, or the one this transaction created with the user on a first login, FSL-125).
+   */
   | { readonly kind: "consumed"; readonly userId: string }
   /**
    * The code was not accepted: the flow has no row, its newest row is not an unexpired `active`
@@ -566,13 +577,34 @@ export type FeishuLoginConsumeResult =
    */
   | { readonly kind: "invalid" }
   /**
-   * The code matched but `(app_id, open_id_hmac)` has no binding: the transaction was rolled
-   * back, so the row is still `active` (account creation is FSL-125).
+   * The code matched but `(app_id, open_id_hmac)` has no binding and no `newUserId` was given: the
+   * transaction was rolled back, so the row is still `active`.
    */
-  | { readonly kind: "unbound" };
+  | { readonly kind: "unbound" }
+  /**
+   * The code matched, the member has no binding, and the account could not be created because a
+   * local user already holds the email (`user_email_unique`) or a concurrent transaction committed
+   * the binding of the same member first (`feishu_identities_app_open_id_hmac_unique`). Nothing is
+   * merged: the transaction was rolled back, so no user or binding was written and the row is still
+   * `active`. Its HTTP answer is decided by the verify endpoint (FSL-152 refines it).
+   */
+  | { readonly kind: "conflict" };
 
 /** Thrown inside the consume transaction to roll it back when no binding exists. */
 const UNBOUND = Symbol("FEISHU_LOGIN_UNBOUND");
+/** Thrown inside the consume transaction to roll it back when the account cannot be created. */
+const CONFLICT = Symbol("FEISHU_LOGIN_CONFLICT");
+/** The unique constraints whose violation by the account creation is a `conflict`. */
+const ACCOUNT_CONFLICT_CONSTRAINTS: ReadonlySet<string> = new Set([
+  "user_email_unique",
+  "feishu_identities_app_open_id_hmac_unique",
+]);
+
+function isAccountConflict(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const { code, constraint } = error as { code?: unknown; constraint?: unknown };
+  return code === UNIQUE_VIOLATION && typeof constraint === "string" && ACCOUNT_CONFLICT_CONSTRAINTS.has(constraint);
+}
 
 function codeHmacMatches(expectedHex: string, storedHex: unknown): boolean {
   // Both sides are 32-byte digests; a stored value of another shape can never match, and the
@@ -582,8 +614,8 @@ function codeHmacMatches(expectedHex: string, storedHex: unknown): boolean {
 }
 
 /**
- * Verify (FSL-124 success path, FSL-151 failure path and concurrency; ADR-FSL-11 「校验」), one
- * transaction:
+ * Verify (FSL-124 success path, FSL-151 failure path and concurrency, FSL-125 first-login account
+ * creation; ADR-FSL-11 「校验」), one transaction:
  * 1. locks the row of the largest `flow_seq` of the flow (whatever its state) with
  *    `SELECT … FOR UPDATE`, in a statement of its own. It is the only row of `feishu_login_codes`
  *    the transaction locks (the cleanup, the activation and the void write-back of a delivery,
@@ -609,7 +641,14 @@ function codeHmacMatches(expectedHex: string, storedHex: unknown): boolean {
  *    expiry conditions: a row that expires between the two statements is not consumed);
  * 5. derives `open_id_hmac` with `input.openIdHmac` and reads the binding of
  *    `(app_id, open_id_hmac)` in `feishu_identities`. Found: the transaction commits and the
- *    result names the bound user. Not found: the transaction is rolled back (`unbound`).
+ *    result names the bound user. Not found, with `input.newUserId` (FSL-125
+ *    first login): the same transaction inserts the Better Auth user `newUserId` with the held
+ *    email and name, `email_verified = true` and `role = 'user'` (what the `admin` plugin writes
+ *    for a new user), then the binding `(app_id, open_id_hmac, newUserId)` (no open_id), and
+ *    commits, naming the new user; when either insert violates `user_email_unique` or
+ *    `feishu_identities_app_open_id_hmac_unique` the transaction is rolled back (`conflict`: no
+ *    existing account is merged, the row stays `active`). Not found, without `input.newUserId`:
+ *    the transaction is rolled back (`unbound`).
  * Because of the lock, two transactions that lock the same row run one after the other: when the
  * first one consumed the row and committed, the second one reads it as `consumed` and is `invalid`
  * (if the first one rolled back, the second one goes on). The open_id leaves the row only as its HMAC; nothing
@@ -624,6 +663,8 @@ export async function consumeFeishuLoginCode(
   if (typeof input.code !== "string" || input.code === "") throw new Error("INVALID_FEISHU_LOGIN_CODE");
   assertText(input.appId, "INVALID_FEISHU_LOGIN_APP_ID");
   if (typeof input.openIdHmac !== "function") throw new Error("INVALID_FEISHU_LOGIN_OPEN_ID_HMAC");
+  const newUserId = input.newUserId;
+  if (newUserId !== undefined) assertText(newUserId, "INVALID_FEISHU_LOGIN_NEW_USER_ID");
   try {
     return await inTransaction(pool, async (client) => {
       // The row lock comes first, in a statement of its own, so everything below is read after any
@@ -692,16 +733,24 @@ export async function consumeFeishuLoginCode(
       }
       // The hold (email, open_id, name) is read only now, and only while the row is still an
       // unexpired `active` one at this statement's clock sample: a row expired by then is not
-      // read (one that expires after it is still not consumed: the update repeats the check). The binding lookup below needs the open_id; the email and the name are what
-      // the account creation of FSL-125 builds on.
+      // read (one that expires after it is still not consumed: the update repeats the check). The
+      // binding lookup below needs the open_id; the email and the name are what the account
+      // creation (FSL-125) writes.
       const held = await client.query<{ email: string | null; open_id: string | null; display_name: string | null }>(
         `select email, open_id, display_name from feishu_login_codes
           where id = $1 and state = 'active' and expires_at > clock_timestamp()`,
         [row.id],
       );
       const hold = held.rows[0];
-      if (!hold || typeof hold.open_id !== "string") return { kind: "invalid" } as const;
-      const openId = hold.open_id;
+      if (
+        !hold ||
+        typeof hold.open_id !== "string" ||
+        typeof hold.email !== "string" ||
+        typeof hold.display_name !== "string"
+      ) {
+        return { kind: "invalid" } as const;
+      }
+      const { open_id: openId, email, display_name: displayName } = hold;
       const consumed = await client.query(
         `update feishu_login_codes
             set state = 'consumed', email = null, open_id = null, display_name = null, code_hmac = null
@@ -716,11 +765,29 @@ export async function consumeFeishuLoginCode(
         [input.appId, openIdHmac],
       );
       const userId = binding.rows[0]?.user_id;
-      if (userId === undefined) throw UNBOUND;
-      return { kind: "consumed", userId } as const;
+      if (userId !== undefined) return { kind: "consumed", userId } as const;
+      if (newUserId === undefined) throw UNBOUND;
+      // First login (FSL-125): the account and its binding, in this transaction, so they commit
+      // with the consumption or not at all. A unique violation aborts the transaction; it is
+      // rolled back as a `conflict` without reporting the error (its detail names the email).
+      try {
+        await client.query(
+          `insert into "user" (id, name, email, email_verified, role) values ($1, $2, $3, true, 'user')`,
+          [newUserId, displayName, email],
+        );
+        await client.query(
+          "insert into feishu_identities (app_id, open_id_hmac, user_id) values ($1, $2, $3)",
+          [input.appId, openIdHmac, newUserId],
+        );
+      } catch (error) {
+        if (isAccountConflict(error)) throw CONFLICT;
+        throw error;
+      }
+      return { kind: "consumed", userId: newUserId } as const;
     });
   } catch (error) {
     if (error === UNBOUND) return { kind: "unbound" };
+    if (error === CONFLICT) return { kind: "conflict" };
     throw error;
   }
 }

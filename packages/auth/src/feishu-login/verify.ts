@@ -1,7 +1,7 @@
-// megaui:packages/auth/src/enterprise-otp/verify.ts@24a8551 (megaui-only FSL-124, FSL-151: the verify endpoint of the Feishu login)
+// megaui:packages/auth/src/enterprise-otp/verify.ts@24a8551 (megaui-only FSL-124, FSL-151, FSL-125: the verify endpoint of the Feishu login)
 /**
- * FSL-124 (success path) and FSL-151 (failure path and concurrency): `POST /feishu-login/verify`
- * (ADR-FSL-11 「校验」).
+ * FSL-124 (success path), FSL-151 (failure path and concurrency) and FSL-125 (first-login account
+ * creation): `POST /feishu-login/verify` (ADR-FSL-11 「校验」).
  *
  * - The request is `application/json` and its body (at most 4096 bytes) is exactly
  *   `{ "code": <string> }`; the code is trimmed and uppercased and must then be 8 characters of
@@ -12,6 +12,11 @@
  *   email, open_id, name and code HMAC cleared, and the binding of `(app_id, open_id_hmac)` read,
  *   where `open_id_hmac` is
  *   HMAC-SHA256(`ENTERPRISE_OTP_HMAC_KEY`, "feishu-identity:v1:" + app_id + ":" + open_id).
+ *   When the member has no binding (first login, FSL-125), the same transaction creates a Better
+ *   Auth user (a fresh ID from the Better Auth ID generator, the login email held by the row,
+ *   `emailVerified = true`, the name read when the code was issued) and inserts the binding
+ *   `(app_id, open_id_hmac, user_id)`; the open_id itself is never stored. A later login of the
+ *   same member finds that binding and creates neither a user nor a binding.
  *   A wrong code compared against such a row adds one to its `failed_attempts`; the wrong code that
  *   brings it to 5 (`FEISHU_LOGIN_MAX_FAILED_ATTEMPTS`) also turns it `void` with those four fields
  *   cleared, so the correct code no longer succeeds. Concurrent submissions that lock the same row
@@ -22,8 +27,11 @@
  *   `{ "status": "ok" }`.
  * - Every other outcome — no flow cookie, no row, a newest row that is not an unexpired `active`
  *   one (expired, `reserved`, `void` — including voided by the failure limit — or `consumed`), a
- *   wrong code, or (until FSL-125 creates accounts) a member without a binding — answers the same
- *   401 `{ "status": "invalid" }`. The compensation of a failed session issue is FSL-169.
+ *   wrong code, or (until FSL-152 defines its answers) a member without a binding whose account
+ *   cannot be created because a local user already holds the email or a concurrent first login of
+ *   the same member committed its binding first (rolled back: nothing merged, the row stays
+ *   `active`) — answers the same 401 `{ "status": "invalid" }`. The compensation of a failed
+ *   session issue is FSL-169.
  */
 import { createHmac } from "node:crypto";
 import { setSessionCookie } from "better-auth/cookies";
@@ -188,6 +196,16 @@ async function issueFeishuLoginSession(
 }
 
 /**
+ * The ID of the user a first login creates: the Better Auth ID generator of this auth instance,
+ * so a Feishu user's ID has the same shape as any other Better Auth user's.
+ */
+function newFeishuLoginUserId(ctx: BetterAuthEndpointContext): string {
+  const id: unknown = ctx.context.generateId({ model: "user" });
+  if (typeof id !== "string" || id.trim() === "") throw new Error("FEISHU_LOGIN_VERIFY_UNAVAILABLE");
+  return id;
+}
+
+/**
  * Decides one verify call from its parsed body and its `Cookie` / `Content-Type` headers, and on
  * success issues the session on `ctx`. The body is checked first (400), then the flow and the
  * code (401 or 200).
@@ -210,6 +228,7 @@ export async function verifyFeishuLoginCode(
     otpHmacKey: options.otpHmacKey,
     appId: options.appId,
     openIdHmac: (openId) => feishuLoginOpenIdHmac(options.otpHmacKey, options.appId, openId),
+    newUserId: newFeishuLoginUserId(ctx),
   });
   if (result.kind !== "consumed") return { status: 401, body: FEISHU_LOGIN_VERIFY_INVALID };
   await issueFeishuLoginSession(ctx, options, result.userId);

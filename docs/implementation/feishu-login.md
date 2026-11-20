@@ -284,7 +284,7 @@ FSL-160 的用例向服务注入时钟（真实时钟加偏移），代理以该
 
 FSL-145 的用例以代理收到的全部请求数断言飞书调用次数：同一邮箱 60 秒内的第二次请求（含未命中邮箱的重复请求）不发起任何飞书请求、不写入新行；冷却边界（58 秒内拒绝、61 秒后放行）；以注入时钟（预约提交之后，测试连接池把后续语句读取的 `clock_timestamp()` 推后 121 秒）使预约在开始发码时已过期，断言不发起任何飞书请求且本行置为 `void`；最近 60 秒内已有 120 行时新请求（已知与未知邮箱）不调用飞书、不写入新行，119 行或窗口外的行不阻止预约；冷却与预算各自在窗口即将结束时每 50 毫秒重试一次，断言重试期间行数不变、窗口结束后立即放行；另以一个连接持有全局锁，断言预约先持有邮箱锁、再等待全局锁。并发用例以多个连接交错执行：同一邮箱的两个请求（一个停在预约提交前、另一个在邮箱锁上等待，以及不加控制的并发）恰好触发一次飞书查询；预算剩余 1 个名额时，不同邮箱的多个请求（一个停在预约提交前、其余各自持有邮箱锁并在全局锁上等待，以及不加控制的并发）合计只触发一次飞书查询；飞书查询被代理暂扣期间以 `pg_locks` 断言没有任何已授予的咨询锁，并断言 `FEISHU_LOGIN_COOLDOWN` / `FEISHU_LOGIN_GLOBAL_BUDGET` 日志键的条数。
 
-FSL-154 起上述用例中断言已授予或正在等待的咨询锁集合的，按新的锁顺序包含 flow 锁（预约先持有 flow 锁与邮箱锁、再等待全局锁）。`packages/engine/src/services/feishu-login/flow-binding.integration.test.ts`（FSL-154）同样使用一次性 PG、真实 `apps/feishu-mock` 进程与记录代理，以 `consumeFeishuLoginCode` 判定验证码是否有效（本套件不建绑定，有效的验证码返回 `unbound` 且事务回滚、不改变该行）：同一 flow 中 A 的验证码有效后，B 的 `reserve` 提交即令其无效，B 分别为命中、未命中、被冷却拒绝与被预算拒绝（后两者不写新行）；A 激活已提交、代理暂扣 A 的私聊期间插入 B，断言 A 的私聊随后仍送达而其验证码无效；代理暂扣 A 的按邮箱搜索期间 B 被冷却拒绝或获准，断言 A 不发私聊；两个连接并发与受控交错（B 在 A 激活持有的 flow 锁上等待）后该 flow 至多一行 `active` 且为序号最大的行；`reserve` 期间代理未收到请求、飞书调用期间没有已授予的咨询锁；前次请求为命中、未命中、多人时后一次 `reserve` 的作废语句影响行数都为 1，本 flow 预置 1000 行历史记录时只有序号最大的一行产生新版本（`xmin`），`created_at` 相同或倒序时按 `flow_seq` 作废，在 flow 锁上等待后提交的预约取得更大的 `flow_seq`；命中、未命中、多人、不在职与飞书调用失败五种结果下，预约、开始发码与写回事务取得的咨询锁序列（flow → 邮箱 → 全局，flow → 邮箱）与加锁语句都相同。
+FSL-154 起上述用例中断言已授予或正在等待的咨询锁集合的，按新的锁顺序包含 flow 锁（预约先持有 flow 锁与邮箱锁、再等待全局锁）。`packages/engine/src/services/feishu-login/flow-binding.integration.test.ts`（FSL-154）同样使用一次性 PG、真实 `apps/feishu-mock` 进程与记录代理，以 `consumeFeishuLoginCode` 判定验证码是否有效（本套件不建绑定、也不传入 `newUserId`，因此不建号：有效的验证码返回 `unbound` 且事务回滚、不改变该行）：同一 flow 中 A 的验证码有效后，B 的 `reserve` 提交即令其无效，B 分别为命中、未命中、被冷却拒绝与被预算拒绝（后两者不写新行）；A 激活已提交、代理暂扣 A 的私聊期间插入 B，断言 A 的私聊随后仍送达而其验证码无效；代理暂扣 A 的按邮箱搜索期间 B 被冷却拒绝或获准，断言 A 不发私聊；两个连接并发与受控交错（B 在 A 激活持有的 flow 锁上等待）后该 flow 至多一行 `active` 且为序号最大的行；`reserve` 期间代理未收到请求、飞书调用期间没有已授予的咨询锁；前次请求为命中、未命中、多人时后一次 `reserve` 的作废语句影响行数都为 1，本 flow 预置 1000 行历史记录时只有序号最大的一行产生新版本（`xmin`），`created_at` 相同或倒序时按 `flow_seq` 作废，在 flow 锁上等待后提交的预约取得更大的 `flow_seq`；命中、未命中、多人、不在职与飞书调用失败五种结果下，预约、开始发码与写回事务取得的咨询锁序列（flow → 邮箱 → 全局，flow → 邮箱）与加锁语句都相同。
 
 `packages/engine/src/services/enterprise/feishu/http.test.ts` 以脚本化的 `fetch` 固定传输层现有的重试基线（默认 3 次、暂时性失败重试、永久性失败不重试），并断言 `maxAttempts: 1` 对 5xx、429、连接中断与超时都只发起一次 HTTP 请求；FSL-160 另断言已过截止时间时不调用 `fetch` 并抛出 `transport_deadline`、单次尝试的计时器恰为 `min(传输预算, deadline − 当前时间)`（含传输层重试的第二次尝试）、截止时间之后不再重试，以及不传 `deadline` 时重试与预算不变。`token.test.ts` 以本地 HTTP 服务断言已过截止时间的调用不发请求、两个截止时间不同的调用共享一次刷新时较早截止者在其截止时间以 `transport_deadline` 返回而共享刷新照常完成、刷新请求的单次超时受首个调用方截止时间约束，以及不传 `deadline` 的调用方照旧共享并等待同一次刷新。
 
@@ -324,7 +324,7 @@ FSL-154 起上述用例中断言已授予或正在等待的咨询锁集合的，
 
 ### verify
 
-`POST /api/auth/feishu-login/verify`（插件路径 `/feishu-login/verify`，FSL-124 成功路径，FSL-151 失败路径与并发），请求体恰为 `{ "code": "<验证码>" }`（JSON，至多 4096 字节），flow 取自请求的 flow Cookie（读取规则同 request）。
+`POST /api/auth/feishu-login/verify`（插件路径 `/feishu-login/verify`，FSL-124 成功路径，FSL-151 失败路径与并发，FSL-125 首次登录建号），请求体恰为 `{ "code": "<验证码>" }`（JSON，至多 4096 字节），flow 取自请求的 flow Cookie（读取规则同 request）。
 
 **输入校验**（`verify.ts` 的 `normalizeFeishuLoginCode`）：`code` 须为字符串，去掉首尾空白并整体转大写后恰为 8 个字符，且每个字符都属于验证码字母表 `23456789ABCDEFGHJKMNPQRSTUVWXYZ`（与发码所用生成器同一字母表）。
 
@@ -333,8 +333,9 @@ FSL-154 起上述用例中断言已授予或正在等待的咨询锁集合的，
 | 媒体类型不恰为 `application/json`；请求体超过 4096 字节、为空或不是合法 JSON；请求体不是恰含 `code` 一个字段的对象；或 `code` 不符合上述格式 | 400 | `{ "code": "INVALID_INPUT" }` | 不设置 | 不读取 |
 | 没有有效 flow Cookie；该 flow 没有任何行；该 flow 中 `flow_seq` 最大的行不是未过期的 `active` 行（已过期、`reserved`、`void`（含因错误次数达到上限而作废）、`consumed`，含已消费后再次提交）；该行 `failed_attempts` 已达 5 | 401 | `{ "status": "invalid" }` | 不设置 | 不改变 |
 | 该行为未过期的 `active` 行且 `failed_attempts` 小于 5，验证码不相等 | 401 | `{ "status": "invalid" }` | 不设置 | `failed_attempts + 1`；加 1 后达到 5 时同一语句置为 `void` 并清空四个敏感字段 |
-| 验证码相等，但 `(app_id, open_id_hmac)` 没有绑定（FSL-125 交付建号之前） | 401 | `{ "status": "invalid" }` | 不设置 | 事务回滚，保持 `active` |
 | 验证码相等且绑定存在 | 200 | `{ "status": "ok" }` | 设置 better-auth 会话 Cookie | `consumed`，四个敏感字段为空 |
+| 验证码相等、`(app_id, open_id_hmac)` 没有绑定且建号成功（首次登录，见下文「建号」） | 200 | `{ "status": "ok" }` | 设置新用户的 better-auth 会话 Cookie | `consumed`，四个敏感字段为空 |
+| 验证码相等、没有绑定，但建号因唯一约束冲突失败（同邮箱本地用户已存在，或同一成员的并发首次登录先提交了绑定；见下文「建号」，FSL-152 交付其最终响应之前） | 401 | `{ "status": "invalid" }` | 不设置 | 事务回滚，保持 `active` |
 
 上表各响应带 `Cache-Control: no-store`。400 与 request 一样由插件的 `onRequest` 钩子在框架解析请求体之前给出（读取请求副本，累计超过 4096 字节即停止，按分块计），端点内保留同一校验作为纵深防御；所有 401 的状态码、响应体与头（不设置会话 Cookie）相同，响应不区分失败原因。
 
@@ -348,13 +349,29 @@ FSL-154 起上述用例中断言已授予或正在等待的咨询锁集合的，
 2. 在下一条语句（因而在任何锁等待之后，按该行最新提交的版本与一次 `clock_timestamp()` 取样）重新读取被锁定的行：只有其为 `active`、`expires_at > clock_timestamp()`、在该语句的快照中仍是该 flow 中 `flow_seq` 最大的行（锁定语句的快照之后、该语句开始之前提交的新预约会使其失去资格；该语句开始之后才提交的新预约本事务看不到；这无碍正确性：同一 flow 的每次预约都先作废该 flow 的最新行（FSL-154），该作废须等待本行锁——在本事务之前提交的预约已使本行为 `void`，在本行锁上等待的预约则在本事务结束后才作废它（已消费的行不再改写））且 `failed_attempts` 小于 5 时继续，否则返回 401 且不改变该行；该语句只对这样的行返回 `code_hmac`，因此在该语句的时钟取样时已过期（含尚未被清理）的行的敏感字段不会被该语句返回；
 3. 以 `feishuLoginCodeHmac(key, 行 ID, 验证码)` 与本行 `code_hmac` 做常量时间比较（`timingSafeEqual`，两侧均为 32 字节）。不相等时以一条语句使 `failed_attempts + 1`，加 1 后达到 5 时同一语句置为 `void` 并清空四个敏感字段，提交后返回 401；
 4. 相等时读取本行的邮箱、open_id 与姓名（该读取语句同样要求本行仍为 `active` 且按该语句的时钟取样未过期，此时已到期的行不会被读取敏感字段），再以一条语句把本行置为 `consumed` 并清空 `email`、`open_id`、`display_name`、`code_hmac`（该语句重复 `active` 与未过期条件，在两条语句之间到期的行不会被消费，返回 401）；
-5. 以 `open_id_hmac` = HMAC-SHA256(`ENTERPRISE_OTP_HMAC_KEY`, `"feishu-identity:v1:" + app_id + ":" + open_id`)（`verify.ts` 的 `feishuLoginOpenIdHmac`，64 个小写十六进制字符，open_id 明文不落库）查找 `feishu_identities` 中 `(app_id, open_id_hmac)` 的绑定：存在时提交；不存在时整个事务回滚。
+5. 以 `open_id_hmac` = HMAC-SHA256(`ENTERPRISE_OTP_HMAC_KEY`, `"feishu-identity:v1:" + app_id + ":" + open_id`)（`verify.ts` 的 `feishuLoginOpenIdHmac`，64 个小写十六进制字符，open_id 明文不落库）查找 `feishu_identities` 中 `(app_id, open_id_hmac)` 的绑定：存在时提交；不存在时于同一事务内建号（见下文「建号」），调用方未传入 `newUserId` 时整个事务回滚（结果 `unbound`，verify 端点总是传入）。
 
 **并发**：由于第 1 步的行锁，锁定同一行的并发提交依次执行：持锁者消费该行并提交后，后执行者在锁释放后读到已提交的 `consumed` 行，返回 401 且不计为错误次数（持锁者回滚时，后执行者照常判定）。因此锁定同一行的并发正确提交至多一个消费该行；当该行在首个持锁者重新判定时仍是可比较的最新未过期 `active` 行（期间没有新预约提交、没有其它请求先使其作废或消费）、成员有绑定且会话签发成功时，恰好一个返回 200（测试覆盖的即这一情形）。锁定同一行的并发错码同样依次计数，每个被比较的错码恰好计一次，计到 5 次后其余提交不再计数。
 
 **会话**：事务提交后，以 better-auth `internalAdapter.createSession` 签发普通会话（只覆盖 `expiresAt` 为签发后 8 小时，不写入 `enterpriseGrantId`、`enterpriseIdentityId`、`authEpoch`、`authMethod` 任何企业字段），再以 `recordFeishuLoginSession` 在 `feishu_login_sessions` 写入一行该会话 ID，最后设置会话 Cookie（Max-Age 为 8 小时）。这三步任一失败时本卡不做补偿，端点抛错、由 better-auth 返回 500（失败补偿与 503 `{ "status": "retry" }` 由 FSL-169 交付）。
 
-`packages/auth/src/feishu-login/verify.test.ts` 以 `createAuth` 加一次性 PG、预置用户与绑定构造，验证码经签发存储的 `reserve` / `activate` 写入，经 `auth.handler` 断言：正确验证码返回 200；响应设置会话 Cookie 且以该 Cookie 调用 `get-session` 得到绑定用户；`feishu_login_sessions` 恰有该会话一行；会话的四个企业字段为空、有效期为 8 小时；已消费的验证码再次提交返回 401 `{ "status": "invalid" }`；错码返回 401 且该行 `failed_attempts` 逐次加 1；第 5 次错码后该行为 `void` 且四个敏感字段为空，此后正确验证码返回 401；已过期的验证码返回 401 且该行既不被消费也不计数；无 flow Cookie、该 flow 无验证码与无绑定时返回同一 401；同一验证码的两个并发正确请求恰好一个返回 200、只签发一个会话；格式非法时返回 400；未传入 `verify` 选项时 verify 为 404。`packages/database/src/feishu-login-store.integration.test.ts` 断言消费后该行为 `consumed`、四个敏感字段为空且其余各列不变；错码只使 `failed_attempts` 加 1、其余各列不变，第 5 次错码在其余各列不变的前提下置为 `void` 并清空四个敏感字段，之后正确与错误验证码都不改变该行；已达上限的 `active` 行、已过期、已消费、非最新行（含锁定之后才出现更新的预约行）与无绑定时该行不变（已过期的 `active` 行另断言事务内各语句返回的结果中四个敏感字段均为空）；另以在读取邮箱、open_id 与姓名的语句之前于同一事务内使本行到期的方式，断言该语句不返回行、结果为 401 对应的 `invalid`。并发用例使用两个连接池：第一个连接在锁定并比较之后、消费之前暂停，断言另一连接池的连接在锁定语句上等待行锁，放行后恰好一方消费、另一方为 `invalid` 且不计数；另有十个同时提交恰好一个消费、七个同时提交的错码使该行停在 5 次并作废。
+`packages/auth/src/feishu-login/verify.test.ts` 以 `createAuth` 加一次性 PG、预置用户与绑定构造，验证码经签发存储的 `reserve` / `activate` 写入，经 `auth.handler` 断言：正确验证码返回 200；响应设置会话 Cookie 且以该 Cookie 调用 `get-session` 得到绑定用户；`feishu_login_sessions` 恰有该会话一行；会话的四个企业字段为空、有效期为 8 小时；已消费的验证码再次提交返回 401 `{ "status": "invalid" }`；错码返回 401 且该行 `failed_attempts` 逐次加 1；第 5 次错码后该行为 `void` 且四个敏感字段为空，此后正确验证码返回 401；已过期的验证码返回 401 且该行既不被消费也不计数；无 flow Cookie、该 flow 无验证码与无绑定且同邮箱本地用户已存在（建号冲突）时返回同一 401；同一验证码的两个并发正确请求恰好一个返回 200、只签发一个会话；格式非法时返回 400；未传入 `verify` 选项时 verify 为 404。`packages/database/src/feishu-login-store.integration.test.ts` 断言消费后该行为 `consumed`、四个敏感字段为空且其余各列不变；错码只使 `failed_attempts` 加 1、其余各列不变，第 5 次错码在其余各列不变的前提下置为 `void` 并清空四个敏感字段，之后正确与错误验证码都不改变该行；已达上限的 `active` 行、已过期、已消费、非最新行（含锁定之后才出现更新的预约行）与无绑定（未传入 `newUserId`）时该行不变（已过期的 `active` 行另断言事务内各语句返回的结果中四个敏感字段均为空）；另以在读取邮箱、open_id 与姓名的语句之前于同一事务内使本行到期的方式，断言该语句不返回行、结果为 401 对应的 `invalid`。并发用例使用两个连接池：第一个连接在锁定并比较之后、消费之前暂停，断言另一连接池的连接在锁定语句上等待行锁，放行后恰好一方消费、另一方为 `invalid` 且不计数；另有十个同时提交恰好一个消费、七个同时提交的错码使该行停在 5 次并作废。
+
+### 建号
+
+首次登录建号由 FSL-125 交付（ADR-FSL-11「校验」）。规则：
+
+- **时机：** 只在校验事务第 5 步发现 `(app_id, open_id_hmac)` 没有绑定时发生，即验证码已与该 flow 最新的未过期 `active` 行常量时间比较相等、该行已在同一事务内置为 `consumed` 并清空四个敏感字段之后；错码、过期、作废、已消费等任何 401 情形都不建号。写入 `user` 与 `feishu_identities` 的只有校验事务，request 与发码路径不写这两张表。
+- **同一事务：** 新用户与绑定在消费验证码的同一事务内写入，与消费一同提交或一同回滚。
+- **新用户：** 直接写入 better-auth 的 `user` 表一行：`id` 为本 auth 实例的 better-auth ID 生成器（`ctx.context.generateId({ model: "user" })`，未改配置时为 32 位随机字母数字）生成的新值；`email` 为该行暂存的登录邮箱（request 规范化后的小写邮箱）；`email_verified` 为 `true`；`name` 为发码时从通讯录读取并暂存的姓名；`role` 为 `'user'`（better-auth `admin` 插件为新用户写入的默认角色）；`image` 为空，`banned` 取列默认值 `false`。不创建 `account` 行（飞书用户没有密码或社交登录凭据）。
+- **绑定：** 随后在 `feishu_identities` 写入一行 `(app_id, open_id_hmac, user_id)`，`app_id` 为 `FEISHU_APP_ID`，`open_id_hmac` 同第 5 步；表中没有 `open_id` 列，open_id 明文不落库（只在 `active` 行中短期暂存，消费时已清空）。
+- **会话：** 事务提交后与已有绑定的用户相同：签发 8 小时普通会话、写入 `feishu_login_sessions`、设置会话 Cookie，响应 200 `{ "status": "ok" }`。
+- **再次登录：** 同一成员（同一应用下同一 open_id）再次登录时第 5 步找到绑定，直接以该用户签发会话，不新建用户，也不新建或改写绑定；绑定不随登录邮箱变化（同一成员以另一邮箱登录时同样找到该绑定）。
+- **同一成员的其它 `active` 行：** 建号只消费本 flow 的最新行，本次建号不改变同一成员其它邮箱（或其它 flow）的 `active` 行；该行此后仍受其自身的规则约束（它所在 flow 的新预约、同邮箱新验证码的激活、以它校验，都可能在到期前改变它），否则按到期与清理合同处理：到期清理在其到期前不改变它，到期后将其置为 `void` 并清空敏感字段（见「数据」）。
+
+**冲突处理（FSL-125 的现状）：** 建号不合并任何既有账号。插入 `user` 违反 `user_email_unique`（同邮箱的本地用户已存在而该成员没有绑定，或同一成员的并发首次登录以同一邮箱先提交），或插入绑定违反 `feishu_identities_app_open_id_hmac_unique`（同一成员的并发首次登录先提交了绑定）时，整个校验事务回滚：不新建或修改任何用户、不写入绑定，验证码行保持 `active`（消费也被回滚），端点返回与其它校验失败相同的 401 `{ "status": "invalid" }`，不输出含邮箱的数据库错误。其它数据库错误照常抛出、事务回滚。本卡的测试只以「同邮箱本地用户已存在」断言这一回滚；两个并发首次登录的情形由 FSL-152 以交错连接验收。冲突时的最终响应（409 `{ "status": "account_conflict" }`、提交消费与 `FEISHU_LOGIN_ACCOUNT_CONFLICT` 日志键）、注入故障时的整体回滚与并发首次登录的验收由 FSL-152 交付，会话签发失败的补偿由 FSL-169 交付。
+
+`packages/auth/src/feishu-login/signup.test.ts` 以 `createAuth` 加一次性 PG（不预置用户与绑定）构造，验证码经签发存储的 `reserve` / `activate` 写入，经 `auth.handler` 断言：首次登录返回 200 且 `user` 表恰好新增一行，`get-session` 返回该用户；新用户的邮箱等于登录邮箱、`email_verified` 为 `true`、姓名等于发码时暂存的姓名（含中文），`role` 为 `user`、未封禁、无头像；`feishu_identities` 恰有一行 `(app_id, open_id_hmac, user_id)` 且 `open_id_hmac` 等于独立计算的 HMAC；同一成员以新验证码再次登录返回 200、`user` 与 `feishu_identities` 各行不变，会话属于同一用户；同一成员以另一邮箱登录时同样如此。回归断言：已消费行的四个敏感字段为空；`feishu_identities` 的列恰为 `app_id`、`created_at`、`open_id_hmac`、`user_id`，其行内容不含 open_id 明文；同一成员第二个邮箱同时存在的 `active` 行在首次登录后仍为 `active`，邮箱、open_id、姓名、验证码 HMAC、到期时间与错误次数不变；以注入时钟清理时，到期前的清理不改变该行任何列，到期后的清理将其置为 `void` 并清空敏感字段。另断言错码与过期验证码不建号，以及同邮箱本地用户已存在而无绑定时返回 401、既有用户不变、不写入绑定且验证码行保持 `active`。
 
 ## 数据
 
