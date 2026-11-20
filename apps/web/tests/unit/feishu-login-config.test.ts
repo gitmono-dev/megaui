@@ -1,7 +1,9 @@
-// FSL-121: required keys of the Feishu email-code login (ADR-FSL-12).
+// FSL-121: required keys of the Feishu email-code login (ADR-FSL-12); FSL-148: provider selection.
 import { inspect } from "node:util";
 
 import { describe, expect, it } from "vitest";
+
+import { OFFICIAL_FEISHU_ORIGIN } from "@megaui/core";
 
 import {
   FEISHU_LOGIN_REQUIRED_KEYS,
@@ -10,10 +12,11 @@ import {
   readFeishuLoginConfig,
   type FeishuLoginConfigKey,
   type FeishuLoginConfigSource,
+  type FeishuLoginRequiredKey,
 } from "../../lib/feishu-login-config";
 
 const KEY_BYTES = Uint8Array.from({ length: 32 }, (_, index) => index * 7 + 3);
-const VALID: Required<Record<FeishuLoginConfigKey, string>> = {
+const VALID: Required<Record<FeishuLoginRequiredKey, string>> = {
   FEISHU_APP_ID: "cli_fsl121_app",
   FEISHU_APP_SECRET: "fsl121-app-secret-value",
   ENTERPRISE_OTP_HMAC_KEY: Buffer.from(KEY_BYTES).toString("base64url"),
@@ -37,7 +40,7 @@ function expectRejected(source: FeishuLoginConfigSource, keys: readonly FeishuLo
   return error;
 }
 
-function without(key: FeishuLoginConfigKey): FeishuLoginConfigSource {
+function without(key: FeishuLoginRequiredKey): FeishuLoginConfigSource {
   const { [key]: _omitted, ...rest } = VALID;
   return rest;
 }
@@ -51,7 +54,7 @@ describe("readFeishuLoginConfig (FSL-121)", () => {
     expect(config.otpHmacKey).toBeInstanceOf(Uint8Array);
     expect([...config.otpHmacKey]).toEqual([...KEY_BYTES]);
     expect(Object.isFrozen(config)).toBe(true);
-    expect(Object.keys(config).sort()).toEqual(["appId", "appSecret", "otpHmacKey"]);
+    expect(Object.keys(config).sort()).toEqual(["appId", "appSecret", "otpHmacKey", "target"]);
   });
 
   it("AC1 accepts a process.env-like source with unrelated keys", () => {
@@ -149,6 +152,113 @@ describe("readFeishuLoginConfig (FSL-121)", () => {
     const singleOutput = [single.message, single.stack ?? "", JSON.stringify(single), inspect(single, { showHidden: true })].join("\n");
     for (const fragment of [VALID.FEISHU_APP_ID, VALID.FEISHU_APP_SECRET, "tooShortKeyMarker"]) {
       expect(singleOutput).not.toContain(fragment);
+    }
+  });
+});
+
+describe("readFeishuLoginConfig provider selection (FSL-148)", () => {
+  const LOOPBACK = "http://127.0.0.1:18080";
+
+  it("AC1 selects the official origin when FEISHU_PROVIDER is not set", () => {
+    for (const NODE_ENV of [undefined, "production", "development", "test"]) {
+      const config = readFeishuLoginConfig({ ...VALID, NODE_ENV });
+      expect(config.target).toEqual({ provider: "feishu", origin: OFFICIAL_FEISHU_ORIGIN });
+      expect(config.target.origin).toBe("https://open.feishu.cn");
+      expect(Object.isFrozen(config.target)).toBe(true);
+    }
+    // A blank value counts as unset.
+    for (const FEISHU_PROVIDER of ["", "   "]) {
+      expect(readFeishuLoginConfig({ ...VALID, FEISHU_PROVIDER, NODE_ENV: "production" }).target)
+        .toEqual({ provider: "feishu", origin: OFFICIAL_FEISHU_ORIGIN });
+    }
+  });
+
+  it("AC1 an explicit feishu provider also selects the official origin and ignores FEISHU_SIMULATOR_ORIGIN", () => {
+    const config = readFeishuLoginConfig({
+      ...VALID, NODE_ENV: "test", FEISHU_PROVIDER: "feishu", FEISHU_SIMULATOR_ORIGIN: LOOPBACK,
+    });
+    expect(config.target).toEqual({ provider: "feishu", origin: OFFICIAL_FEISHU_ORIGIN });
+    expect(readFeishuLoginConfig({
+      ...VALID, NODE_ENV: "production", FEISHU_PROVIDER: "feishu", FEISHU_SIMULATOR_ORIGIN: "https://evil.example",
+    }).target).toEqual({ provider: "feishu", origin: OFFICIAL_FEISHU_ORIGIN });
+    // FEISHU_SIMULATOR_ORIGIN is not even read for the official provider.
+    const reads: string[] = [];
+    const tracked = new Proxy({ ...VALID, NODE_ENV: "test", FEISHU_SIMULATOR_ORIGIN: LOOPBACK }, {
+      get(target, property, receiver) {
+        if (typeof property === "string") reads.push(property);
+        return Reflect.get(target, property, receiver) as unknown;
+      },
+    }) as FeishuLoginConfigSource;
+    expect(readFeishuLoginConfig(tracked).target.provider).toBe("feishu");
+    expect(reads).not.toContain("FEISHU_SIMULATOR_ORIGIN");
+  });
+
+  it("AC2 selects the loopback FEISHU_SIMULATOR_ORIGIN for the simulator with NODE_ENV=test", () => {
+    const config = readFeishuLoginConfig({
+      ...VALID, NODE_ENV: "test", FEISHU_PROVIDER: "simulator", FEISHU_SIMULATOR_ORIGIN: LOOPBACK,
+    });
+    expect(config.target).toEqual({ provider: "simulator", origin: LOOPBACK });
+    expect(Object.isFrozen(config.target)).toBe(true);
+    expect(config.appId).toBe(VALID.FEISHU_APP_ID);
+    // NODE_ENV=development is the other trusted value.
+    expect(readFeishuLoginConfig({
+      ...VALID, NODE_ENV: "development", FEISHU_PROVIDER: "simulator", FEISHU_SIMULATOR_ORIGIN: "http://127.0.0.1:1",
+    }).target).toEqual({ provider: "simulator", origin: "http://127.0.0.1:1" });
+  });
+
+  it("AC3 rejects the simulator with NODE_ENV=production with INVALID_FEISHU_LOGIN_CONFIG", () => {
+    expectRejected({ ...VALID, NODE_ENV: "production", FEISHU_PROVIDER: "simulator", FEISHU_SIMULATOR_ORIGIN: LOOPBACK },
+      ["FEISHU_PROVIDER"]);
+    // An unset or unrecognised NODE_ENV is untrusted too.
+    for (const NODE_ENV of [undefined, "", "staging", "Test", " test"]) {
+      expectRejected({ ...VALID, NODE_ENV, FEISHU_PROVIDER: "simulator", FEISHU_SIMULATOR_ORIGIN: LOOPBACK },
+        ["FEISHU_PROVIDER"]);
+    }
+  });
+
+  it("AC4 rejects the simulator when FEISHU_SIMULATOR_ORIGIN is not a loopback origin", () => {
+    const invalidOrigins = [
+      undefined,
+      "",
+      "https://open.feishu.cn",
+      "http://example.com:8080",
+      "http://localhost:18080",
+      "http://127.1:18080",
+      "http://[::1]:18080",
+      "https://127.0.0.1:18080",
+      "http://127.0.0.1",
+      "http://127.0.0.1:0",
+      "http://127.0.0.1:65536",
+      "http://127.0.0.1:18080/",
+      "http://127.0.0.1:18080/path",
+      " http://127.0.0.1:18080",
+      "http://user@127.0.0.1:18080",
+    ];
+    for (const FEISHU_SIMULATOR_ORIGIN of invalidOrigins) {
+      expectRejected({ ...VALID, NODE_ENV: "test", FEISHU_PROVIDER: "simulator", FEISHU_SIMULATOR_ORIGIN },
+        ["FEISHU_SIMULATOR_ORIGIN"]);
+    }
+  });
+
+  it("AC5 rejects a FEISHU_PROVIDER value other than feishu or simulator", () => {
+    for (const FEISHU_PROVIDER of ["Feishu", "SIMULATOR", "official", "mock", "lark", "local", "feishu,simulator"]) {
+      expectRejected({ ...VALID, NODE_ENV: "test", FEISHU_PROVIDER, FEISHU_SIMULATOR_ORIGIN: LOOPBACK },
+        ["FEISHU_PROVIDER"]);
+      expectRejected({ ...VALID, NODE_ENV: "production", FEISHU_PROVIDER }, ["FEISHU_PROVIDER"]);
+    }
+  });
+
+  it("lists a provider key after the required keys and never carries the provider values", () => {
+    const origin = "http://leak-marker-origin.example:9";
+    const error = expectRejected(
+      { NODE_ENV: "test", FEISHU_PROVIDER: "simulator", FEISHU_SIMULATOR_ORIGIN: origin },
+      [...FEISHU_LOGIN_REQUIRED_KEYS, "FEISHU_SIMULATOR_ORIGIN"],
+    );
+    const unknown = expectRejected({ ...VALID, FEISHU_PROVIDER: "leak-marker-provider" }, ["FEISHU_PROVIDER"]);
+    for (const surface of [error, unknown].flatMap(e => [e.message, e.stack ?? "", JSON.stringify(e), inspect(e, { showHidden: true })])) {
+      for (const fragment of ["leak-marker-origin", "leak-marker-provider", VALID.FEISHU_APP_SECRET]) {
+        expect(surface).not.toContain(fragment);
+      }
     }
   });
 });

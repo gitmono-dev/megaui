@@ -29,10 +29,24 @@
 | `FEISHU_APP_ID` | 是 | 非空，最多 256 个字符，不含空白或 ASCII 控制字符 |
 | `FEISHU_APP_SECRET` | 是 | 同上；只保存在进程内存中，不写入日志或响应 |
 | `ENTERPRISE_OTP_HMAC_KEY` | 是 | 恰为 32 字节的规范 base64url 编码：43 个字符、无填充，解码后再编码须与原值逐字符相等；验证码 HMAC 与身份 HMAC 共用，以不同用途标签区分 |
-| `FEISHU_PROVIDER` | 否 | 缺省 `feishu`；`simulator` 只允许 dev/test 与回环 `FEISHU_SIMULATOR_ORIGIN`。由 FSL-148 加入解析，本函数目前不读取 |
-| `FEISHU_SIMULATOR_ORIGIN` | 否 | 仅 `FEISHU_PROVIDER=simulator` 时使用，须为回环地址。由 FSL-148 加入解析 |
+| `FEISHU_PROVIDER` | 否 | 取值 `feishu` 或 `simulator`，去掉首尾空白后判断；未设置或空白时为 `feishu`（FSL-148） |
+| `FEISHU_SIMULATOR_ORIGIN` | 否 | 仅 `FEISHU_PROVIDER=simulator` 时读取，须恰为 `http://127.0.0.1:<端口>`（FSL-148） |
 
-必填键的取值不去除首尾空白：带空白的取值视为非法，而不是被截断后接受；空字符串与只含空白的取值视为缺失。任一必填键缺失或非法时，函数抛出 `FeishuLoginConfigError`，其 `code` 为 `INVALID_FEISHU_LOGIN_CONFIG`，`keys` 按上表顺序列出全部有问题的键，message 为 `INVALID_FEISHU_LOGIN_CONFIG: <键名, …>`。错误只含键名，不含任何取值。成功时返回冻结的 `{ appId, appSecret, otpHmacKey }`，其中 `otpHmacKey` 是解码后的 32 字节。飞书登录不需要 `FEISHU_TENANT_KEY`、部门、scope、投递、IP、代理与 introspection 等键（ADR-FSL-12）。
+必填键的取值不去除首尾空白：带空白的取值视为非法，而不是被截断后接受；空字符串与只含空白的取值视为缺失。任一必填键缺失或非法时，函数抛出 `FeishuLoginConfigError`，其 `code` 为 `INVALID_FEISHU_LOGIN_CONFIG`，`keys` 按上表顺序列出全部有问题的键，message 为 `INVALID_FEISHU_LOGIN_CONFIG: <键名, …>`。错误只含键名，不含任何取值。成功时返回冻结的 `{ appId, appSecret, otpHmacKey, target }`，其中 `otpHmacKey` 是解码后的 32 字节，`target` 是下文选出的冻结 provider 目标。飞书登录不需要 `FEISHU_TENANT_KEY`、部门、scope、投递、IP、代理与 introspection 等键（ADR-FSL-12）。
+
+#### provider 选择
+
+函数按 `@megaui/core` 现有的 `admitProvider` 准入规则（`packages/core/src/enterprise/provider-admission.ts`）选出唯一的冻结目标 `target = { provider, origin }`，没有备用 provider，也不能按请求替换（FSL-148）。可信与否只看调用方传入的 `NODE_ENV`：`development`、`test` 视为可信；其它取值或未设置时按 `production` 处理。
+
+| `FEISHU_PROVIDER` | 条件 | 结果 |
+|---|---|---|
+| 未设置 / 空白 / `feishu` | 任意 `NODE_ENV`；不读取 `FEISHU_SIMULATOR_ORIGIN` | `{ provider: "feishu", origin: "https://open.feishu.cn" }`，官方地址不可配置 |
+| `simulator` | `NODE_ENV` 为 `development` / `test`，且 `FEISHU_SIMULATOR_ORIGIN` 恰为 `http://127.0.0.1:<1–65535>` | `{ provider: "simulator", origin: <FEISHU_SIMULATOR_ORIGIN> }` |
+| `simulator` | `NODE_ENV` 为其它取值或未设置 | 以 `INVALID_FEISHU_LOGIN_CONFIG` 拒绝，`keys` 含 `FEISHU_PROVIDER` |
+| `simulator` | `NODE_ENV` 可信，但 `FEISHU_SIMULATOR_ORIGIN` 缺失或不是上述回环形式（如 `localhost`、`127.1`、`[::1]`、`https`、缺端口、带路径） | 以 `INVALID_FEISHU_LOGIN_CONFIG` 拒绝，`keys` 含 `FEISHU_SIMULATOR_ORIGIN` |
+| 其它取值（含大小写不同的 `Feishu`、`SIMULATOR`） | 任意 | 以 `INVALID_FEISHU_LOGIN_CONFIG` 拒绝，`keys` 含 `FEISHU_PROVIDER` |
+
+provider 键的错误与必填键的错误一并报告，排在必填键之后。错误同样只含键名，不含 provider 或地址取值。simulator 不能在 production 启用。
 
 **弃用声明（ADR-FSL-13）：** 现有企业模式已弃用，将由本文的飞书邮箱验证码登录取代。弃用范围：`AUTH_MODE=maintenance`、未设置 `AUTH_PROVIDER` 的 `AUTH_MODE=enterprise`、企业认证接口 `/api/auth/enterprise/*`（配对登录与企业 OTP）、飞书事件回调、内部资格接口、collab 企业撤销接口、企业 worker 任务与通讯录同步、admin CLI，以及 20 张 `enterprise_*` 表与 `session` 的企业列。弃用窗口期间（FSL-116 起共 33 个双仓版本）旧企业路径保持可用。自 FSL-132 所在版本起，`AUTH_MODE=enterprise` 但未设置 `AUTH_PROVIDER` 的配置，以及 `AUTH_MODE=maintenance`，都将以配置错误拒绝启动；之后的版本删除现有企业实现。
 
