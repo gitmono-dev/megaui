@@ -52,6 +52,7 @@ const EXPECTED_PUBLIC_TABLES = [
   "enterprise_revocations",
   "feishu_identities",
   "feishu_login_codes",
+  "feishu_login_sessions",
   "mega_agent_threads",
   "mega_channel_members",
   "mega_channels",
@@ -226,6 +227,17 @@ describe.skipIf(!dockerAvailable)(
         { conname: "feishu_identities_open_id_hmac_check", definition: "CHECK ((open_id_hmac ~ '^[0-9a-f]{64}$'::text))" },
         { conname: "feishu_identities_user_app_unique", definition: "UNIQUE (user_id, app_id)" },
         { conname: "feishu_identities_user_id_user_id_fk", definition: "FOREIGN KEY (user_id) REFERENCES \"user\"(id) ON DELETE CASCADE" },
+      ]);
+    });
+
+    it("creates the Feishu session source table constraints (FSL-147)", async () => {
+      const constraints = await pool.query<{ conname: string; definition: string }>(
+        `select conname, pg_get_constraintdef(oid) as definition from pg_constraint
+          where conrelid = 'public.feishu_login_sessions'::regclass order by conname`,
+      );
+      expect(constraints.rows).toEqual([
+        { conname: "feishu_login_sessions_pkey", definition: "PRIMARY KEY (session_id)" },
+        { conname: "feishu_login_sessions_session_id_session_id_fk", definition: "FOREIGN KEY (session_id) REFERENCES session(id) ON DELETE CASCADE" },
       ]);
     });
 

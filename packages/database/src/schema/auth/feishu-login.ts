@@ -1,8 +1,10 @@
-// megaui-only (FSL-119, FSL-163, FSL-120): Feishu login code storage contract and its indexes, and the Feishu
-// identity binding table; issue, verify, account creation and cleanup services follow in their own cards.
+// megaui-only (FSL-119, FSL-163, FSL-120, FSL-147): Feishu login code storage contract and its indexes, the Feishu
+// identity binding table and the Feishu session source table; issue, verify, account creation and cleanup
+// services follow in their own cards.
 import { sql, type InferInsertModel, type InferSelectModel } from "drizzle-orm";
 import { check, index, integer, pgTable, text, timestamp, unique, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 
+import { session } from "./auth";
 import { user } from "./user";
 
 export const FEISHU_LOGIN_CODE_STATES = ["reserved", "active", "consumed", "void"] as const;
@@ -65,3 +67,13 @@ export const feishuIdentities = pgTable("feishu_identities", {
 
 export type FeishuIdentity = InferSelectModel<typeof feishuIdentities>;
 export type NewFeishuIdentity = InferInsertModel<typeof feishuIdentities>;
+
+// FSL-147: marks a better-auth session as issued by Feishu login. Only the session ID is kept; the row
+// disappears with its session. Writing (FSL-124) and reading (FSL-126) follow in their own cards.
+export const feishuLoginSessions = pgTable("feishu_login_sessions", {
+  sessionId: text("session_id").primaryKey().references(() => session.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type FeishuLoginSession = InferSelectModel<typeof feishuLoginSessions>;
+export type NewFeishuLoginSession = InferInsertModel<typeof feishuLoginSessions>;
