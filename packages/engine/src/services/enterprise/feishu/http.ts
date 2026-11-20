@@ -7,10 +7,13 @@
  * redirect is refused instead of followed, and a transport failure cannot
  * reach another source.
  *
- * One operation has a total budget. A transient error is retried at most
- * three times inside that budget with an exponential backoff, while a
- * permanent permission error is not retried at all. The error output names
- * the status and the business code, never a token or a secret.
+ * One operation has a total budget. A transient error is retried inside that
+ * budget with an exponential backoff, up to `maxAttempts` HTTP attempts in all
+ * (three by default), while a permanent permission error is not retried at
+ * all. A caller that decides retries itself (the Feishu login issue service,
+ * FSL-149) passes `maxAttempts: 1`, so every `request()` makes exactly one HTTP
+ * attempt. The error output names the status and the business code, never a
+ * token or a secret.
  */
 import type { ProviderTarget } from "@megaui/core";
 
@@ -48,6 +51,12 @@ export interface FeishuTransportOptions {
   budgetMs?: number;
   /** The base delay of the exponential backoff. */
   backoffMs?: number;
+  /**
+   * The most HTTP attempts one `request()` makes, the first one included: a
+   * positive integer, `FEISHU_MAX_ATTEMPTS` (3) by default. `1` disables the
+   * transport retry, so the caller sees the result of every single attempt.
+   */
+  maxAttempts?: number;
   now?: () => number;
 }
 
@@ -55,7 +64,7 @@ export interface FeishuTransportOptions {
 export const FEISHU_OPERATION_BUDGET_MS = 20_000;
 /** The default base delay of the exponential backoff: 250 ms. */
 export const FEISHU_BACKOFF_BASE_MS = 250;
-/** The maximum number of attempts of one operation. */
+/** The default maximum number of attempts of one operation. */
 export const FEISHU_MAX_ATTEMPTS = 3;
 
 export interface FeishuRequestInit {
@@ -72,14 +81,21 @@ export class FeishuTransport {
   private readonly fetchImpl: typeof fetch;
   private readonly budgetMs: number;
   private readonly backoffMs: number;
+  private readonly maxAttempts: number;
   private readonly now: () => number;
 
   constructor(options: FeishuTransportOptions) {
+    const maxAttempts = options.maxAttempts ?? FEISHU_MAX_ATTEMPTS;
+    // Fail closed on a value that would silently skip or multiply attempts.
+    if (!Number.isSafeInteger(maxAttempts) || maxAttempts < 1) {
+      throw new Error("INVALID_FEISHU_TRANSPORT_MAX_ATTEMPTS");
+    }
     this.target = options.target;
     this.origin = options.target.origin;
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.budgetMs = options.budgetMs ?? FEISHU_OPERATION_BUDGET_MS;
     this.backoffMs = options.backoffMs ?? FEISHU_BACKOFF_BASE_MS;
+    this.maxAttempts = maxAttempts;
     this.now = options.now ?? Date.now;
   }
 
@@ -100,7 +116,7 @@ export class FeishuTransport {
     const deadline = this.now() + this.budgetMs;
     let lastError: unknown;
 
-    for (let attempt = 0; attempt < FEISHU_MAX_ATTEMPTS; attempt += 1) {
+    for (let attempt = 0; attempt < this.maxAttempts; attempt += 1) {
       const remaining = deadline - this.now();
       if (remaining <= 0) break;
       try {
@@ -110,7 +126,7 @@ export class FeishuTransport {
         if (error instanceof FeishuTransportError && !isRetryable(error)) {
           throw error;
         }
-        if (attempt + 1 >= FEISHU_MAX_ATTEMPTS) break;
+        if (attempt + 1 >= this.maxAttempts) break;
         const delay = Math.min(this.backoffMs * 2 ** attempt, deadline - this.now());
         if (delay <= 0) break;
         await sleep(delay);
