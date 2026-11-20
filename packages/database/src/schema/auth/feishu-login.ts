@@ -1,6 +1,9 @@
-// megaui-only (FSL-119, FSL-163): Feishu login code storage contract and its indexes; issue, verify and cleanup services follow in their own cards.
+// megaui-only (FSL-119, FSL-163, FSL-120): Feishu login code storage contract and its indexes, and the Feishu
+// identity binding table; issue, verify, account creation and cleanup services follow in their own cards.
 import { sql, type InferInsertModel, type InferSelectModel } from "drizzle-orm";
-import { check, index, integer, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { check, index, integer, pgTable, text, timestamp, unique, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+
+import { user } from "./user";
 
 export const FEISHU_LOGIN_CODE_STATES = ["reserved", "active", "consumed", "void"] as const;
 export type FeishuLoginCodeState = (typeof FEISHU_LOGIN_CODE_STATES)[number];
@@ -43,3 +46,22 @@ export const feishuLoginCodes = pgTable("feishu_login_codes", {
 
 export type FeishuLoginCode = InferSelectModel<typeof feishuLoginCodes>;
 export type NewFeishuLoginCode = InferInsertModel<typeof feishuLoginCodes>;
+
+// FSL-120: binds one Feishu member of one app to one local user. Only the keyed, irreversible
+// HMAC of the open_id is kept: HMAC-SHA256(ENTERPRISE_OTP_HMAC_KEY, "feishu-identity:v1:" + app_id + ":" + open_id)
+// as lowercase hex; the open_id itself is never stored.
+export const feishuIdentities = pgTable("feishu_identities", {
+  appId: text("app_id").notNull(),
+  openIdHmac: text("open_id_hmac").notNull(),
+  userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, table => ({
+  openIdHmacFormat: check("feishu_identities_open_id_hmac_check", sql`${table.openIdHmac} ~ '^[0-9a-f]{64}$'`),
+  // One Feishu member of one app maps to exactly one local user.
+  member: unique("feishu_identities_app_open_id_hmac_unique").on(table.appId, table.openIdHmac),
+  // One local user carries at most one binding per app.
+  userApp: unique("feishu_identities_user_app_unique").on(table.userId, table.appId),
+}));
+
+export type FeishuIdentity = InferSelectModel<typeof feishuIdentities>;
+export type NewFeishuIdentity = InferInsertModel<typeof feishuIdentities>;

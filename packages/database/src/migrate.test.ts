@@ -50,6 +50,7 @@ const EXPECTED_PUBLIC_TABLES = [
   "enterprise_profile",
   "enterprise_quarantine",
   "enterprise_revocations",
+  "feishu_identities",
   "feishu_login_codes",
   "mega_agent_threads",
   "mega_channel_members",
@@ -212,6 +213,19 @@ describe.skipIf(!dockerAvailable)(
         { indexname: "feishu_login_codes_email_created_at_idx", indexdef: "CREATE INDEX feishu_login_codes_email_created_at_idx ON public.feishu_login_codes USING btree (email_hmac, created_at)" },
         { indexname: "feishu_login_codes_email_seq_uidx", indexdef: "CREATE UNIQUE INDEX feishu_login_codes_email_seq_uidx ON public.feishu_login_codes USING btree (email_hmac, email_seq)" },
         { indexname: "feishu_login_codes_flow_seq_uidx", indexdef: "CREATE UNIQUE INDEX feishu_login_codes_flow_seq_uidx ON public.feishu_login_codes USING btree (flow_hash, flow_seq)" },
+      ]);
+    });
+
+    it("creates the Feishu identity binding constraints (FSL-120)", async () => {
+      const constraints = await pool.query<{ conname: string; definition: string }>(
+        `select conname, pg_get_constraintdef(oid) as definition from pg_constraint
+          where conrelid = 'public.feishu_identities'::regclass order by conname`,
+      );
+      expect(constraints.rows).toEqual([
+        { conname: "feishu_identities_app_open_id_hmac_unique", definition: "UNIQUE (app_id, open_id_hmac)" },
+        { conname: "feishu_identities_open_id_hmac_check", definition: "CHECK ((open_id_hmac ~ '^[0-9a-f]{64}$'::text))" },
+        { conname: "feishu_identities_user_app_unique", definition: "UNIQUE (user_id, app_id)" },
+        { conname: "feishu_identities_user_id_user_id_fk", definition: "FOREIGN KEY (user_id) REFERENCES \"user\"(id) ON DELETE CASCADE" },
       ]);
     });
 
