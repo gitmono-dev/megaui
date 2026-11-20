@@ -69,6 +69,22 @@ export {
   type EnterpriseSessionAuthority,
   type EnterpriseSessionPluginOptions,
 } from "./enterprise-otp/public-session";
+export {
+  FEISHU_LOGIN_PLUGIN_ID,
+  FEISHU_LOGIN_REQUEST_PATH,
+  feishuLogin,
+  type FeishuLoginPluginOptions,
+} from "./feishu-login/plugin";
+export {
+  FEISHU_LOGIN_ISSUE_FAILED,
+  type FeishuLoginIssueInput,
+  type FeishuLoginIssuePort,
+  type FeishuLoginRequestLogKey,
+} from "./feishu-login/request";
+export {
+  FEISHU_LOGIN_FLOW_COOKIE,
+  FEISHU_LOGIN_FLOW_MAX_AGE_SECONDS,
+} from "./feishu-login/cookie";
 
 // Browser / client entry lives at `@megaui/auth/client` so importing the
 // root barrel never pulls Node-only `pg` / drizzle into a client bundle.

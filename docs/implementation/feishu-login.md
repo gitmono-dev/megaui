@@ -275,6 +275,34 @@ FSL-145 的用例以代理收到的全部请求数断言飞书调用次数：同
 
 `packages/engine/src/services/enterprise/feishu/http.test.ts` 以脚本化的 `fetch` 固定传输层现有的重试基线（默认 3 次、暂时性失败重试、永久性失败不重试），并断言 `maxAttempts: 1` 对 5xx、429、连接中断与超时都只发起一次 HTTP 请求；FSL-160 另断言已过截止时间时不调用 `fetch` 并抛出 `transport_deadline`、单次尝试的计时器恰为 `min(传输预算, deadline − 当前时间)`（含传输层重试的第二次尝试）、截止时间之后不再重试，以及不传 `deadline` 时重试与预算不变。`token.test.ts` 以本地 HTTP 服务断言已过截止时间的调用不发请求、两个截止时间不同的调用共享一次刷新时较早截止者在其截止时间以 `transport_deadline` 返回而共享刷新照常完成、刷新请求的单次超时受首个调用方截止时间约束，以及不传 `deadline` 的调用方照旧共享并等待同一次刷新。
 
+## HTTP 接口
+
+飞书登录的 HTTP 端点由 `@megaui/auth` 的 better-auth 插件 `feishuLogin`（`packages/auth/src/feishu-login/`，插件 ID `megaui-feishu-login`）提供。`createAuth` 只在收到 `feishuLogin` 选项（`{ issue, log? }`）时注册该插件；未传入时端点不存在（404）。**当前状态：** Web 尚未传入该选项，由 FSL-150 在飞书模式下接线；在此之前任何部署都不暴露这些端点。
+
+### request
+
+`POST /api/auth/feishu-login/request`（插件路径 `/feishu-login/request`，FSL-123），请求体恰为 `{ "email": "<邮箱>" }`（JSON，至多 4096 字节）。
+
+**输入校验**（`input.ts` 的 `normalizeFeishuLoginEmail`）：先去掉首尾空白、整体转小写，再要求长度为 1–254 个字符且符合本应用既有的邮箱语法，即 better-auth 邮箱路由与 Web 表单所用的 zod 4 `z.email()` 默认模式（`zod@4.5.4` `v4/core/regexes.js` 的 `email`，复制为等价写法，`@megaui/auth` 不直接依赖 zod）。
+
+| 情形 | 状态码 | 响应体 | flow Cookie | 签发端口 |
+|---|---|---|---|---|
+| 媒体类型不恰为 `application/json`；请求体超过 4096 字节、为空或不是合法 JSON；请求体不是恰含 `email` 一个字段的对象；或 `email` 不是字符串、规范化后为空、缺少 `@`、超过 254 个字符、含内部空白或其它不符合语法 | 400 | `{ "code": "INVALID_INPUT" }` | 不设置 | 不调用 |
+| 合法邮箱，请求不带有效 flow Cookie | 202 | `{ "status": "accepted" }` | 签发新 flow | 响应之后调用 |
+| 合法邮箱，请求带有效 flow Cookie | 202 | `{ "status": "accepted" }` | 以同一值重新设置 | 响应之后调用 |
+
+上表的 400 与 202 带 `Cache-Control: no-store`（限流 429 由 better-auth 返回，不保证带该头）。媒体类型须恰为 `application/json`（可带 `charset` 等参数，不区分大小写）。上表的 400 由插件的 `onRequest` 钩子在框架解析请求体之前给出（位于限流之后、端点之前，各环境都执行）：钩子读取请求的副本，按实际读取的字节计（不依赖 `Content-Length`），累计读取超过 4096 字节（`FEISHU_LOGIN_PRECHECK_MAX_BODY_BYTES`）即停止并取消读取（按流的分块计：越限的那一块已被读入，因此已读字节至多为 4096 加一个分块的大小，不会继续读取后续分块），只有媒体类型相符、请求体不超过 4096 字节、是合法 JSON 且通过上述校验的请求才进入端点，其余请求一律返回 400 `INVALID_INPUT`。因此任何请求体都不会在通过这一有界检查之前被完整读取，框架自身的 415 与 `BAD_REQUEST` 不会出现在本路径上；端点内仍保留同一校验作为纵深防御。
+
+**限流**：better-auth 自带的按地址与路径限流在 production 照常以其默认窗口与上限作用于端点会受理的请求，触发时返回 better-auth 的 429，只取决于地址与路径、与邮箱无关。better-auth 在进入任何端点与插件钩子之前判定限流，因此 `createAuth` 为本路径登记限流规则函数 `feishuLoginRequestRateLimitRule`：它读取请求的副本（累计超过 4096 字节即停止，按分块计，见上文；原请求体保持完整），只有端点会受理的请求才沿用 better-auth 解析出的规则并计数；其余请求（媒体类型不符、超过 4096 字节、非合法 JSON 或未通过上述校验）不计数、不受限流，由上述钩子返回 400。这样保持 ADR-FSL-11 的响应顺序「输入非法 400 先于限流 429」，且豁免的请求都不会被受理，不构成限流绕过。非法输入不做任何签发工作。
+
+**flow Cookie**（`cookie.ts`）：名称 `__Host-megaui.feishu-login-flow`，属性 HttpOnly、Secure、SameSite=Lax、Path=/、Max-Age=600，不带 Domain。flow 是 CSPRNG 生成的 256 位随机值，以无填充 base64url 编码（43 个字符）。请求的 `Cookie` 头恰含一个该名称的 Cookie 且其值是规范的 32 字节 base64url 时视为有效，沿用该 flow 并以同一值重新设置 Cookie，Max-Age 重新计为 600 秒（剩余有效期不足 5 分钟的 Cookie 也续期 10 分钟，保证新验证码 5 分钟有效期内 Cookie 不会先到期）；没有该 Cookie、值不规范或重复出现时签发新 flow。服务端不保存 flow 明文：签发端口与验证码表只接收其 SHA-256（64 个小写十六进制字符）。
+
+**签发端口**：202 的响应在任何签发工作之前确定并由 `auth.handler` 返回。端点以 `setImmediate` 把签发端口 `issue({ flowHash, email })`（FSL-150 注入 engine 的 `issueFeishuLoginCode`）排到当前同步执行段之后，在同一 Node 进程内异步执行，请求不等待其结果：`auth.handler` 返回的 `Response` 在端口被调用之前已经完整确定（状态码、响应体与 Cookie 都不依赖端口）。本插件的保证止于 `auth.handler` 的边界：响应字节何时写到客户端由宿主服务器（FSL-150 的 Next 路由）决定，端口调用可能早于字节写出，但不能改变已经确定的响应。端口的返回值不被读取；端口拒绝或同步抛错时只输出稳定日志键 `FEISHU_LOGIN_ISSUE_FAILED`（默认 `console.warn`，不输出错误对象、邮箱或 flow），请求仍为 202。日志函数本身抛错时被吞掉，不产生未处理的 Promise 拒绝。进程在端口执行前退出时本次验证码不会发出，用户重新请求即可（ADR-FSL-11）。
+
+请求路径不访问飞书、不查询账号或身份，因此已知、未知与多人邮箱的状态码、响应体与 Cookie 属性相同；带同一 flow Cookie 时 `Set-Cookie` 逐字节相同。自 FSL-154 起，响应前改为先等待只访问数据库的预约事务提交（失败时 503 `{ "status": "retry" }`）；本卡的请求路径不访问数据库。
+
+`packages/auth/src/feishu-login/request.test.ts` 以 `createAuth` 加注入端口构造，经 `auth.handler` 断言上述响应、Cookie 属性与续期、端口收到的规范化邮箱与 flow 哈希、400 时不设置 Cookie 且不调用端口、响应先于端口调用返回、端口出错时只记录稳定日志键、未传入选项时端点为 404，以及 production 限流配置下同一地址超限后非法输入（含超过 4096 字节的请求体）仍返回 400、已知 / 未知 / 多人邮箱返回相同的 429。
+
 ## 数据
 
 `feishu_login_codes` 的邮箱、open_id、姓名与验证码 HMAC 只在 `active` 期间保存（FSL-119 的双向 CHECK），消费、作废时在同一语句中清空；未使用而过期的行与超过保留期的行由到期清理处理（FSL-146）。**当前状态：** 调度器尚未接入任何进程，由 FSL-150 在 `apps/web/instrumentation.ts` 的 `register()` 中于飞书模式等待其启动。

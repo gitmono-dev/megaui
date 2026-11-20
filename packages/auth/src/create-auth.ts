@@ -47,6 +47,12 @@ import {
   createEnterpriseSessionPlugin,
   type EnterpriseSessionPluginOptions,
 } from "./enterprise-otp/public-session";
+import {
+  FEISHU_LOGIN_REQUEST_PATH,
+  feishuLogin,
+  feishuLoginRequestRateLimitRule,
+  type FeishuLoginPluginOptions,
+} from "./feishu-login/plugin";
 
 export interface CreateAuthConfig {
   /** Display name in auth emails / better-auth `appName` (required — no brand default). */
@@ -80,6 +86,12 @@ export interface CreateAuthConfig {
   enterpriseOperationPolicy?: EnterpriseOperationPolicyOptions;
   /** Public session projection, kept separate from Better Auth's internal session output. */
   enterpriseSession?: EnterpriseSessionPluginOptions;
+  /**
+   * FSL-123: the Feishu login request endpoint (`POST /feishu-login/request`). The plugin is
+   * registered only when this is passed; Better Auth's per-address rate limit still applies to
+   * admissible requests, while invalid inputs answer 400 ahead of it (ADR-FSL-11 order).
+   */
+  feishuLogin?: FeishuLoginPluginOptions;
 }
 
 function requireNonEmpty(value: string | undefined, name: string): string {
@@ -292,6 +304,7 @@ export function createAuth(config: CreateAuthConfig) {
         : []),
       ...(config.enterpriseSession ? [createEnterpriseSessionPlugin(config.enterpriseSession)] : []),
       ...(config.enterprisePairing ? [createEnterprisePairingPlugin(config.enterprisePairing)] : []),
+      ...(config.feishuLogin ? [feishuLogin(config.feishuLogin)] : []),
     ],
     rateLimit: {
       enabled: nodeEnv === "production",
@@ -305,6 +318,7 @@ export function createAuth(config: CreateAuthConfig) {
           max: 1,
         },
         ...(config.enterprisePairing ? { "/enterprise/request": false, "/enterprise/status": false } : {}),
+        ...(config.feishuLogin ? { [FEISHU_LOGIN_REQUEST_PATH]: feishuLoginRequestRateLimitRule } : {}),
       },
     },
   });
