@@ -4,7 +4,7 @@
 
 ## 配置
 
-`@megaui/core` 的 `resolveAuthMode({ AUTH_MODE, AUTH_PROVIDER })`（`packages/core/src/auth/mode.ts`，FSL-116）是认证模式与提供方的单一解析规则。它是不读取环境的纯函数，按下表返回结果或拒绝。**当前状态：** 本函数尚未接入任何进程；Web、collab 与 engine 仍按各自现有路径解析 `AUTH_MODE`。由 FSL-121（Web 配置）、FSL-126（Web 会话入口）、FSL-128（collab）接入后，下表规则才对相应进程生效。飞书登录端点由 FSL-150 接线、FSL-131 切换入口；在此之前，设置 `AUTH_PROVIDER=feishu` 不会启用飞书登录。
+`@megaui/core` 的 `resolveAuthMode({ AUTH_MODE, AUTH_PROVIDER })`（`packages/core/src/auth/mode.ts`，FSL-116）是认证模式与提供方的单一解析规则。它是不读取环境的纯函数，按下表返回结果或拒绝。**当前状态：** 本函数尚未接入任何进程；Web、collab 与 engine 仍按各自现有路径解析 `AUTH_MODE`。由 FSL-126（Web 会话入口）、FSL-150（Web 接线，同时接入 FSL-121 的 `readFeishuLoginConfig`）、FSL-128（collab）接入后，下表规则才对相应进程生效。飞书登录端点由 FSL-150 接线、FSL-131 切换入口；在此之前，设置 `AUTH_PROVIDER=feishu` 不会启用飞书登录。
 
 | `AUTH_MODE` | `AUTH_PROVIDER` | 结果 |
 |---|---|---|
@@ -19,6 +19,20 @@
 | 其它值 | 未设置 / `local` / `feishu` | 以 `INVALID_AUTH_MODE` 拒绝 |
 
 取值去掉首尾空白后再判断，空白值视为未设置。错误信息只写键名，不写取值。
+
+### 飞书登录的键
+
+`readFeishuLoginConfig(source)`（`apps/web/lib/feishu-login-config.ts`，FSL-121）读取并校验飞书登录的必填键。它与 `resolveAuthMode` 一样是不读取环境的纯函数，由调用方传入原始取值。**当前状态：** 本函数尚未接入 Web，由 FSL-150 接线后才在 `AUTH_MODE=enterprise`、`AUTH_PROVIDER=feishu` 的 Web 启动时生效。
+
+| 键 | 必填 | 规则 |
+|---|---|---|
+| `FEISHU_APP_ID` | 是 | 非空，最多 256 个字符，不含空白或 ASCII 控制字符 |
+| `FEISHU_APP_SECRET` | 是 | 同上；只保存在进程内存中，不写入日志或响应 |
+| `ENTERPRISE_OTP_HMAC_KEY` | 是 | 恰为 32 字节的规范 base64url 编码：43 个字符、无填充，解码后再编码须与原值逐字符相等；验证码 HMAC 与身份 HMAC 共用，以不同用途标签区分 |
+| `FEISHU_PROVIDER` | 否 | 缺省 `feishu`；`simulator` 只允许 dev/test 与回环 `FEISHU_SIMULATOR_ORIGIN`。由 FSL-148 加入解析，本函数目前不读取 |
+| `FEISHU_SIMULATOR_ORIGIN` | 否 | 仅 `FEISHU_PROVIDER=simulator` 时使用，须为回环地址。由 FSL-148 加入解析 |
+
+必填键的取值不去除首尾空白：带空白的取值视为非法，而不是被截断后接受；空字符串与只含空白的取值视为缺失。任一必填键缺失或非法时，函数抛出 `FeishuLoginConfigError`，其 `code` 为 `INVALID_FEISHU_LOGIN_CONFIG`，`keys` 按上表顺序列出全部有问题的键，message 为 `INVALID_FEISHU_LOGIN_CONFIG: <键名, …>`。错误只含键名，不含任何取值。成功时返回冻结的 `{ appId, appSecret, otpHmacKey }`，其中 `otpHmacKey` 是解码后的 32 字节。飞书登录不需要 `FEISHU_TENANT_KEY`、部门、scope、投递、IP、代理与 introspection 等键（ADR-FSL-12）。
 
 **弃用声明（ADR-FSL-13）：** 现有企业模式已弃用，将由本文的飞书邮箱验证码登录取代。弃用范围：`AUTH_MODE=maintenance`、未设置 `AUTH_PROVIDER` 的 `AUTH_MODE=enterprise`、企业认证接口 `/api/auth/enterprise/*`（配对登录与企业 OTP）、飞书事件回调、内部资格接口、collab 企业撤销接口、企业 worker 任务与通讯录同步、admin CLI，以及 20 张 `enterprise_*` 表与 `session` 的企业列。弃用窗口期间（FSL-116 起共 33 个双仓版本）旧企业路径保持可用。自 FSL-132 所在版本起，`AUTH_MODE=enterprise` 但未设置 `AUTH_PROVIDER` 的配置，以及 `AUTH_MODE=maintenance`，都将以配置错误拒绝启动；之后的版本删除现有企业实现。
 
