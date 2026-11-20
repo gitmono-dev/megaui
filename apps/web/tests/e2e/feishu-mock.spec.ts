@@ -87,7 +87,7 @@ test.describe("feishu mock protocol", () => {
       expect(control.status).toBe(200);
 
       const view = await stateOf(mock);
-      expect(view.data.users).toHaveLength(3);
+      expect(view.data.users).toHaveLength(6);
       expect(view.data.inboxes.ou_mock_alice).toHaveLength(1);
       expect(await waitForEvents(mock, 1)).toHaveLength(1);
 

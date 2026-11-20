@@ -7,6 +7,8 @@
  *
  * FSM-09 起本模块也承载 provider 的受保护路由：目录读取要用本 run 签发且仍
  * 有效的 tenant token。
+ *
+ * FSL-118 起本模块把 Directory v1 员工路由分发给 `employees.ts`。
  */
 import { randomBytes } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -20,6 +22,11 @@ import {
   queryDepartment,
   type MockCursorStore,
 } from "./directory";
+import {
+  handleEmployeesRequest,
+  MOCK_EMPLOYEES_MGET_PATH,
+  MOCK_EMPLOYEES_SEARCH_PATH,
+} from "./employees";
 import { asyncFaultError, faultError, runFaultDelay, type MockFaultStore, type MockFaultTarget } from "./faults";
 import type { MockLifecycle } from "./lifecycle";
 import { admitMessageInput } from "./message-input";
@@ -175,6 +182,12 @@ export async function handleProviderRequest(
   }
   if (path === MOCK_MESSAGE_PATH) {
     await handleMessageRequest(request, response, state, tokens, messages, faults, lifecycle);
+    return;
+  }
+  if (path === MOCK_EMPLOYEES_SEARCH_PATH || path === MOCK_EMPLOYEES_MGET_PATH) {
+    // FSL-118: the Directory v1 employee routes answer their own measured
+    // authentication failures; every other route keeps its own.
+    await handleEmployeesRequest(request, response, path, state, tokens);
     return;
   }
   sendMockError(response, mockError(4, "not_found"));

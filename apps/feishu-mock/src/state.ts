@@ -101,9 +101,9 @@ export interface MockFaultRule {
 /**
  * The fixed synthetic fixture.
  *
- * Every value is obviously synthetic: reserved test domains for the two
- * notification addresses, an empty address for the third member and no real
- * person data anywhere.
+ * Every value is obviously synthetic: reserved test domains for every
+ * address, an empty address for the third member and no real person data
+ * anywhere.
  */
 export const SYNTHETIC_USERS: readonly MockUser[] = [
   {
@@ -137,6 +137,42 @@ export const SYNTHETIC_USERS: readonly MockUser[] = [
     department_ids: [MOCK_DEPARTMENT_OPERATIONS],
     email: "",
     enterprise_email: "",
+    status: statusFlags("active"),
+  },
+  // FSL-118: three members outside every department, so they never appear in
+  // the department pages. They exist for the Directory v1 employee routes: one
+  // with only an enterprise address, and two sharing one enterprise address.
+  {
+    open_id: "ou_mock_dave",
+    user_id: "u_mock_dave",
+    union_id: "on_mock_dave",
+    name: "Mock Dave",
+    mobile: "+15550000004",
+    department_ids: [],
+    email: "",
+    enterprise_email: "dave@corp.example.com",
+    status: statusFlags("active"),
+  },
+  {
+    open_id: "ou_mock_erin",
+    user_id: "u_mock_erin",
+    union_id: "on_mock_erin",
+    name: "Mock Erin",
+    mobile: "+15550000005",
+    department_ids: [],
+    email: "",
+    enterprise_email: "shared@corp.example.com",
+    status: statusFlags("active"),
+  },
+  {
+    open_id: "ou_mock_frank",
+    user_id: "u_mock_frank",
+    union_id: "on_mock_frank",
+    name: "Mock Frank",
+    mobile: "+15550000006",
+    department_ids: [],
+    email: "",
+    enterprise_email: "shared@corp.example.com",
     status: statusFlags("active"),
   },
 ];

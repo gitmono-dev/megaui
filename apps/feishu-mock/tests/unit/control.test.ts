@@ -181,6 +181,9 @@ describe("mock control plane (FSM-07)", () => {
       "ou_mock_alice",
       "ou_mock_bob",
       "ou_mock_carol",
+      "ou_mock_dave",
+      "ou_mock_erin",
+      "ou_mock_frank",
     ]);
     expect(users[0]?.department_ids).toEqual([MOCK_DEPARTMENT_ENGINEERING]);
     expect(users[1]?.department_ids).toEqual([MOCK_DEPARTMENT_ENGINEERING]);
@@ -188,6 +191,14 @@ describe("mock control plane (FSM-07)", () => {
     expect(users[0]?.email).toMatch(/@example\.com$/);
     expect(users[1]?.email).toMatch(/@example\.com$/);
     expect(users[2]?.email).toBe("");
+    // FSL-118: the three Directory v1 members belong to no department.
+    expect(users[3]?.department_ids).toEqual([]);
+    expect(users[4]?.department_ids).toEqual([]);
+    expect(users[5]?.department_ids).toEqual([]);
+    expect(users[3]?.email).toBe("");
+    expect(users[3]?.enterprise_email).toBe("dave@corp.example.com");
+    expect(users[4]?.enterprise_email).toBe("shared@corp.example.com");
+    expect(users[5]?.enterprise_email).toBe(users[4]?.enterprise_email);
 
     const state = createMockState();
     expect(state.departments.map((department) => department.open_department_id)).toEqual([
