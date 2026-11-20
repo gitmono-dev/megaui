@@ -8,7 +8,7 @@
  * same POST, so every retry carries the same UUID and payload.
  */
 import { FeishuTransport, FeishuTransportError } from "./http";
-import { FeishuTokenManager } from "./token";
+import { FeishuTokenManager, type FeishuTokenRequestOptions } from "./token";
 import type { FeishuTenantCredentials } from "./types";
 
 /** The only provider route used for enterprise login messages. */
@@ -26,13 +26,27 @@ export interface FeishuMessageClientOptions {
   /** Reuses the process token cache and single-flight refresh layer. */
   readonly tokenManager?: FeishuTokenManager;
   /** Test/assembly seam; production uses tokenManager. */
-  readonly getToken?: (credentials: FeishuTenantCredentials) => Promise<string>;
+  readonly getToken?: FeishuMessageGetToken;
   /** Server-configured site where the user must enter the code. */
   readonly trustedSiteUrl: string;
   /** Optional fixed product label used in the human-facing message. */
   readonly applicationName?: string;
   /** Optional fixed purpose; callers cannot supply arbitrary message text. */
   readonly purpose?: string;
+}
+
+/** The token source of the client: the token manager, or a test/assembly seam. */
+export type FeishuMessageGetToken = (
+  credentials: FeishuTenantCredentials,
+  options?: FeishuTokenRequestOptions,
+) => Promise<string>;
+
+/** FSL-160: the options of one `send` call. */
+export interface FeishuMessageSendOptions {
+  /** A token the caller already holds; the token source is then not asked. */
+  readonly token?: string;
+  /** The absolute deadline of the call, on the clock of the transport. */
+  readonly deadline?: number;
 }
 
 export interface FeishuLoginMessageInput {
@@ -59,7 +73,11 @@ export type FeishuMessageResult =
   | {
       readonly kind: "rejected";
       readonly uuid: string;
-      readonly reason: "permission" | "provider" | "invalid_response";
+      /**
+       * `deadline` (FSL-160): the caller's deadline passed before the request was started,
+       * so nothing reached the provider.
+       */
+      readonly reason: "permission" | "provider" | "invalid_response" | "deadline";
       readonly status?: number;
       readonly businessCode?: number;
     };
@@ -89,6 +107,13 @@ interface ProviderMessageData {
  * including the same UUID, on every attempt. A timeout or connection failure
  * is deliberately reported as unknown: the provider may have accepted the
  * message, so a caller must not manufacture a second code.
+ *
+ * FSL-160: `send` takes optional call options. `token` is used as it is
+ * instead of asking the token source; `deadline` (absolute milliseconds on the
+ * transport clock) is handed unchanged to the token source and the transport.
+ * A deadline that passed before the request left is reported as `rejected`
+ * with reason `deadline`: nothing reached the provider. Without options nothing
+ * changes.
  */
 export class FeishuMessageClient {
   readonly tenantKey: string;
@@ -96,7 +121,7 @@ export class FeishuMessageClient {
 
   private readonly transport: FeishuTransport;
   private readonly credentials: FeishuTenantCredentials;
-  private readonly getToken: (credentials: FeishuTenantCredentials) => Promise<string>;
+  private readonly getToken: FeishuMessageGetToken;
   private readonly trustedSiteUrl: string;
   private readonly applicationName: string;
   private readonly purpose: string;
@@ -124,7 +149,7 @@ export class FeishuMessageClient {
     this.tenantKey = this.credentials.tenantKey;
     this.appId = this.credentials.appId;
     this.getToken = options.tokenManager
-      ? (credentials) => options.tokenManager!.getToken(credentials)
+      ? (credentials, tokenOptions) => options.tokenManager!.getToken(credentials, tokenOptions)
       : options.getToken!;
     this.trustedSiteUrl = options.trustedSiteUrl;
     this.applicationName = options.applicationName ?? DEFAULT_APPLICATION_NAME;
@@ -132,7 +157,10 @@ export class FeishuMessageClient {
   }
 
   /** Sends one server-bound login code; no raw message text is logged. */
-  async send(input: FeishuLoginMessageInput): Promise<FeishuMessageResult> {
+  async send(
+    input: FeishuLoginMessageInput,
+    options: FeishuMessageSendOptions = {},
+  ): Promise<FeishuMessageResult> {
     if (
       !input ||
       !isNonBlankText(input.boundOpenId) ||
@@ -142,9 +170,17 @@ export class FeishuMessageClient {
       throw new Error("INVALID_FEISHU_MESSAGE_INPUT");
     }
 
+    const { deadline } = options;
     let token: string;
     try {
-      token = await this.getToken(this.credentials);
+      // An explicit token is used as it is (FSL-160); otherwise the token source is asked,
+      // with the deadline when there is one.
+      token =
+        options.token !== undefined
+          ? options.token
+          : deadline === undefined
+            ? await this.getToken(this.credentials)
+            : await this.getToken(this.credentials, { deadline });
     } catch (error) {
       return tokenFailure(input.uuid, error);
     }
@@ -172,6 +208,7 @@ export class FeishuMessageClient {
             content,
             uuid: input.uuid,
           },
+          ...(deadline === undefined ? {} : { deadline }),
         },
       );
       const message = readMessageResponse(envelope);
@@ -189,8 +226,11 @@ export class FeishuMessageClient {
   }
 
   /** Alias used by delivery workers that call the operation `sendCode`. */
-  async sendCode(input: FeishuLoginMessageInput): Promise<FeishuMessageResult> {
-    return this.send(input);
+  async sendCode(
+    input: FeishuLoginMessageInput,
+    options: FeishuMessageSendOptions = {},
+  ): Promise<FeishuMessageResult> {
+    return this.send(input, options);
   }
 }
 
@@ -224,6 +264,7 @@ function readMessageResponse(
 
 function tokenFailure(uuid: string, error: unknown): FeishuMessageResult {
   if (error instanceof FeishuTransportError) {
+    if (error.code === "transport_deadline") return { kind: "rejected", uuid, reason: "deadline" };
     if (error.code === "transport_permanent" || error.code === "transport_redirect") {
       return {
         kind: "rejected",
@@ -247,6 +288,8 @@ function messageFailure(uuid: string, error: unknown): FeishuMessageResult {
   if (!(error instanceof FeishuTransportError)) {
     return { kind: "unknown", uuid, stage: "message", reason: "unavailable" };
   }
+  // The transport refuses before the request leaves: the provider never saw it.
+  if (error.code === "transport_deadline") return { kind: "rejected", uuid, reason: "deadline" };
   if (error.code === "transport_permanent" || error.code === "transport_redirect") {
     return {
       kind: "rejected",

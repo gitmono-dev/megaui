@@ -1,5 +1,6 @@
-// megaui-only (FSL-122, FSL-149, FSL-145): the issue main flow, its state checks, its send outcomes, the
-// cooldown and the global budget against a one-shot PostgreSQL and a real Feishu Mock process.
+// megaui-only (FSL-122, FSL-149, FSL-145, FSL-160): the issue main flow, its state checks, its send
+// outcomes, the cooldown, the global budget and the absolute deadline of the delivery against a
+// one-shot PostgreSQL and a real Feishu Mock process.
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
@@ -156,6 +157,15 @@ describe("Feishu login code issue main flow with real Mock HTTP and PostgreSQL (
    * margin of the token manager, so every `getToken` call starts a refresh.
    */
   let tokenExpireOverride: number | undefined;
+  /**
+   * FSL-160: the clock injected into the service is the real clock plus this offset, so a test
+   * can move the service past its delivery deadline while the database clock stays put.
+   */
+  let clockOffset: number;
+  /** The service clock. */
+  const serviceNow = () => Date.now() + clockOffset;
+  /** Every request the proxy received, with the service clock at its arrival (FSL-160). */
+  let requestLog: Array<{ pathname: string; at: number }>;
 
   function plan(pathname: string, ...actions: ProxyAction[]): void {
     script.set(pathname, [...(script.get(pathname) ?? []), ...actions]);
@@ -198,7 +208,10 @@ describe("Feishu login code issue main flow with real Mock HTTP and PostgreSQL (
     return (JSON.parse(entry.content) as { text: string }).text;
   }
 
-  function buildIssuer(over: Pool = pool): FeishuLoginIssuer {
+  function buildIssuer(
+    over: Pool = pool,
+    log: (key: FeishuLoginIssueLogKey) => void = (key) => logs.push(key),
+  ): FeishuLoginIssuer {
     return createFeishuLoginIssuer({
       pool: over,
       appId: env.FEISHU_APP_ID,
@@ -211,9 +224,10 @@ describe("Feishu login code issue main flow with real Mock HTTP and PostgreSQL (
         codes.push(code);
         return code;
       },
-      log: (key) => logs.push(key),
+      log,
       attemptTimeoutMs: ATTEMPT_TIMEOUT_MS,
       retryBackoffMs: 10,
+      now: serviceNow,
     });
   }
 
@@ -300,6 +314,7 @@ describe("Feishu login code issue main flow with real Mock HTTP and PostgreSQL (
         const pathname = (incoming.url ?? "").split("?")[0]!;
         if (pathname === TOKEN_PATHNAME) tokenRequests += 1;
         feishuRequests += 1;
+        requestLog.push({ pathname, at: serviceNow() });
         requestsByPath.set(pathname, (requestsByPath.get(pathname) ?? 0) + 1);
         const action: ProxyAction = script.get(pathname)?.shift() ?? { kind: "forward" };
         const forward = (hang: boolean, replace?: { status: number; body: unknown }) => {
@@ -389,6 +404,8 @@ describe("Feishu login code issue main flow with real Mock HTTP and PostgreSQL (
     feishuRequests = 0;
     requestsByPath = new Map();
     tokenExpireOverride = undefined;
+    clockOffset = 0;
+    requestLog = [];
     issuer = buildIssuer();
   });
 
@@ -1276,43 +1293,29 @@ describe("Feishu login code issue main flow with real Mock HTTP and PostgreSQL (
     });
   }
 
-  scenario("FSL-149 AC4: a shared token refresh answering HTTP 429 rejects every waiting send", async () => {
-    // Every getToken call refreshes, and both requests stop before their activation.
-    tokenExpireOverride = 60;
-    const arrivedA = deferred();
-    const arrivedB = deferred();
-    const lookups = deferred();
-    plan(
-      MGET_PATHNAME,
-      { kind: "forward", arrived: arrivedA.resolve, release: lookups.promise },
-      { kind: "forward", arrived: arrivedB.resolve, release: lookups.promise },
-    );
-    const first = issuer.issueFeishuLoginCode({ flowHash: flowHash(), email: ALICE.email });
-    const second = issuer.issueFeishuLoginCode({ flowHash: flowHash(), email: BOB.email });
-    await Promise.all([arrivedA.promise, arrivedB.promise]);
-    // The next token refresh is held until both requests wait on it, then answers 429.
+  scenario("FSL-160 AC5/AC6: two deliveries share the token refresh of their start; HTTP 429 voids both before any lookup", async () => {
+    // FSL-160 moved the token to the start of the delivery: a failed shared refresh is a failed
+    // lookup for every delivery waiting on it, and no send ever takes a token of its own.
+    tokenExpireOverride = 30;
     const tokenArrived = deferred();
     const tokenRelease = deferred();
     plan(TOKEN_PATHNAME, { kind: "reply", ...RATE_LIMITED, arrived: tokenArrived.resolve, release: tokenRelease.promise });
-    const tokensBefore = tokenRequests;
-    lookups.resolve();
+    const first = issuer.issueFeishuLoginCode({ flowHash: flowHash(), email: ALICE.email });
     await tokenArrived.promise;
-    await waitFor(
-      async () => (await rows()).filter((row) => row.state === "active").length === 2,
-      "both requests to activate",
-    );
-    // Both are past their activation commit; the later one joins the held refresh.
+    const second = issuer.issueFeishuLoginCode({ flowHash: flowHash(), email: BOB.email });
+    await waitFor(async () => (await rows()).length === 2, "the second reservation");
+    // The second delivery has passed its start and joined the held refresh.
     await new Promise((resolve) => setTimeout(resolve, 200));
     tokenRelease.resolve();
-    expect(await first).toEqual({ status: "sent", send: "rejected" });
-    expect(await second).toEqual({ status: "sent", send: "rejected" });
-    // One shared refresh, no retry and no message request.
-    expect(tokenRequests - tokensBefore).toBe(1);
+    expect(await first).toEqual({ status: "provider_failed" });
+    expect(await second).toEqual({ status: "provider_failed" });
+    expect(tokenRequests).toBe(1);
+    expect(feishuRequests).toBe(1);
     expect(sendRequests).toBe(0);
     const stored = await rows();
     expect(stored).toHaveLength(2);
     for (const row of stored) expect(row).toMatchObject(VOID_CLEARED);
-    expect(logs).toEqual([FEISHU_LOGIN_SEND_REJECTED, FEISHU_LOGIN_SEND_REJECTED]);
+    expect(logs).toEqual([FEISHU_LOGIN_PROVIDER_FAILED, FEISHU_LOGIN_PROVIDER_FAILED]);
     await expectHygiene();
   });
 
@@ -1945,6 +1948,235 @@ describe("Feishu login code issue main flow with real Mock HTTP and PostgreSQL (
     expect(requestsByPath.get(SEARCH_PATHNAME)).toBe(1);
     expect(await rowCount()).toBe(GLOBAL_BUDGET);
     expect(logs.filter((key) => key === FEISHU_LOGIN_GLOBAL_BUDGET)).toHaveLength(emails.length - 1);
+    await expectHygiene();
+  });
+  // ---------------------------------------------------------------------------------------
+  // FSL-160: the reservation expiry is the absolute deadline of every Feishu request.
+  // ---------------------------------------------------------------------------------------
+
+  /** The reservation TTL: the service deadline is at most this long after the call started. */
+  const RESERVATION_TTL_MS = 120_000;
+  /** How far a test moves the service clock: past every deadline of the request under test. */
+  const PAST_DEADLINE_MS = RESERVATION_TTL_MS + 1_000;
+
+  /**
+   * Moves the service clock past the deadline of a request that started at `startedAt` (the
+   * service clock read just before the call).
+   */
+  function crossDeadline(startedAt: number): void {
+    clockOffset += PAST_DEADLINE_MS;
+    expect(serviceNow()).toBeGreaterThan(startedAt + RESERVATION_TTL_MS);
+  }
+
+  /**
+   * No Feishu request arrived at or after the deadline. The service reads its clock after
+   * `startedAt`, so its deadline is at least `startedAt + TTL`: a request at or after the
+   * deadline would have arrived at or after `startedAt + TTL`.
+   */
+  function expectNoRequestAfterDeadline(startedAt: number): void {
+    expect(requestLog.length).toBe(feishuRequests);
+    for (const entry of requestLog) expect(entry.at).toBeLessThan(startedAt + RESERVATION_TTL_MS);
+  }
+
+  scenario("FSL-160 AC1: a deadline passed before the delivery starts its calls makes no token request and voids the row", async () => {
+    // The delivery start is held; meanwhile the service clock passes the deadline. The database
+    // clock does not move, so the row is still an unexpired reservation for `beginDelivery`.
+    const gate = pauseFirst((text) => text.includes("select state, expires_at > clock_timestamp() as live"));
+    const gated = buildIssuer(gate.pool);
+    const startedAt = serviceNow();
+    const pending = gated.issueFeishuLoginCode({ flowHash: flowHash(), email: ALICE.email });
+    await gate.arrived;
+    crossDeadline(startedAt);
+    gate.release();
+    expect(await pending).toEqual({ status: "provider_failed" });
+    expect(tokenRequests).toBe(0);
+    expect(feishuRequests).toBe(0);
+    expectNoRequestAfterDeadline(startedAt);
+    expect((await rows())[0]).toMatchObject(VOID_CLEARED);
+    expect(await allInboxCount()).toBe(0);
+    expect(codes).toHaveLength(0);
+    expect(logs).toEqual([FEISHU_LOGIN_PROVIDER_FAILED]);
+    await expectHygiene();
+  });
+
+  for (const [label, offset] of [
+    ["", 0],
+    [" (service clock 10 minutes behind the database)", -600_000],
+    [" (service clock 10 minutes ahead of the database)", 600_000],
+  ] as const) {
+    scenario(`FSL-160 AC2: a deadline passed between the two directory calls makes no member read and voids the row${label}`, async () => {
+      // A constant offset between the service clock and the database clock does not move the
+      // deadline relative to the reservation: only elapsed service time counts.
+      clockOffset = offset;
+      const arrived = deferred();
+      const release = deferred();
+      plan(SEARCH_PATHNAME, { kind: "forward", arrived: arrived.resolve, release: release.promise });
+      const startedAt = serviceNow();
+      const pending = issuer.issueFeishuLoginCode({ flowHash: flowHash(), email: ALICE.email });
+      await arrived.promise;
+      crossDeadline(startedAt);
+      release.resolve();
+      expect(await pending).toEqual({ status: "provider_failed" });
+      expect(requestsByPath.get(TOKEN_PATHNAME)).toBe(1);
+      expect(requestsByPath.get(SEARCH_PATHNAME)).toBe(1);
+      expect(requestsByPath.get(MGET_PATHNAME) ?? 0).toBe(0);
+      expect(feishuRequests).toBe(2);
+      expectNoRequestAfterDeadline(startedAt);
+      expect((await rows())[0]).toMatchObject(VOID_CLEARED);
+      expect(sendRequests).toBe(0);
+      expect(logs).toEqual([FEISHU_LOGIN_PROVIDER_FAILED]);
+      await expectHygiene();
+    });
+  }
+
+  scenario("FSL-160 AC3: a deadline passed between send retries stops them; the earlier unknown keeps the row active", async () => {
+    const arrived = deferred();
+    const release = deferred();
+    plan(MESSAGE_PATHNAME, {
+      kind: "reply",
+      status: 500,
+      body: { code: 8, msg: "unavailable" },
+      arrived: arrived.resolve,
+      release: release.promise,
+    });
+    const startedAt = serviceNow();
+    const pending = issuer.issueFeishuLoginCode({ flowHash: flowHash(), email: ALICE.email });
+    await arrived.promise;
+    crossDeadline(startedAt);
+    release.resolve();
+    // The first attempt was unknown (HTTP 500); the retry is refused before it leaves, and the
+    // accumulated outcome of FSL-149 decides: unknown, the row stays active.
+    expect(await pending).toEqual({ status: "sent", send: "unknown" });
+    expect(sendRequests).toBe(1);
+    expect(feishuRequests).toBe(4);
+    expectNoRequestAfterDeadline(startedAt);
+    expect((await rows())[0]).toMatchObject({ state: "active", open_id: ALICE.openId });
+    expect(logs).toEqual([FEISHU_LOGIN_SEND_ATTEMPT, FEISHU_LOGIN_SEND_UNKNOWN]);
+    await expectHygiene();
+  });
+
+  scenario("FSL-160 AC3: a deadline passed after activation sends nothing; the attempt counts as rejected and voids the row", async () => {
+    const arrived = deferred();
+    const release = deferred();
+    plan(MGET_PATHNAME, { kind: "forward", arrived: arrived.resolve, release: release.promise });
+    const startedAt = serviceNow();
+    const pending = issuer.issueFeishuLoginCode({ flowHash: flowHash(), email: ALICE.email });
+    await arrived.promise;
+    crossDeadline(startedAt);
+    release.resolve();
+    // The activation runs on the database clock; the send is refused by the service deadline,
+    // so Feishu never saw it and every attempt counts as rejected (FSL-149).
+    expect(await pending).toEqual({ status: "sent", send: "rejected" });
+    expect(sendRequests).toBe(0);
+    expect(feishuRequests).toBe(3);
+    expectNoRequestAfterDeadline(startedAt);
+    expect((await rows())[0]).toMatchObject(VOID_CLEARED);
+    expect(await allInboxCount()).toBe(0);
+    expect(logs).toEqual([FEISHU_LOGIN_SEND_REJECTED]);
+    await expectHygiene();
+  });
+
+  scenario("FSL-160 AC3: a send-attempt log that takes the clock past the deadline cannot start a request after it", async () => {
+    // The attempt key is logged before the attempt; this log passes the deadline. The transport
+    // checks the deadline after the log, as its last step before fetch, so no request leaves:
+    // the key over-counts by one, it never under-counts.
+    const startedAt = serviceNow();
+    const slowLogIssuer = buildIssuer(pool, (key) => {
+      logs.push(key);
+      if (key === FEISHU_LOGIN_SEND_ATTEMPT) crossDeadline(startedAt);
+    });
+    expect(await slowLogIssuer.issueFeishuLoginCode({ flowHash: flowHash(), email: ALICE.email })).toEqual({
+      status: "sent",
+      send: "rejected",
+    });
+    expect(sendRequests).toBe(0);
+    expect(feishuRequests).toBe(3);
+    expectNoRequestAfterDeadline(startedAt);
+    expect((await rows())[0]).toMatchObject(VOID_CLEARED);
+    expect(await allInboxCount()).toBe(0);
+    expect(logs).toEqual([FEISHU_LOGIN_SEND_ATTEMPT, FEISHU_LOGIN_SEND_REJECTED]);
+  });
+
+  scenario("FSL-160 AC3: with the deadline passed during an unknown attempt, the retry logs no attempt key", async () => {
+    // The first attempt (HTTP 500, unknown) is logged and sent; the deadline passes while it is
+    // answered; the retry is not made and logs nothing.
+    const arrived = deferred();
+    const release = deferred();
+    plan(MESSAGE_PATHNAME, {
+      kind: "reply",
+      status: 500,
+      body: { code: 8, msg: "unavailable" },
+      arrived: arrived.resolve,
+      release: release.promise,
+    });
+    const startedAt = serviceNow();
+    const pending = issuer.issueFeishuLoginCode({ flowHash: flowHash(), email: ALICE.email });
+    await arrived.promise;
+    // The key preceded the request that is now held at the proxy.
+    expect(logs).toEqual([FEISHU_LOGIN_SEND_ATTEMPT]);
+    crossDeadline(startedAt);
+    release.resolve();
+    expect(await pending).toEqual({ status: "sent", send: "unknown" });
+    expect(sendRequests).toBe(1);
+    expect(logs).toEqual([FEISHU_LOGIN_SEND_ATTEMPT, FEISHU_LOGIN_SEND_UNKNOWN]);
+    await expectHygiene();
+  });
+
+  scenario("FSL-160: every Feishu request of an undisturbed delivery happens before its deadline", async () => {
+    const startedAt = serviceNow();
+    expect(await issuer.issueFeishuLoginCode({ flowHash: flowHash(), email: ALICE.email })).toEqual({
+      status: "sent",
+      send: "accepted",
+    });
+    expect(feishuRequests).toBe(4);
+    for (const entry of requestLog) expect(entry.at).toBeLessThan(startedAt + RESERVATION_TTL_MS);
+    await expectHygiene();
+  });
+
+  scenario("FSL-160 AC6: a token that expires within the refresh margin is still requested once per delivery", async () => {
+    // 30 seconds is shorter than the 60-second refresh margin: every getToken would refresh.
+    tokenExpireOverride = 30;
+    expect(await issuer.issueFeishuLoginCode({ flowHash: flowHash(), email: ALICE.email })).toEqual({
+      status: "sent",
+      send: "accepted",
+    });
+    expect(tokenRequests).toBe(1);
+    expect(requestsByPath.get(SEARCH_PATHNAME)).toBe(1);
+    expect(requestsByPath.get(MGET_PATHNAME)).toBe(1);
+    expect(sendRequests).toBe(1);
+    // Every directory and message request carries the one token of this delivery.
+    expect(await inbox(ALICE.openId)).toHaveLength(1);
+    await expectHygiene();
+  });
+
+  scenario("FSL-160 AC6: a failed first token refresh makes no second token request and voids the row", async () => {
+    plan(TOKEN_PATHNAME, { kind: "reply", status: 500, body: { code: 8, msg: "unavailable" } });
+    expect(await issuer.issueFeishuLoginCode({ flowHash: flowHash(), email: ALICE.email })).toEqual({
+      status: "provider_failed",
+    });
+    expect(tokenRequests).toBe(1);
+    expect(feishuRequests).toBe(1);
+    expect(sendRequests).toBe(0);
+    expect((await rows())[0]).toMatchObject(VOID_CLEARED);
+    expect(logs).toEqual([FEISHU_LOGIN_PROVIDER_FAILED]);
+    await expectHygiene();
+  });
+
+  scenario("FSL-160 AC6: an unknown send retried twice makes one token request in all", async () => {
+    tokenExpireOverride = 30;
+    await control("/__mock/faults", { target: "message", kind: "500", count: 3 });
+    expect(await issuer.issueFeishuLoginCode({ flowHash: flowHash(), email: ALICE.email })).toEqual({
+      status: "sent",
+      send: "unknown",
+    });
+    expect(sendRequests).toBe(3);
+    expect(tokenRequests).toBe(1);
+    expect(logs).toEqual([
+      FEISHU_LOGIN_SEND_ATTEMPT,
+      FEISHU_LOGIN_SEND_ATTEMPT,
+      FEISHU_LOGIN_SEND_ATTEMPT,
+      FEISHU_LOGIN_SEND_UNKNOWN,
+    ]);
     await expectHygiene();
   });
 });

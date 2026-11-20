@@ -14,9 +14,15 @@
  * `FEISHU_CONTACT_INVALID_RESPONSE`; the error carries no email, open_id,
  * token or response value. Transport errors (non-2xx, non-zero business
  * code, timeouts) are propagated unchanged.
+ *
+ * FSL-160: both calls take optional call options. `token` is used as it is
+ * instead of asking the token source; `deadline` (absolute milliseconds on the
+ * transport clock) is handed unchanged to the token source and the transport,
+ * so nothing is requested once it has passed (`transport_deadline`). Without
+ * options nothing changes.
  */
 import type { FeishuTransport } from "../enterprise/feishu/http";
-import type { FeishuTokenManager } from "../enterprise/feishu/token";
+import type { FeishuTokenManager, FeishuTokenRequestOptions } from "../enterprise/feishu/token";
 import type { FeishuTenantCredentials } from "../enterprise/feishu/types";
 
 /** Directory v1 search, with open_id as the employee id type. */
@@ -63,6 +69,20 @@ export type FeishuReadMemberResult =
   | { readonly kind: "active"; readonly name: string }
   | { readonly kind: "inactive" };
 
+/** FSL-160: the options of one directory call. */
+export interface FeishuContactCallOptions {
+  /** A token the caller already holds; the token source is then not asked. */
+  readonly token?: string;
+  /** The absolute deadline of the call, on the clock of the transport. */
+  readonly deadline?: number;
+}
+
+/** The token source of the client: the token manager, or a test/assembly seam. */
+export type FeishuContactGetToken = (
+  credentials: FeishuTenantCredentials,
+  options?: FeishuTokenRequestOptions,
+) => Promise<string>;
+
 export interface FeishuContactClientOptions {
   /** The fixed-origin transport. */
   readonly transport: FeishuTransport;
@@ -71,13 +91,13 @@ export interface FeishuContactClientOptions {
   /** Reuses the process token cache and single-flight refresh layer. */
   readonly tokenManager?: FeishuTokenManager;
   /** Test/assembly seam; production uses tokenManager. */
-  readonly getToken?: (credentials: FeishuTenantCredentials) => Promise<string>;
+  readonly getToken?: FeishuContactGetToken;
 }
 
 export class FeishuContactClient {
   private readonly transport: FeishuTransport;
   private readonly credentials: FeishuTenantCredentials;
-  private readonly getToken: (credentials: FeishuTenantCredentials) => Promise<string>;
+  private readonly getToken: FeishuContactGetToken;
 
   constructor(options: FeishuContactClientOptions) {
     if (
@@ -96,20 +116,27 @@ export class FeishuContactClient {
     this.transport = options.transport;
     this.credentials = Object.freeze({ ...options.credentials });
     this.getToken = options.tokenManager
-      ? (credentials) => options.tokenManager!.getToken(credentials)
+      ? (credentials, tokenOptions) => options.tokenManager!.getToken(credentials, tokenOptions)
       : options.getToken!;
   }
 
   /** Finds the single member whose comparison email equals `email`. */
-  async findByEmail(email: string): Promise<FeishuFindByEmailResult> {
+  async findByEmail(
+    email: string,
+    options: FeishuContactCallOptions = {},
+  ): Promise<FeishuFindByEmailResult> {
     if (!isNonBlankText(email)) {
       throw new Error("INVALID_FEISHU_CONTACT_INPUT");
     }
-    const body = await this.post(FEISHU_DIRECTORY_SEARCH_PATH, {
-      query: email,
-      required_fields: [...FEISHU_DIRECTORY_REQUIRED_FIELDS],
-      page_request: { page_size: FEISHU_DIRECTORY_SEARCH_PAGE_SIZE },
-    });
+    const body = await this.post(
+      FEISHU_DIRECTORY_SEARCH_PATH,
+      {
+        query: email,
+        required_fields: [...FEISHU_DIRECTORY_REQUIRED_FIELDS],
+        page_request: { page_size: FEISHU_DIRECTORY_SEARCH_PAGE_SIZE },
+      },
+      options,
+    );
     const data = readEnvelope(body);
     const employees = readArray(data, "employees");
     const wanted = email.toLowerCase();
@@ -132,14 +159,21 @@ export class FeishuContactClient {
   }
 
   /** Reads one member by open_id and decides whether the member is in office. */
-  async readMember(openId: string): Promise<FeishuReadMemberResult> {
+  async readMember(
+    openId: string,
+    options: FeishuContactCallOptions = {},
+  ): Promise<FeishuReadMemberResult> {
     if (!isNonBlankText(openId)) {
       throw new Error("INVALID_FEISHU_CONTACT_INPUT");
     }
-    const body = await this.post(FEISHU_DIRECTORY_MGET_PATH, {
-      employee_ids: [openId],
-      required_fields: [...FEISHU_DIRECTORY_REQUIRED_FIELDS],
-    });
+    const body = await this.post(
+      FEISHU_DIRECTORY_MGET_PATH,
+      {
+        employee_ids: [openId],
+        required_fields: [...FEISHU_DIRECTORY_REQUIRED_FIELDS],
+      },
+      options,
+    );
     const data = readEnvelope(body);
     const employees = readArray(data, "employees");
     if (employees.length !== 1) throw new FeishuContactError();
@@ -163,15 +197,28 @@ export class FeishuContactClient {
     return { kind: "inactive" };
   }
 
-  private async post(path: string, json: Record<string, unknown>): Promise<unknown> {
-    const token = await this.getToken(this.credentials);
+  private async post(
+    path: string,
+    json: Record<string, unknown>,
+    options: FeishuContactCallOptions,
+  ): Promise<unknown> {
+    const { deadline } = options;
+    // An explicit token is used as it is (FSL-160); otherwise the token source is asked,
+    // with the deadline when there is one.
+    const token =
+      options.token !== undefined
+        ? options.token
+        : deadline === undefined
+          ? await this.getToken(this.credentials)
+          : await this.getToken(this.credentials, { deadline });
     if (!isNonBlankText(token)) throw new FeishuContactError();
-    // Transport errors (non-2xx, non-zero numeric business code, timeouts)
-    // propagate unchanged; only bodies the transport lets through are read.
+    // Transport errors (non-2xx, non-zero numeric business code, timeouts, a passed
+    // deadline) propagate unchanged; only bodies the transport lets through are read.
     return this.transport.request<unknown>(path, {
       method: "POST",
       headers: { authorization: `Bearer ${token}` },
       json,
+      ...(deadline === undefined ? {} : { deadline }),
     });
   }
 }

@@ -14,6 +14,11 @@
  * FSL-149) passes `maxAttempts: 1`, so every `request()` makes exactly one HTTP
  * attempt. The error output names the status and the business code, never a
  * token or a secret.
+ *
+ * A caller may also pass an absolute `deadline` (milliseconds on the clock of
+ * `now`, FSL-160): once it has passed no HTTP attempt is started and the
+ * request fails with `transport_deadline`, and every attempt is bounded by
+ * `min(budget, deadline - now)`. Without a `deadline` nothing changes.
  */
 import type { ProviderTarget } from "@megaui/core";
 
@@ -21,7 +26,9 @@ export type FeishuTransportErrorCode =
   | "transport_permanent"
   | "transport_transient"
   | "transport_redirect"
-  | "transport_timeout";
+  | "transport_timeout"
+  /** FSL-160: the caller's absolute deadline passed before an HTTP attempt was started. */
+  | "transport_deadline";
 
 export class FeishuTransportError extends Error {
   readonly code: FeishuTransportErrorCode;
@@ -71,6 +78,14 @@ export interface FeishuRequestInit {
   method?: "GET" | "POST";
   json?: Record<string, unknown>;
   headers?: Record<string, string>;
+  /**
+   * FSL-160: the absolute deadline of this request, in milliseconds on the clock of the
+   * transport's `now` (`Date.now()` by default). Once it has passed no HTTP attempt is
+   * started (`transport_deadline`); an attempt's abort timer is set to the time left before it
+   * (the abort fires through the event loop, so a blocked loop delays it). Optional: without it the
+   * request is bounded by the operation budget only, as before.
+   */
+  deadline?: number;
 }
 
 export class FeishuTransport {
@@ -112,15 +127,32 @@ export class FeishuTransport {
         "the request path must stay relative to the frozen provider origin",
       );
     }
+    const callerDeadline = init.deadline;
+    if (callerDeadline !== undefined && !Number.isFinite(callerDeadline)) {
+      throw new Error("INVALID_FEISHU_TRANSPORT_DEADLINE");
+    }
+    const startedAt = this.now();
+    if (callerDeadline !== undefined && callerDeadline - startedAt <= 0) {
+      // FSL-160: nothing leaves the process once the caller's deadline has passed.
+      throw new FeishuTransportError(
+        "transport_deadline",
+        "the request deadline passed before the request was started",
+      );
+    }
     const url = `${this.origin}${path}`;
-    const deadline = this.now() + this.budgetMs;
+    // Every attempt and backoff stays inside min(budget, caller deadline).
+    const deadline =
+      callerDeadline === undefined
+        ? startedAt + this.budgetMs
+        : Math.min(startedAt + this.budgetMs, callerDeadline);
     let lastError: unknown;
 
     for (let attempt = 0; attempt < this.maxAttempts; attempt += 1) {
-      const remaining = deadline - this.now();
-      if (remaining <= 0) break;
       try {
-        return await this.attempt<T>(url, init, deadline);
+        const outcome = await this.attempt<T>(url, init, deadline);
+        // The deadline (or the budget) had passed when the attempt was about to start.
+        if (outcome === NOT_STARTED) break;
+        return outcome.value;
       } catch (error) {
         lastError = error;
         if (error instanceof FeishuTransportError && !isRetryable(error)) {
@@ -134,32 +166,47 @@ export class FeishuTransport {
     }
 
     if (lastError instanceof FeishuTransportError) throw lastError;
+    if (lastError === undefined && callerDeadline !== undefined && callerDeadline - this.now() <= 0) {
+      // No attempt was started: the caller's deadline, not the budget, ended the request.
+      throw new FeishuTransportError(
+        "transport_deadline",
+        "the request deadline passed before the request was started",
+      );
+    }
     throw new FeishuTransportError(
       "transport_timeout",
       "the operation exceeded its total budget",
     );
   }
 
+  /**
+   * One HTTP attempt. Everything the request needs is prepared first; the clock is then read
+   * once, as the last step before `fetch` is called in the same synchronous run (no `await` in
+   * between): that reading decides whether the attempt may start (`NOT_STARTED` otherwise) and
+   * is the attempt's timer (FSL-160).
+   */
   private async attempt<T>(
     url: string,
     init: FeishuRequestInit,
     deadline: number,
-  ): Promise<T> {
+  ): Promise<{ value: T } | typeof NOT_STARTED> {
+    const requestInit: RequestInit = {
+      method: init.method ?? "GET",
+      headers: {
+        "content-type": "application/json",
+        ...init.headers,
+      },
+      body: init.json === undefined ? undefined : JSON.stringify(init.json),
+      // A manual redirect never moves the request: the 3xx answer is
+      // refused below instead of being followed.
+      redirect: "manual",
+    };
+    const remaining = deadline - this.now();
+    if (remaining <= 0) return NOT_STARTED;
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), Math.max(1, deadline - this.now()));
+    const timer = setTimeout(() => controller.abort(), remaining);
     try {
-      const response = await this.fetchImpl(url, {
-        method: init.method ?? "GET",
-        headers: {
-          "content-type": "application/json",
-          ...init.headers,
-        },
-        body: init.json === undefined ? undefined : JSON.stringify(init.json),
-        // A manual redirect never moves the request: the 3xx answer is
-        // refused below instead of being followed.
-        redirect: "manual",
-        signal: controller.signal,
-      });
+      const response = await this.fetchImpl(url, { ...requestInit, signal: controller.signal });
 
       if (response.status >= 300 && response.status < 400) {
         throw new FeishuTransportError(
@@ -199,7 +246,7 @@ export class FeishuTransport {
           { status: response.status, businessCode: body.code },
         );
       }
-      return body;
+      return { value: body };
     } catch (error) {
       if (error instanceof FeishuTransportError) throw error;
       if (controller.signal.aborted) {
@@ -217,6 +264,9 @@ export class FeishuTransport {
     }
   }
 }
+
+/** An attempt that was not started because its deadline or budget had passed. */
+const NOT_STARTED = Symbol("not_started");
 
 function isRetryable(error: FeishuTransportError): boolean {
   return error.code === "transport_transient" || error.code === "transport_timeout";

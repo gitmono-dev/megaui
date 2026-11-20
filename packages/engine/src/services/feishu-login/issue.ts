@@ -27,8 +27,8 @@
  *    `unknown` attempt is retried with the same UUID at most twice, a `rejected` one is not.
  *    Every attempt `rejected` voids the row with a conditional write-back; any `unknown`
  *    without an `accepted` keeps it `active` (`FEISHU_LOGIN_SEND_UNKNOWN`), because the code
- *    may have been delivered. `FEISHU_LOGIN_SEND_ATTEMPT` is logged before every HTTP
- *    attempt of the message (the transport fetch is wrapped).
+ *    may have been delivered. `FEISHU_LOGIN_SEND_ATTEMPT` is logged before every HTTP attempt
+ *    of the message, ahead of the transport's last deadline check (FSL-160).
  *
  * The log only carries the stable keys below: never an email, an open_id, a name, a code,
  * a token or a message id. The code generator is injected (engine does not depend on
@@ -40,20 +40,31 @@
  * One attempt is classified as: HTTP 2xx with a successful business answer `accepted`;
  * HTTP 429 and an explicit business refusal `rejected` (Feishu did not take it, no retry);
  * HTTP 5xx, a timeout, a dropped connection, a 3xx answer to the message request and a 2xx
- * answer that does not meet the success criteria `unknown`. The service takes the token of each
- * attempt itself and classifies a token failure from its error (a shared refresh hands the
- * same error, status included, to every waiter). The message client reports a 429 as
- * `unknown` (transient), so the service reads the HTTP status of the message request from the
- * wrapped fetch and turns a 429 into `rejected`.
+ * answer that does not meet the success criteria `unknown`. The message client reports a 429
+ * as `unknown` (transient), so the service reads the HTTP status of the message request from
+ * the wrapped fetch and turns a 429 into `rejected`.
  *
- * Out of this service: the absolute deadline of the Feishu requests (FSL-160), the HTTP entry
- * (FSL-123) and the cleanup (FSL-146).
+ * Absolute deadline (FSL-160): the reservation expiry (two minutes after its creation) bounds
+ * every Feishu request of the delivery. The service samples its clock right before the
+ * reservation transaction and uses that instant plus the reservation TTL as the deadline, which
+ * is never later than the stored `expires_at` (the row is created after that instant). The
+ * deadline reaches the token manager, the directory client and the message client, and through
+ * them the transport: no request starts once it has passed (`transport_deadline`) and every HTTP
+ * attempt's abort timer is set to the time left before it (fired through the event loop). The delivery takes one token at its start (through the shared refresh)
+ * and uses that token for every directory and message call; it never refreshes during the
+ * delivery, so a reservation makes at most one token HTTP request. A failed or late token, and a
+ * passed deadline during the lookup, void the row as a provider failure; a passed deadline
+ * during the send stops the retries, and the attempts made so far decide the outcome (an attempt
+ * refused by the deadline never reached Feishu and counts as `rejected`).
+ *
+ * Out of this service: the HTTP entry (FSL-123) and the cleanup (FSL-146).
  */
 import { AsyncLocalStorage } from "node:async_hooks";
 
 import type { ProviderTarget } from "@megaui/core";
 import {
   createFeishuLoginCodeStore,
+  FEISHU_LOGIN_RESERVATION_TTL_SECONDS,
   feishuLoginCodeHmac,
   feishuLoginEmailHmac,
   type FeishuLoginCodeStore,
@@ -64,7 +75,6 @@ import {
   FEISHU_BACKOFF_BASE_MS,
   FEISHU_OPERATION_BUDGET_MS,
   FeishuTransport,
-  FeishuTransportError,
 } from "../enterprise/feishu/http";
 import {
   FEISHU_MESSAGE_PATH,
@@ -132,6 +142,12 @@ export interface FeishuLoginIssuerOptions {
   readonly attemptTimeoutMs?: number;
   /** The base delay before a service retry of an `unknown` send. Defaults to 250 ms. */
   readonly retryBackoffMs?: number;
+  /**
+   * FSL-160: the clock of the delivery deadline, the transport and the token cache, in
+   * milliseconds. Defaults to a monotonic clock (`performance.timeOrigin + performance.now()`);
+   * tests inject a clock to pass the deadline.
+   */
+  readonly now?: () => number;
 }
 
 export interface FeishuLoginIssueInput {
@@ -175,9 +191,8 @@ export interface FeishuLoginIssuer {
   readonly issueFeishuLoginCode: (input: FeishuLoginIssueInput) => Promise<FeishuLoginIssueResult>;
 }
 
-/** One send attempt: the token it uses and the HTTP status its message request received. */
+/** One send attempt: the HTTP status its message request received. */
 interface SendAttemptContext {
-  readonly token: string;
   status: number | undefined;
 }
 
@@ -185,16 +200,9 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/**
- * The token stage of a send attempt, by the same rules: HTTP 429 and a permanent refusal are
- * `rejected`; 5xx, a timeout, a dropped connection and an unusable answer are `unknown`.
- * No message request was made in either case.
- */
-function classifyTokenFailure(error: unknown): "rejected" | "unknown" {
-  if (!(error instanceof FeishuTransportError)) return "unknown";
-  if (error.status === 429) return "rejected";
-  if (error.code === "transport_permanent" || error.code === "transport_redirect") return "rejected";
-  return "unknown";
+/** Milliseconds on a clock that never steps back or jumps with the wall clock. */
+function monotonicNow(): number {
+  return performance.timeOrigin + performance.now();
 }
 
 function normalizeEmail(email: unknown): string {
@@ -213,6 +221,9 @@ export function createFeishuLoginIssuer(options: FeishuLoginIssuerOptions): Feis
   }
   const attemptTimeoutMs = options.attemptTimeoutMs ?? FEISHU_OPERATION_BUDGET_MS;
   const retryBackoffMs = options.retryBackoffMs ?? FEISHU_BACKOFF_BASE_MS;
+  // A monotonic clock by default: a wall-clock step cannot move the deadline (FSL-160).
+  const now = options.now ?? monotonicNow;
+  if (typeof now !== "function") throw new Error("INVALID_FEISHU_LOGIN_ISSUER_CONFIG");
   if (
     !Number.isSafeInteger(attemptTimeoutMs) ||
     attemptTimeoutMs < 1 ||
@@ -229,13 +240,12 @@ export function createFeishuLoginIssuer(options: FeishuLoginIssuerOptions): Feis
   const messageUrl = options.target.origin + FEISHU_MESSAGE_PATH;
   // Each `send` attempt runs in its own context, so concurrent requests never share it.
   const sendAttempt = new AsyncLocalStorage<SendAttemptContext>();
-  // `FEISHU_LOGIN_SEND_ATTEMPT` precedes every HTTP attempt of a direct message, so the key
-  // counts requests. The HTTP status of the message request is kept for the classification;
-  // it is never shared, because each attempt makes its own message request.
-  const attemptLoggingFetch: typeof fetch = async (input, init) => {
+  // The HTTP status of the message request is kept for the classification; it is never shared,
+  // because each attempt makes its own message request. (`FEISHU_LOGIN_SEND_ATTEMPT` is logged
+  // by `sendOnce` before the attempt, ahead of the transport's deadline check, FSL-160.)
+  const statusRecordingFetch: typeof fetch = async (input, init) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     if (url !== messageUrl) return fetch(input, init);
-    log(FEISHU_LOGIN_SEND_ATTEMPT);
     const response = await fetch(input, init);
     const context = sendAttempt.getStore();
     if (context) context.status = response.status;
@@ -245,27 +255,25 @@ export function createFeishuLoginIssuer(options: FeishuLoginIssuerOptions): Feis
   // transient lookup failure voids the row as a provider failure.
   const transport = new FeishuTransport({
     target: options.target,
-    fetchImpl: attemptLoggingFetch,
+    fetchImpl: statusRecordingFetch,
     maxAttempts: 1,
     budgetMs: attemptTimeoutMs,
+    now,
   });
-  const tokenManager = new FeishuTokenManager({ transport });
+  // One clock for the deadline, the transport and the token cache (FSL-160).
+  const tokenManager = new FeishuTokenManager({ transport, now });
   const credentials: FeishuTenantCredentials = {
     tenantKey: feishuLoginTenantKey(options.appId),
     appId: options.appId,
     appSecret: options.appSecret,
   };
   const contact = new FeishuContactClient({ transport, credentials, tokenManager });
-  // The token stage of a send is run by `sendOnce` itself (a shared refresh rejects every
-  // waiter with the same error, status included); the client only reads that token.
+  // Every send passes the token of its delivery explicitly (FSL-160): the client never asks
+  // the token manager on this path.
   const messages = new FeishuMessageClient({
     transport,
     credentials,
-    getToken: async () => {
-      const context = sendAttempt.getStore();
-      if (!context) throw new Error("FEISHU_LOGIN_SEND_OUTSIDE_ATTEMPT");
-      return context.token;
-    },
+    tokenManager,
     trustedSiteUrl: options.trustedSiteUrl,
   });
   const generateCode = options.generateCode;
@@ -279,17 +287,30 @@ export function createFeishuLoginIssuer(options: FeishuLoginIssuerOptions): Feis
     log(key);
   }
 
-  /** One send attempt, classified by the rules of FSL-149. */
-  async function sendOnce(openId: string, code: string, id: string): Promise<FeishuMessageResult["kind"]> {
-    let token: string;
-    try {
-      token = await tokenManager.getToken(credentials);
-    } catch (error) {
-      return classifyTokenFailure(error);
-    }
-    const context: SendAttemptContext = { token, status: undefined };
+  /**
+   * One send attempt with the token and the deadline of its delivery, classified by the rules of
+   * FSL-149. An attempt the deadline refused never left the process: the client reports it as
+   * `rejected` (`deadline`), which ends the retries (FSL-160).
+   */
+  async function sendOnce(
+    openId: string,
+    code: string,
+    id: string,
+    token: string,
+    deadline: number,
+  ): Promise<FeishuMessageResult["kind"]> {
+    // An attempt whose deadline has already passed is not made and logs nothing (`rejected`:
+    // Feishu never saw it). Otherwise `FEISHU_LOGIN_SEND_ATTEMPT` precedes the attempt; the
+    // transport checks the deadline once more as its last step before `fetch`, after this log,
+    // so a slow log can never start a request past the deadline. Only when the deadline passes
+    // after this log and before that last check (during the log, the message preparation and
+    // serialization, or a scheduling pause) is a key logged for an attempt the transport then
+    // refuses: the key never undercounts the requests.
+    if (deadline - now() <= 0) return "rejected";
+    log(FEISHU_LOGIN_SEND_ATTEMPT);
+    const context: SendAttemptContext = { status: undefined };
     const result = await sendAttempt.run(context, () =>
-      messages.send({ boundOpenId: openId, code, uuid: id }),
+      messages.send({ boundOpenId: openId, code, uuid: id }, { token, deadline }),
     );
     // The client reports HTTP 429 as transient; Feishu did not take the request, so it is a
     // rejection here. 5xx, timeouts and dropped connections stay `unknown`.
@@ -315,6 +336,13 @@ export function createFeishuLoginIssuer(options: FeishuLoginIssuerOptions): Feis
     async issueFeishuLoginCode(input) {
       const email = normalizeEmail(input?.email);
       const emailHmac = feishuLoginEmailHmac(otpHmacKey, email);
+      // FSL-160: the absolute deadline of every Feishu request of this reservation. The clock is
+      // read before the reservation transaction, and the row's `created_at` is read by the
+      // database after it; the deadline is this reading plus the same two-minute TTL. Only the
+      // elapsed time on each clock matters, so a constant offset between the service clock and
+      // the database clock cancels out: the deadline falls at most two minutes after this
+      // instant, never after the stored `expires_at`.
+      const deadline = now() + FEISHU_LOGIN_RESERVATION_TTL_SECONDS * 1000;
 
       // ① Reserve and commit before any Feishu call; the cooldown and the global budget are
       // decided under the email lock and the global lock, and a refusal writes nothing.
@@ -335,16 +363,20 @@ export function createFeishuLoginIssuer(options: FeishuLoginIssuerOptions): Feis
       const delivery = await store.beginDelivery({ id, emailHmac });
       if (delivery.kind !== "live") return { status: "not_reserved" };
 
-      // Look the member up outside every transaction.
+      // Take the one token of this delivery (through the shared refresh), then look the member
+      // up outside every transaction with that token; every call carries the deadline, and a
+      // passed deadline (`transport_deadline`) voids the row like any failed lookup (FSL-160).
+      let token: string;
       let openId: string;
       let displayName: string;
       try {
-        const found = await contact.findByEmail(email);
+        token = await tokenManager.getToken(credentials, { deadline });
+        const found = await contact.findByEmail(email, { token, deadline });
         if (found.kind !== "unique") {
           await voidWith(id, emailHmac, FEISHU_LOGIN_NO_TARGET);
           return { status: "no_target" };
         }
-        const member = await contact.readMember(found.openId);
+        const member = await contact.readMember(found.openId, { token, deadline });
         if (member.kind !== "active") {
           await voidWith(id, emailHmac, FEISHU_LOGIN_INACTIVE);
           return { status: "inactive" };
@@ -370,11 +402,13 @@ export function createFeishuLoginIssuer(options: FeishuLoginIssuerOptions): Feis
       if (activated.kind !== "active") return { status: "not_reserved" };
 
       // ④ Send after the commit, with the row id as the stable UUID of this request; the
-      // attempt key is logged by the transport fetch before each HTTP attempt. Only an
-      // `unknown` attempt is retried, with the same UUID and payload.
+      // attempt key is logged by `sendOnce` before each HTTP attempt. Only an
+      // `unknown` attempt is retried, with the same UUID and payload, the token of this delivery
+      // and its deadline: no token is refreshed here, and once the deadline has passed the next
+      // attempt is refused before it leaves (`rejected`), which ends the retries (FSL-160).
       let sawUnknown = false;
       for (let attempt = 0; ; attempt += 1) {
-        const outcome = await sendOnce(openId, code, id);
+        const outcome = await sendOnce(openId, code, id, token, deadline);
         if (outcome === "accepted") return { status: "sent", send: "accepted" };
         if (outcome === "rejected") break;
         sawUnknown = true;
