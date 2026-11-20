@@ -202,6 +202,19 @@ describe.skipIf(!dockerAvailable)(
       ]);
     });
 
+    it("creates the four Feishu login code indexes (FSL-163)", async () => {
+      const indexes = await pool.query<{ indexname: string; indexdef: string }>(
+        `select indexname,indexdef from pg_indexes where schemaname='public' and tablename='feishu_login_codes'
+          and indexname <> 'feishu_login_codes_pkey' order by indexname`,
+      );
+      expect(indexes.rows).toEqual([
+        { indexname: "feishu_login_codes_created_at_idx", indexdef: "CREATE INDEX feishu_login_codes_created_at_idx ON public.feishu_login_codes USING btree (created_at)" },
+        { indexname: "feishu_login_codes_email_created_at_idx", indexdef: "CREATE INDEX feishu_login_codes_email_created_at_idx ON public.feishu_login_codes USING btree (email_hmac, created_at)" },
+        { indexname: "feishu_login_codes_email_seq_uidx", indexdef: "CREATE UNIQUE INDEX feishu_login_codes_email_seq_uidx ON public.feishu_login_codes USING btree (email_hmac, email_seq)" },
+        { indexname: "feishu_login_codes_flow_seq_uidx", indexdef: "CREATE UNIQUE INDEX feishu_login_codes_flow_seq_uidx ON public.feishu_login_codes USING btree (flow_hash, flow_seq)" },
+      ]);
+    });
+
     it("has no down-migration files (GC-08/ADR-ARCH-02: forward-only)", async () => {
       const fs = await import("node:fs/promises");
       const entries = await fs.readdir(resolveMigrationsFolder());

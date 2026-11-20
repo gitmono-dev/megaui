@@ -1,6 +1,6 @@
-// megaui-only (FSL-119): Feishu login code storage contract; issue, verify and cleanup services follow in their own cards.
+// megaui-only (FSL-119, FSL-163): Feishu login code storage contract and its indexes; issue, verify and cleanup services follow in their own cards.
 import { sql, type InferInsertModel, type InferSelectModel } from "drizzle-orm";
-import { check, integer, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { check, index, integer, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 
 export const FEISHU_LOGIN_CODE_STATES = ["reserved", "active", "consumed", "void"] as const;
 export type FeishuLoginCodeState = (typeof FEISHU_LOGIN_CODE_STATES)[number];
@@ -31,6 +31,14 @@ export const feishuLoginCodes = pgTable("feishu_login_codes", {
     or (${table.state} <> 'active'
       and ${table.email} is null and ${table.openId} is null
       and ${table.displayName} is null and ${table.codeHmac} is null)`),
+  // FSL-163: strict order within one flow; flow binding and verification select by it.
+  flowOrder: uniqueIndex("feishu_login_codes_flow_seq_uidx").on(table.flowHash, table.flowSeq),
+  // FSL-163: per-email cooldown lookups.
+  emailCooldown: index("feishu_login_codes_email_created_at_idx").on(table.emailHmac, table.createdAt),
+  // FSL-163: strict order for one email across flows; activation is decided by it.
+  emailOrder: uniqueIndex("feishu_login_codes_email_seq_uidx").on(table.emailHmac, table.emailSeq),
+  // FSL-163: global budget counts and cleanup.
+  created: index("feishu_login_codes_created_at_idx").on(table.createdAt),
 }));
 
 export type FeishuLoginCode = InferSelectModel<typeof feishuLoginCodes>;
