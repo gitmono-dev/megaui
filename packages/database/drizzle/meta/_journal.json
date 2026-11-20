@@ -113,6 +113,13 @@
       "when": 1794527201917,
       "tag": "0015_whole_shinobi_shaw",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1795161534541,
+      "tag": "0016_jittery_terror",
+      "breakpoints": true
     }
   ]
 }

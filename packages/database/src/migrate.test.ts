@@ -50,6 +50,7 @@ const EXPECTED_PUBLIC_TABLES = [
   "enterprise_profile",
   "enterprise_quarantine",
   "enterprise_revocations",
+  "feishu_login_codes",
   "mega_agent_threads",
   "mega_channel_members",
   "mega_channels",
