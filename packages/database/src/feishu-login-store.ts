@@ -26,8 +26,9 @@
 // and `active` rows, clearing their sensitive fields, and deletes the rows created more than 24
 // hours ago.
 //
-// The verify side (FSL-124) is `consumeFeishuLoginCode`: one transaction that reads the newest
-// row of a flow, compares the code HMAC in constant time, consumes the row clearing its
+// The verify side (FSL-124, FSL-151) is `consumeFeishuLoginCode`: one transaction that locks the
+// newest row of a flow `FOR UPDATE`, compares the code HMAC in constant time, counts a wrong code
+// (the fifth one voids the row clearing its sensitive fields) or consumes the row clearing its
 // sensitive fields and looks up the identity binding before it commits; and
 // `recordFeishuLoginSession`, which marks a session as issued by the Feishu login (FSL-147).
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
@@ -464,12 +465,17 @@ export interface FeishuLoginConsumeInput {
   readonly openIdHmac: (openId: string) => string;
 }
 
+/** A row turns `void` with the wrong code that brings `failed_attempts` to this value (FSL-151). */
+export const FEISHU_LOGIN_MAX_FAILED_ATTEMPTS = 5;
+
 export type FeishuLoginConsumeResult =
   /** The row is now `consumed` with its sensitive fields cleared; the binding names the user. */
   | { readonly kind: "consumed"; readonly userId: string }
   /**
-   * Nothing changed: the flow has no row, its newest row is not an unexpired `active` row, or the
-   * code does not match.
+   * The code was not accepted: the flow has no row, its newest row is not an unexpired `active`
+   * row (or has already reached the failure limit), or the code does not match. Only a mismatch
+   * changes the row: its `failed_attempts` grows by one, and the mismatch that brings it to
+   * `FEISHU_LOGIN_MAX_FAILED_ATTEMPTS` also turns it `void` with its sensitive fields cleared.
    */
   | { readonly kind: "invalid" }
   /**
@@ -489,22 +495,36 @@ function codeHmacMatches(expectedHex: string, storedHex: unknown): boolean {
 }
 
 /**
- * The success path of verify (FSL-124, ADR-FSL-11 「校验」), one transaction:
- * 1. reads the row of the largest `flow_seq` of the flow (whatever its state); only an unexpired
- *    `active` row (`expires_at > clock_timestamp()`) goes on, anything else is `invalid`. The code
- *    HMAC is returned by that statement only for such a row;
- * 2. compares `feishuLoginCodeHmac(key, row id, code)` with the stored code HMAC in constant time;
- *    a mismatch is `invalid` and changes nothing (failure counting is FSL-151);
- * 3. reads the held email, open_id and name (again only while the row is an unexpired `active`
- *    one), then turns the row `consumed` clearing the email, open_id, name and code HMAC in the
- *    same statement. The update repeats the `active` and expiry conditions, so when two
- *    transactions read the same active row and the first to write commits, the other one finds
- *    no row to update (READ COMMITTED re-checks the newest version) and is `invalid` (if the
- *    first rolls back, the other goes on); the row lock and its concurrency acceptance are FSL-151;
- * 4. derives `open_id_hmac` with `input.openIdHmac` and reads the binding of
+ * Verify (FSL-124 success path, FSL-151 failure path and concurrency; ADR-FSL-11 「校验」), one
+ * transaction:
+ * 1. locks the row of the largest `flow_seq` of the flow (whatever its state) with
+ *    `SELECT … FOR UPDATE`, in a statement of its own. It is the only row of `feishu_login_codes`
+ *    the transaction locks (the cleanup and the activation, which lock several, do so in id
+ *    order). A concurrent verify that selects the same row waits here until this transaction ends;
+ * 2. reads the locked row again in the next statement (so after any lock wait, against its
+ *    newest committed version and one `clock_timestamp()` sample). Only an `active` row that is
+ *    unexpired (`expires_at > clock_timestamp()`), still the largest `flow_seq` of its flow in
+ *    that statement's snapshot and below `FEISHU_LOGIN_MAX_FAILED_ATTEMPTS` goes on, and that
+ *    statement returns the code HMAC only for such a row; anything else is `invalid` and changes
+ *    nothing. A newer row of the flow committed after that statement started is not seen by this
+ *    transaction (voiding the flow's newest row when a new one is reserved, which waits for this
+ *    lock, is FSL-154);
+ * 3. compares `feishuLoginCodeHmac(key, row id, code)` with the stored code HMAC in constant time.
+ *    A mismatch adds one to `failed_attempts`; the mismatch that brings it to
+ *    `FEISHU_LOGIN_MAX_FAILED_ATTEMPTS` turns the row `void` clearing its email, open_id, name and
+ *    code HMAC in the same statement. The transaction commits that write and the result is
+ *    `invalid`;
+ * 4. on a match, reads the held email, open_id and name (only while the row is still an unexpired
+ *    `active` one at that statement's clock sample), then turns the row `consumed` clearing the
+ *    email, open_id, name and code HMAC in the same statement (which repeats the `active` and
+ *    expiry conditions: a row that expires between the two statements is not consumed);
+ * 5. derives `open_id_hmac` with `input.openIdHmac` and reads the binding of
  *    `(app_id, open_id_hmac)` in `feishu_identities`. Found: the transaction commits and the
  *    result names the bound user. Not found: the transaction is rolled back (`unbound`).
- * The open_id leaves the row only as its HMAC; nothing else of the hold is returned.
+ * Because of the lock, two transactions that lock the same row run one after the other: when the
+ * first one consumed the row and committed, the second one reads it as `consumed` and is `invalid`
+ * (if the first one rolled back, the second one goes on). The open_id leaves the row only as its HMAC; nothing
+ * else of the hold is returned.
  */
 export async function consumeFeishuLoginCode(
   pool: Pool,
@@ -517,28 +537,73 @@ export async function consumeFeishuLoginCode(
   if (typeof input.openIdHmac !== "function") throw new Error("INVALID_FEISHU_LOGIN_OPEN_ID_HMAC");
   try {
     return await inTransaction(pool, async (client) => {
-      // The newest row of the flow, whatever its state. Its code HMAC is only returned while it is
-      // an unexpired `active` row (decided against one clock sample), so no sensitive field of an
-      // expired row is ever read; the email, open_id and name are only read once the code matched.
-      const newest = await client.query<{ id: string; state: string; live: boolean; code_hmac: string | null }>(
-        `select c.id, c.state, t.live,
-                case when c.state = 'active' and t.live then c.code_hmac end as code_hmac
-           from (select id, state, expires_at, code_hmac
-                   from feishu_login_codes
-                  where flow_hash = $1
-                  order by flow_seq desc
-                  limit 1) c
-           cross join lateral (select c.expires_at > clock_timestamp() as live) t`,
+      // The row lock comes first, in a statement of its own, so everything below is read after any
+      // wait for it. It names no column but the id.
+      const locked = await client.query<{ id: string }>(
+        `select id from feishu_login_codes
+          where flow_hash = $1
+          order by flow_seq desc
+          limit 1
+            for update`,
         [input.flowHash],
       );
-      const row = newest.rows[0];
-      if (!row || row.state !== "active" || !row.live) return { kind: "invalid" } as const;
+      const lockedId = locked.rows[0]?.id;
+      if (lockedId === undefined) return { kind: "invalid" } as const;
+      // The locked row, read again. Its code HMAC is only returned while it is an unexpired
+      // `active` row (decided against one clock sample), still the newest row of its flow in this
+      // statement's snapshot (a newer row committed after the lock statement's snapshot but before
+      // this one supersedes it) and below the failure limit, so this statement returns no sensitive
+      // field of a row expired at its clock sample; the email, open_id and name are only read once
+      // the code matched.
+      const current = await client.query<{
+        id: string;
+        state: string;
+        live: boolean;
+        superseded: boolean;
+        failed_attempts: number;
+        code_hmac: string | null;
+      }>(
+        `select c.id, c.state, t.live, t.superseded, c.failed_attempts,
+                case when c.state = 'active' and t.live and not t.superseded and c.failed_attempts < $2
+                     then c.code_hmac end as code_hmac
+           from feishu_login_codes c
+           cross join lateral (
+             select c.expires_at > clock_timestamp() as live,
+                    exists (select 1 from feishu_login_codes n
+                             where n.flow_hash = c.flow_hash and n.flow_seq > c.flow_seq) as superseded
+           ) t
+          where c.id = $1`,
+        [lockedId, FEISHU_LOGIN_MAX_FAILED_ATTEMPTS],
+      );
+      const row = current.rows[0];
+      if (
+        !row ||
+        row.state !== "active" ||
+        !row.live ||
+        row.superseded ||
+        row.failed_attempts >= FEISHU_LOGIN_MAX_FAILED_ATTEMPTS
+      ) {
+        return { kind: "invalid" } as const;
+      }
       if (!codeHmacMatches(feishuLoginCodeHmac(input.otpHmacKey, row.id, input.code), row.code_hmac)) {
+        // A wrong code is counted; the one that reaches the limit voids the row and clears its
+        // hold in the same statement (FSL-119 CHECK). `SET` reads the old `failed_attempts`.
+        await client.query(
+          `update feishu_login_codes
+              set failed_attempts = failed_attempts + 1,
+                  state = case when failed_attempts + 1 >= $2 then 'void' else state end,
+                  email = case when failed_attempts + 1 >= $2 then null else email end,
+                  open_id = case when failed_attempts + 1 >= $2 then null else open_id end,
+                  display_name = case when failed_attempts + 1 >= $2 then null else display_name end,
+                  code_hmac = case when failed_attempts + 1 >= $2 then null else code_hmac end
+            where id = $1 and state = 'active'`,
+          [row.id, FEISHU_LOGIN_MAX_FAILED_ATTEMPTS],
+        );
         return { kind: "invalid" } as const;
       }
       // The hold (email, open_id, name) is read only now, and only while the row is still an
-      // unexpired `active` one at this statement: a row that expired after the first read is
-      // never read. The binding lookup below needs the open_id; the email and the name are what
+      // unexpired `active` one at this statement's clock sample: a row expired by then is not
+      // read (one that expires after it is still not consumed: the update repeats the check). The binding lookup below needs the open_id; the email and the name are what
       // the account creation of FSL-125 builds on.
       const held = await client.query<{ email: string | null; open_id: string | null; display_name: string | null }>(
         `select email, open_id, display_name from feishu_login_codes

@@ -1,5 +1,6 @@
-// FSL-124: the success path of `POST /feishu-login/verify`, driven through the real `createAuth`
-// handler against a one-shot PostgreSQL with a preset user and Feishu identity binding.
+// FSL-124 (success path) and FSL-151 (failure path and concurrency) of `POST /feishu-login/verify`,
+// driven through the real `createAuth` handler against a one-shot PostgreSQL with a preset user and
+// Feishu identity binding.
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -105,6 +106,13 @@ interface CodeRow {
   code_hmac: string | null;
 }
 
+async function failedAttempts(id: string): Promise<number> {
+  return (await database.pool.query<{ failed_attempts: number }>(
+    "select failed_attempts from feishu_login_codes where id = $1",
+    [id],
+  )).rows[0]!.failed_attempts;
+}
+
 async function codeRow(id: string): Promise<CodeRow> {
   return (await database.pool.query<CodeRow>(
     "select state, email, open_id, display_name, code_hmac from feishu_login_codes where id = $1",
@@ -124,7 +132,7 @@ async function sessionRows(): Promise<Array<Record<string, unknown>>> {
   )).rows;
 }
 
-describe("feishu login verify success path (FSL-124)", () => {
+describe("feishu login verify (FSL-124 success path, FSL-151 failure path and concurrency)", () => {
   let auth: Auth;
 
   beforeAll(async () => {
@@ -246,15 +254,90 @@ describe("feishu login verify success path (FSL-124)", () => {
     expect(await sessionRows()).toHaveLength(1);
   });
 
-  it("answers the same 401 for a wrong code and leaves the row active", async () => {
-    const flow = newFlow();
-    const id = await activeCode(flow);
-    const response = await verify(auth, { code: "Z9Y8X7W6" }, flow);
+  const WRONG = "Z9Y8X7W6";
+
+  /** The response is the one 401 of every verify failure, and it issues no session. */
+  async function expectInvalid(response: Response): Promise<void> {
     expect(response.status).toBe(401);
     expect(await response.json()).toEqual({ status: "invalid" });
+    expect(response.headers.get("cache-control")).toBe("no-store");
     expect(sessionCookie(response)).toBeUndefined();
+  }
+
+  it("FSL-151 AC1: a wrong code answers 401 { status: invalid } and leaves the row active", async () => {
+    const flow = newFlow();
+    const id = await activeCode(flow);
+    await expectInvalid(await verify(auth, { code: WRONG }, flow));
     expect((await codeRow(id)).state).toBe("active");
     expect(await sessionRows()).toHaveLength(0);
+  });
+
+  it("FSL-151 AC2: a wrong code adds one to the row's failed_attempts", async () => {
+    const flow = newFlow();
+    const id = await activeCode(flow);
+    expect(await failedAttempts(id)).toBe(0);
+    await expectInvalid(await verify(auth, { code: WRONG }, flow));
+    expect(await failedAttempts(id)).toBe(1);
+    await expectInvalid(await verify(auth, { code: WRONG }, flow));
+    expect(await failedAttempts(id)).toBe(2);
+  });
+
+  it("FSL-151 AC3: the row turns void with its hold cleared after the fifth wrong code", async () => {
+    const flow = newFlow();
+    const id = await activeCode(flow);
+    for (let attempt = 1; attempt <= 4; attempt += 1) {
+      await expectInvalid(await verify(auth, { code: WRONG }, flow));
+      expect((await codeRow(id)).state, `attempt ${attempt}`).toBe("active");
+    }
+    await expectInvalid(await verify(auth, { code: WRONG }, flow));
+    expect(await codeRow(id)).toEqual({ state: "void", email: null, open_id: null, display_name: null, code_hmac: null });
+    expect(await failedAttempts(id)).toBe(5);
+  });
+
+  it("FSL-151 AC4: the correct code after the fifth wrong code answers 401", async () => {
+    const flow = newFlow();
+    const id = await activeCode(flow);
+    for (let attempt = 1; attempt <= 5; attempt += 1) await expectInvalid(await verify(auth, { code: WRONG }, flow));
+    await expectInvalid(await verify(auth, { code: CODE }, flow));
+    expect((await codeRow(id)).state).toBe("void");
+    expect(await failedAttempts(id)).toBe(5);
+    expect(await sessionRows()).toHaveLength(0);
+  });
+
+  it("FSL-151 AC5: an expired code answers 401 and the row is neither consumed nor counted", async () => {
+    const flow = newFlow();
+    const id = await activeCode(flow);
+    await database.pool.query(
+      "update feishu_login_codes set expires_at = clock_timestamp() - interval '1 second' where id = $1",
+      [id],
+    );
+    await expectInvalid(await verify(auth, { code: CODE }, flow));
+    await expectInvalid(await verify(auth, { code: WRONG }, flow));
+    expect((await codeRow(id)).state).toBe("active");
+    expect(await failedAttempts(id)).toBe(0);
+    expect(await sessionRows()).toHaveLength(0);
+  });
+
+  it("FSL-151 AC6: a request without a flow cookie answers 401 and touches no row", async () => {
+    const flow = newFlow();
+    const id = await activeCode(flow);
+    await expectInvalid(await verify(auth, { code: CODE }));
+    await expectInvalid(await verify(auth, { code: WRONG }));
+    expect((await codeRow(id)).state).toBe("active");
+    expect(await failedAttempts(id)).toBe(0);
+    expect(await sessionRows()).toHaveLength(0);
+  });
+
+  it("FSL-151 AC7: of two concurrent requests with the same correct code exactly one answers 200", async () => {
+    const flow = newFlow();
+    const id = await activeCode(flow);
+    const responses = await Promise.all([verify(auth, { code: CODE }, flow), verify(auth, { code: CODE }, flow)]);
+    expect(responses.map((response) => response.status).sort()).toEqual([200, 401]);
+    const loser = responses.find((response) => response.status === 401)!;
+    await expectInvalid(loser);
+    expect(await sessionRows()).toHaveLength(1);
+    expect((await codeRow(id)).state).toBe("consumed");
+    expect(await failedAttempts(id)).toBe(0);
   });
 
   it("answers the same 401 without a flow cookie and for a flow without a code", async () => {

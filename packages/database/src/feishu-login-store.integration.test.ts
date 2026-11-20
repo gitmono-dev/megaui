@@ -1,5 +1,6 @@
-// megaui-only (FSL-146, FSL-124): the expiry cleanup of `feishu_login_codes` against a one-shot
-// PostgreSQL, with an injected clock; and the consuming transaction of verify.
+// megaui-only (FSL-146, FSL-124, FSL-151): the expiry cleanup of `feishu_login_codes` against a
+// one-shot PostgreSQL, with an injected clock; and the consuming transaction of verify, with its
+// failure counting and its row lock.
 import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import { Pool } from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -9,6 +10,7 @@ import {
   feishuLoginCodeHmac,
   recordFeishuLoginSession,
   FEISHU_LOGIN_CODE_RETENTION_SECONDS,
+  FEISHU_LOGIN_MAX_FAILED_ATTEMPTS,
 } from "./feishu-login-store";
 import { createIsolatedPostgres, type IsolatedPostgres } from "./test-support/isolated-pg";
 
@@ -359,7 +361,7 @@ describe("feishu login code cleanup (FSL-146)", () => {
   });
 });
 
-describe("feishu login code consumption (FSL-124)", () => {
+describe("feishu login code consumption (FSL-124, FSL-151)", () => {
   const KEY = new Uint8Array(randomBytes(32));
   const APP_ID = "cli_fsl124_app";
   const USER_ID = "fsl124-user";
@@ -367,6 +369,8 @@ describe("feishu login code consumption (FSL-124)", () => {
   const CODE = "A2B3C4D5";
   let isolated: IsolatedPostgres;
   let pool: Pool;
+  /** A second pool: its connections are distinct backends from every connection of `pool`. */
+  let second: Pool;
 
   /** The identity HMAC of the plan (the auth verify module owns it; recomputed here). */
   const openIdHmac = (openId: string) =>
@@ -377,6 +381,8 @@ describe("feishu login code consumption (FSL-124)", () => {
     await isolated.migrate();
     pool = new Pool({ connectionString: isolated.databaseUrl });
     pool.on("error", () => {});
+    second = new Pool({ connectionString: isolated.databaseUrl });
+    second.on("error", () => {});
   }, 120_000);
 
   beforeEach(async () => {
@@ -392,7 +398,7 @@ describe("feishu login code consumption (FSL-124)", () => {
 
   afterAll(async () => {
     const errors: unknown[] = [];
-    for (const end of [() => pool?.end(), () => isolated?.destroy()]) {
+    for (const end of [() => pool?.end(), () => second?.end(), () => isolated?.destroy()]) {
       try {
         await end();
       } catch (error) {
@@ -404,13 +410,14 @@ describe("feishu login code consumption (FSL-124)", () => {
 
   /**
    * Inserts one row of `flowHash` at `flowSeq`; an `active` row holds the email, `openId`, the
-   * name and the HMAC of `code` (FSL-119 CHECK). `expiresInMs` is relative to the database clock.
+   * name and the HMAC of `code` (FSL-119 CHECK). `expiresInMs` is relative to the database clock;
+   * `failedAttempts` defaults to 1.
    */
   async function insertRow(
     flowHash: string,
     flowSeq: number,
     state: State,
-    options: { code?: string; openId?: string; expiresInMs?: number } = {},
+    options: { code?: string; openId?: string; expiresInMs?: number; failedAttempts?: number } = {},
   ): Promise<string> {
     const id = randomUUID();
     const active = state === "active";
@@ -418,7 +425,7 @@ describe("feishu login code consumption (FSL-124)", () => {
       `insert into feishu_login_codes
          (id, flow_hash, flow_seq, email_hmac, email_seq, state, email, open_id, display_name, code_hmac,
           failed_attempts, expires_at, created_at)
-       values ($1, $2, $3, $4, $3, $5, $6, $7, $8, $9, 1,
+       values ($1, $2, $3, $4, $3, $5, $6, $7, $8, $9, $11,
                clock_timestamp() + make_interval(secs => $10::double precision / 1000), clock_timestamp())`,
       [
         id,
@@ -431,6 +438,7 @@ describe("feishu login code consumption (FSL-124)", () => {
         active ? "Alice" : null,
         active ? feishuLoginCodeHmac(KEY, id, options.code ?? CODE) : null,
         options.expiresInMs ?? 300_000,
+        options.failedAttempts ?? 1,
       ],
     );
     return id;
@@ -472,11 +480,49 @@ describe("feishu login code consumption (FSL-124)", () => {
     expect(await row(id)).toEqual(consumed);
   });
 
-  it("answers invalid for a wrong code and leaves the row as it was", async () => {
+  it("FSL-151 AC2: a wrong code is invalid and adds one to failed_attempts, nothing else changes", async () => {
     const flowHash = hex();
-    const id = await insertRow(flowHash, 1, "active");
+    const id = await insertRow(flowHash, 1, "active", { failedAttempts: 0 });
+    const before = (await row(id))!;
+    expect(await consume(flowHash, "Z9Y8X7W6")).toEqual({ kind: "invalid" });
+    expect(await row(id)).toEqual({ ...before, failed_attempts: 1 });
+    expect(await consume(flowHash, "Z9Y8X7W6")).toEqual({ kind: "invalid" });
+    expect(await row(id)).toEqual({ ...before, failed_attempts: 2 });
+  });
+
+  it("FSL-151 AC3, AC4: the fifth wrong code voids the row clearing its hold; the correct code is then invalid", async () => {
+    expect(FEISHU_LOGIN_MAX_FAILED_ATTEMPTS).toBe(5);
+    const flowHash = hex();
+    const id = await insertRow(flowHash, 1, "active", { failedAttempts: 0 });
+    const before = (await row(id))!;
+    for (let attempt = 1; attempt <= 4; attempt += 1) {
+      expect(await consume(flowHash, "Z9Y8X7W6")).toEqual({ kind: "invalid" });
+      expect(await row(id), `attempt ${attempt}`).toEqual({ ...before, failed_attempts: attempt });
+    }
+    expect(await consume(flowHash, "Z9Y8X7W6")).toEqual({ kind: "invalid" });
+    const voided = { ...before, state: "void", email: null, open_id: null, display_name: null, code_hmac: null, failed_attempts: 5 };
+    expect(await row(id)).toEqual(voided);
+    // The correct code after the fifth failure: invalid, and the row is neither consumed nor counted.
+    expect(await consume(flowHash)).toEqual({ kind: "invalid" });
+    expect(await consume(flowHash, "Z9Y8X7W6")).toEqual({ kind: "invalid" });
+    expect(await row(id)).toEqual(voided);
+  });
+
+  it("FSL-151: an active row already at the failure limit is invalid for any code and left as it was", async () => {
+    const flowHash = hex();
+    const id = await insertRow(flowHash, 1, "active", { failedAttempts: FEISHU_LOGIN_MAX_FAILED_ATTEMPTS });
+    const before = await row(id);
+    expect(await consume(flowHash)).toEqual({ kind: "invalid" });
+    expect(await consume(flowHash, "Z9Y8X7W6")).toEqual({ kind: "invalid" });
+    expect(await row(id)).toEqual(before);
+  });
+
+  it("FSL-151 AC5: a wrong or correct code against an expired active row is invalid and not counted", async () => {
+    const flowHash = hex();
+    const id = await insertRow(flowHash, 1, "active", { expiresInMs: -1000 });
     const before = await row(id);
     expect(await consume(flowHash, "Z9Y8X7W6")).toEqual({ kind: "invalid" });
+    expect(await consume(flowHash)).toEqual({ kind: "invalid" });
     expect(await row(id)).toEqual(before);
   });
 
@@ -507,9 +553,12 @@ describe("feishu login code consumption (FSL-124)", () => {
     expect(await consumeFeishuLoginCode(recordingPool(returned), {
       flowHash, code: CODE, otpHmacKey: KEY, appId: APP_ID, openIdHmac,
     })).toEqual({ kind: "invalid" });
-    // The newest-row statement returned the row without its code HMAC, and nothing else of the
-    // hold was read.
-    expect(returned.filter(entry => "id" in entry)).toEqual([{ id, state: "active", live: false, code_hmac: null }]);
+    // The lock statement returned the id only, the read of the locked row returned it without its
+    // code HMAC, and nothing else of the hold was read.
+    expect(returned.filter(entry => "id" in entry)).toEqual([
+      { id },
+      { id, state: "active", live: false, superseded: false, failed_attempts: 1, code_hmac: null },
+    ]);
     for (const entry of returned) {
       for (const field of ["email", "open_id", "display_name", "code_hmac"]) expect(entry[field] ?? null).toBeNull();
     }
@@ -519,8 +568,9 @@ describe("feishu login code consumption (FSL-124)", () => {
   it("never reads the hold of a row that expires after the first read", async () => {
     const flowHash = hex();
     const id = await insertRow(flowHash, 1, "active");
-    // A pool whose transaction client lets the row expire (through another connection) right
-    // before the statement that reads the hold, and records what that statement returned.
+    // A pool whose transaction client lets the row expire right before the statement that reads
+    // the hold, and records what that statement returned. The expiry is written by the same
+    // transaction: it holds the row lock, so another connection's write would wait for it.
     const holdReads: number[] = [];
     const racing = {
       connect: async () => {
@@ -530,7 +580,7 @@ describe("feishu login code consumption (FSL-124)", () => {
             if (property !== "query") return Reflect.get(target, property, receiver);
             return async (text: string, values?: unknown[]) => {
               if (typeof text === "string" && text.trimStart().startsWith("select email, open_id, display_name")) {
-                await pool.query("update feishu_login_codes set expires_at = clock_timestamp() - interval '1 second' where id = $1", [id]);
+                await target.query("update feishu_login_codes set expires_at = clock_timestamp() - interval '1 second' where id = $1", [id]);
                 const result = await target.query(text, values);
                 holdReads.push(result.rowCount ?? 0);
                 return result;
@@ -545,9 +595,11 @@ describe("feishu login code consumption (FSL-124)", () => {
       flowHash, code: CODE, otpHmacKey: KEY, appId: APP_ID, openIdHmac,
     })).toEqual({ kind: "invalid" });
     expect(holdReads).toEqual([0]);
+    // The expiry was written inside the transaction; the row is as inserted otherwise.
     const after = (await row(id))!;
     expect(after.state).toBe("active");
     expect(after.code_hmac).not.toBeNull();
+    expect(after.failed_attempts).toBe(1);
   });
 
   it("answers invalid for a flow without rows", async () => {
@@ -591,6 +643,122 @@ describe("feishu login code consumption (FSL-124)", () => {
     const before = await row(id);
     await expect(consume(flowHash, CODE, APP_ID, () => "not-hex")).rejects.toThrow("INVALID_FEISHU_LOGIN_OPEN_ID_HMAC");
     expect(await row(id)).toEqual(before);
+  });
+
+  /**
+   * A pool whose transaction clients stop right before the first statement whose text starts with
+   * `prefix`, until `release` is called; `atPause` resolves once one of them stopped there.
+   */
+  function pausingPool(prefix: string): { pool: Pool; atPause: Promise<void>; release: () => void } {
+    let reached!: () => void;
+    let release!: () => void;
+    const atPause = new Promise<void>((resolve) => (reached = resolve));
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const paused = {
+      connect: async () => {
+        const client = await pool.connect();
+        return new Proxy(client, {
+          get(target, property, receiver) {
+            if (property !== "query") return Reflect.get(target, property, receiver);
+            return async (text: string, values?: unknown[]) => {
+              if (typeof text === "string" && text.trimStart().startsWith(prefix)) {
+                reached();
+                await gate;
+              }
+              return target.query(text, values);
+            };
+          },
+        });
+      },
+    } as unknown as Pool;
+    return { pool: paused, atPause, release };
+  }
+
+  /** Waits until `count` other backends wait for a row lock in a `for update` statement of the table. */
+  async function lockWaiters(count: number): Promise<void> {
+    const deadline = Date.now() + 10_000;
+    for (;;) {
+      const waiting = await pool.query<{ n: number }>(
+        `select count(*)::int as n from pg_stat_activity
+          where datname = current_database() and pid <> pg_backend_pid()
+            and wait_event_type = 'Lock' and query like '%feishu_login_codes%' and query like '%for update%'`,
+      );
+      if (waiting.rows[0]!.n >= count) return;
+      if (Date.now() > deadline) throw new Error(`expected ${count} lock waiters, saw ${waiting.rows[0]!.n}`);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+
+  const settled = (promise: Promise<unknown>) =>
+    Promise.race([promise.then(() => true, () => true), new Promise((resolve) => setTimeout(() => resolve(false), 300))]);
+
+  const consumeOn = (target: Pool, flowHash: string, code = CODE) =>
+    consumeFeishuLoginCode(target, { flowHash, code, otpHmacKey: KEY, appId: APP_ID, openIdHmac });
+
+  it("FSL-151 AC7: two connections submitting the same correct code at once: exactly one consumes it", async () => {
+    const flowHash = hex();
+    const id = await insertRow(flowHash, 1, "active");
+    const before = (await row(id))!;
+    // The first connection locks the row and matches the code, then stops before consuming it.
+    const first = pausingPool("select email, open_id, display_name");
+    const a = consumeOn(first.pool, flowHash);
+    await first.atPause;
+    // The second connection (another pool, another backend) waits for that lock in its lock
+    // statement: it has neither read the row nor counted anything yet.
+    const b = consumeOn(second, flowHash);
+    await lockWaiters(1);
+    expect(await settled(b)).toBe(false);
+    first.release();
+    expect(await Promise.all([a, b])).toEqual([{ kind: "consumed", userId: USER_ID }, { kind: "invalid" }]);
+    // The loser read the committed `consumed` row: it was not counted as a failure.
+    expect(await row(id)).toEqual({ ...before, state: "consumed", email: null, open_id: null, display_name: null, code_hmac: null });
+
+    // Uncontrolled: ten submissions of the same correct code over both pools at once.
+    const flowHash2 = hex();
+    const id2 = await insertRow(flowHash2, 1, "active");
+    const before2 = (await row(id2))!;
+    const results = await Promise.all(
+      Array.from({ length: 10 }, (_, index) => consumeOn(index % 2 === 0 ? pool : second, flowHash2)),
+    );
+    expect(results.filter((result) => result.kind === "consumed")).toEqual([{ kind: "consumed", userId: USER_ID }]);
+    expect(results.filter((result) => result.kind === "invalid")).toHaveLength(9);
+    expect(await row(id2)).toEqual({ ...before2, state: "consumed", email: null, open_id: null, display_name: null, code_hmac: null });
+  });
+
+  it("FSL-151: concurrent wrong codes are each counted once and the row stops at the limit", async () => {
+    const flowHash = hex();
+    const id = await insertRow(flowHash, 1, "active", { failedAttempts: 0 });
+    const before = (await row(id))!;
+    const results = await Promise.all(
+      Array.from({ length: 7 }, (_, index) => consumeOn(index % 2 === 0 ? pool : second, flowHash, "Z9Y8X7W6")),
+    );
+    expect(results).toEqual(Array.from({ length: 7 }, () => ({ kind: "invalid" })));
+    expect(await row(id)).toEqual({
+      ...before,
+      state: "void",
+      email: null,
+      open_id: null,
+      display_name: null,
+      code_hmac: null,
+      failed_attempts: FEISHU_LOGIN_MAX_FAILED_ATTEMPTS,
+    });
+  });
+
+  it("FSL-151: a row superseded by a newer row of the flow after it was locked is invalid and not counted", async () => {
+    for (const code of [CODE, "Z9Y8X7W6"]) {
+      const flowHash = hex();
+      const id = await insertRow(flowHash, 1, "active");
+      const before = await row(id);
+      // Stops after the lock statement, before the locked row is read again.
+      const paused = pausingPool("select c.id, c.state");
+      const run = consumeOn(paused.pool, flowHash, code);
+      await paused.atPause;
+      const newer = await insertRow(flowHash, 2, "reserved");
+      paused.release();
+      expect(await run, code).toEqual({ kind: "invalid" });
+      expect(await row(id)).toEqual(before);
+      expect((await row(newer))!.state).toBe("reserved");
+    }
   });
 
   it("records a Feishu login session by its ID", async () => {

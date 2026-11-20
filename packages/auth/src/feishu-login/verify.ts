@@ -1,22 +1,29 @@
-// megaui:packages/auth/src/enterprise-otp/verify.ts@24a8551 (megaui-only FSL-124: the verify success path of the Feishu login)
+// megaui:packages/auth/src/enterprise-otp/verify.ts@24a8551 (megaui-only FSL-124, FSL-151: the verify endpoint of the Feishu login)
 /**
- * FSL-124: the success path of `POST /feishu-login/verify` (ADR-FSL-11 「校验」).
+ * FSL-124 (success path) and FSL-151 (failure path and concurrency): `POST /feishu-login/verify`
+ * (ADR-FSL-11 「校验」).
  *
  * - The request is `application/json` and its body (at most 4096 bytes) is exactly
  *   `{ "code": <string> }`; the code is trimmed and uppercased and must then be 8 characters of
  *   the code alphabet. Anything else answers 400 `{ "code": "INVALID_INPUT" }` and reads no row.
  * - A well-formed code is checked against the newest row of the flow named by the flow cookie in
- *   one transaction (`consumeFeishuLoginCode`): only an unexpired `active` row whose code HMAC
- *   matches in constant time is consumed, its email, open_id, name and code HMAC cleared, and the
- *   binding of `(app_id, open_id_hmac)` read, where `open_id_hmac` is
+ *   one transaction (`consumeFeishuLoginCode`) that locks that row `FOR UPDATE`: only an unexpired
+ *   `active` row below the failure limit whose code HMAC matches in constant time is consumed, its
+ *   email, open_id, name and code HMAC cleared, and the binding of `(app_id, open_id_hmac)` read,
+ *   where `open_id_hmac` is
  *   HMAC-SHA256(`ENTERPRISE_OTP_HMAC_KEY`, "feishu-identity:v1:" + app_id + ":" + open_id).
+ *   A wrong code compared against such a row adds one to its `failed_attempts`; the wrong code that
+ *   brings it to 5 (`FEISHU_LOGIN_MAX_FAILED_ATTEMPTS`) also turns it `void` with those four fields
+ *   cleared, so the correct code no longer succeeds. Concurrent submissions that lock the same row
+ *   run one after the other, so once one of them consumed the row and committed, every later one
+ *   answers 401.
  * - After that commit a plain Better Auth session (8 hours, no enterprise field) is issued with
  *   `internalAdapter.createSession`, marked in `feishu_login_sessions`, and its cookie set: 200
  *   `{ "status": "ok" }`.
  * - Every other outcome — no flow cookie, no row, a newest row that is not an unexpired `active`
- *   one, a wrong code, or (until FSL-125 creates accounts) a member without a binding — answers
- *   the same 401 `{ "status": "invalid" }`. Failure counting and its limit are FSL-151; the
- *   compensation of a failed session issue is FSL-169.
+ *   one (expired, `reserved`, `void` — including voided by the failure limit — or `consumed`), a
+ *   wrong code, or (until FSL-125 creates accounts) a member without a binding — answers the same
+ *   401 `{ "status": "invalid" }`. The compensation of a failed session issue is FSL-169.
  */
 import { createHmac } from "node:crypto";
 import { setSessionCookie } from "better-auth/cookies";
