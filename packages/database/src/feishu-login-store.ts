@@ -6,20 +6,26 @@
 // except for the short-lived hold of an `active` row (ADR-FSL-11, FSL-119 two-way CHECK).
 //
 // Five transactions, none of which spans a Feishu call:
-// - `reserve` takes the email lock, then the global lock (FSL-145), decides the cooldown and
-//   the global budget while holding both, and only when both pass writes the `reserved` row
-//   of one request and commits; a refused request writes nothing;
+// - `reserve` (FSL-154, run before the request answers) takes the flow lock, the email lock and
+//   the global lock in that fixed order. It first voids, in one statement, the row of the largest
+//   `flow_seq` of the flow (whatever its email and state, unless it is `consumed`), then decides
+//   the cooldown and the global budget (FSL-145), and only when both pass writes the `reserved`
+//   row of one request and commits; a refused request commits only that void;
 // - `beginDelivery` runs before the first Feishu call of a reservation: an expired one is
 //   voided and nothing may be called (FSL-145);
-// - `activate` serializes one email with a transaction-scoped advisory lock and locks this
-//   row `FOR UPDATE`; only an unexpired `reserved` row with no reservation of a larger
-//   `email_seq` for the same email HMAC is activated (FSL-149): every `active` row of that
-//   email HMAC (whatever its flow) is voided clearing its sensitive fields in the same
-//   statement, then this row turns `active` with the email, open_id, name and code HMAC.
-//   An expired or superseded reservation is voided instead and nothing else changes;
-// - `voidReservation` has the same shape and turns this row `void`;
+// - `activate` takes the flow lock, then the email lock, and locks this row `FOR UPDATE`; only
+//   an unexpired `reserved` row with no reservation of a larger `email_seq` for the same email
+//   HMAC is activated (FSL-149): every `active` row of that email HMAC (whatever its flow) is
+//   voided clearing its sensitive fields in the same statement, then this row turns `active`
+//   with the email, open_id, name and code HMAC. An expired or superseded reservation is voided
+//   instead and nothing else changes;
+// - `voidReservation` has the same shape (flow lock, then email lock) and turns this row `void`;
 // - `voidRejectedSend` writes back a send that Feishu rejected on every attempt: a
-//   conditional update that only voids the row while it is still `active` and unexpired.
+//   conditional update, under the same two locks, that only voids the row while it is still
+//   `active` and unexpired.
+// Every write-back of a delivery (`beginDelivery`, `activate`, `voidReservation`,
+// `voidRejectedSend`) takes the flow lock, then the email lock, of its row, so a later request
+// meets the same lock waits whatever the Feishu result was (FSL-154).
 //
 // Outside those transactions, `cleanupFeishuLoginCodes` (FSL-146) is the expiry cleanup that the
 // engine scheduler runs on every Web instance: one statement that voids the expired `reserved`
@@ -52,12 +58,19 @@ export const FEISHU_LOGIN_CODE_HMAC_LABEL = "feishu-login-code:v1:";
 export const FEISHU_LOGIN_EMAIL_LOCK_CLASS = 0x46534c01;
 
 /**
- * The global advisory lock of every reservation ("FSL" + 0x02, key 0), taken after the email
- * lock (FSL-145): reservations of all emails, on all instances, decide the global budget one
- * after another.
+ * The global advisory lock of every reservation ("FSL" + 0x02, key 0), taken after the flow lock
+ * and the email lock (FSL-145, FSL-154): reservations of all emails, on all instances, decide
+ * the global budget one after another.
  */
 export const FEISHU_LOGIN_GLOBAL_LOCK_CLASS = 0x46534c02;
 export const FEISHU_LOGIN_GLOBAL_LOCK_KEY = 0;
+
+/**
+ * The fixed first key of every per-flow advisory lock ("FSL" + 0x03, FSL-154). The second key is
+ * derived from the flow hash; a collision of two flows only serializes more, never less. It is
+ * the first lock of every transaction that takes it: flow, then email, then global.
+ */
+export const FEISHU_LOGIN_FLOW_LOCK_CLASS = 0x46534c03;
 
 /** A second reservation of one email HMAC within this many seconds is refused (FSL-145). */
 export const FEISHU_LOGIN_COOLDOWN_SECONDS = 60;
@@ -109,6 +122,12 @@ export function feishuLoginEmailLockKey(emailHmac: string): number {
   return Buffer.from(emailHmac.slice(0, 8), "hex").readInt32BE(0);
 }
 
+/** The second advisory-lock key of a flow hash: its first 32 bits as a signed integer (FSL-154). */
+export function feishuLoginFlowLockKey(flowHash: string): number {
+  assertHex(flowHash, "INVALID_FEISHU_LOGIN_FLOW_HASH");
+  return Buffer.from(flowHash.slice(0, 8), "hex").readInt32BE(0);
+}
+
 function assertHex(value: unknown, code: string): asserts value is string {
   if (typeof value !== "string" || !HEX_64.test(value)) throw new Error(code);
 }
@@ -124,13 +143,17 @@ export interface FeishuLoginReserveInput {
   readonly emailHmac: string;
 }
 
+/**
+ * Every result but `retry` comes from a committed transaction that has already voided the row of
+ * the largest `flow_seq` of the flow (unless it was `consumed`, FSL-154).
+ */
 export type FeishuLoginReserveResult =
   | { readonly kind: "reserved"; readonly id: string }
-  /** A concurrent reservation took the same order number; the request is retried. */
+  /** A concurrent reservation took the same order number; rolled back, the request is retried. */
   | { readonly kind: "retry" }
-  /** The email HMAC already has a reservation of the last 60 seconds; nothing was written. */
+  /** The email HMAC already has a reservation of the last 60 seconds; no new row was written. */
   | { readonly kind: "cooldown" }
-  /** 120 reservations of the last 60 seconds exist (all emails); nothing was written. */
+  /** 120 reservations of the last 60 seconds exist (all emails); no new row was written. */
   | { readonly kind: "budget" };
 
 export type FeishuLoginDeliveryResult =
@@ -211,6 +234,53 @@ async function lockEmail(client: PoolClient, emailHmac: string): Promise<void> {
   ]);
 }
 
+async function lockFlow(client: PoolClient, flowHash: string): Promise<void> {
+  await client.query("select pg_advisory_xact_lock($1::int4, $2::int4)", [
+    FEISHU_LOGIN_FLOW_LOCK_CLASS,
+    feishuLoginFlowLockKey(flowHash),
+  ]);
+}
+
+/**
+ * The two locks of every write-back of a delivery (FSL-154): the flow lock of the row, then the
+ * email lock, before any row lock. The flow hash of a row never changes, so it is read first
+ * without a lock. `false` when the row no longer exists (nothing to write back, no lock taken).
+ */
+async function lockFlowThenEmail(client: PoolClient, id: string, emailHmac: string): Promise<boolean> {
+  const found = await client.query<{ flow_hash: string }>(
+    "select flow_hash from feishu_login_codes where id = $1 and email_hmac = $2",
+    [id, emailHmac],
+  );
+  const flowHash = found.rows[0]?.flow_hash;
+  if (flowHash === undefined) return false;
+  await lockFlow(client, flowHash);
+  await lockEmail(client, emailHmac);
+  return true;
+}
+
+/**
+ * The row locks of a write-back that may activate or void a row: this row and every `active` row
+ * of its email HMAC (the rows an activation voids), in id order, in a statement of its own. The
+ * activation and the void write-back of a delivery share it (FSL-154).
+ */
+const LOCK_ROW_AND_ACTIVE_ROWS_OF_EMAIL_SQL = `select 1 from feishu_login_codes
+  where email_hmac = $2 and (id = $1 or state = 'active')
+  order by id
+  for update`;
+
+/**
+ * FSL-154: the one statement of a reservation that voids the row of the largest `flow_seq` of the
+ * flow, whatever its email and state (`reserved`, `active` or `void`), clearing its sensitive
+ * fields; a `consumed` newest row is left as it is. It rewrites 0 or 1 row: 0 only when the flow
+ * has no row yet or its newest row is consumed. Only that row can still be valid: every
+ * reservation voids the newest row of its flow before it adds a larger `flow_seq`, and only a
+ * `reserved` row ever activates.
+ */
+export const FEISHU_LOGIN_SUPERSEDE_FLOW_SQL = `update feishu_login_codes
+   set state = 'void', email = null, open_id = null, display_name = null, code_hmac = null
+ where id = (select id from feishu_login_codes where flow_hash = $1::text order by flow_seq desc limit 1)
+   and state <> 'consumed'`;
+
 /** Creates the store over one pool; every method takes and releases its own client. */
 export function createFeishuLoginCodeStore(pool: Pool): FeishuLoginCodeStore {
   return {
@@ -221,23 +291,34 @@ export function createFeishuLoginCodeStore(pool: Pool): FeishuLoginCodeStore {
       let refused: "cooldown" | "budget" | undefined;
       try {
         await inTransaction(pool, async (client) => {
+          // FSL-154: the flow lock comes first. Every reservation of the flow runs under it, so
+          // the newest row voided below is the newest committed row of the flow and each
+          // `flow_seq` is the current maximum plus one, in commit order. The write-backs of a
+          // delivery take it too, before the email lock.
+          await lockFlow(client, input.flowHash);
           // The email lock serializes this reservation with every activation of the email:
           // a reservation can not commit between an activation's "no larger email_seq"
-          // check and its activating write. Each order number is then the current maximum
+          // check and its activating write. Each `email_seq` is then the current maximum
           // plus one under that lock. The unique indexes of FSL-163 remain as a defence in
-          // depth: a writer that would bypass the lock and read the same maximum collides,
+          // depth: a writer that would bypass the locks and read the same maximum collides,
           // and the later committer fails instead of sharing an order number.
           await lockEmail(client, input.emailHmac);
-          // FSL-145: the global lock, always after the email lock (activations only take the
-          // email lock, so the order never deadlocks). Every reservation of every email and
-          // instance decides the budget under it, so two of them never both see the last
-          // free slot. Both locks are released by the commit, before any Feishu call.
+          // FSL-145: the global lock, always last (flow, then email, then global; every other
+          // transaction takes a prefix of that order or no advisory lock, so it never
+          // deadlocks). Every reservation of every email and instance decides the budget under
+          // it, so two of them never both see the last free slot. The locks are released by the
+          // commit, before any Feishu call.
           await client.query("select pg_advisory_xact_lock($1::int4, $2::int4)", [
             FEISHU_LOGIN_GLOBAL_LOCK_CLASS,
             FEISHU_LOGIN_GLOBAL_LOCK_KEY,
           ]);
-          // The creation time is read once after both locks (`clock_timestamp()`, not the
-          // transaction start `now()`), so waiting for a lock never shortens the two-minute
+          // FSL-154: void the newest row of the flow before anything is decided, so even a
+          // refused request invalidates the earlier code of this flow. The statement waits for
+          // the row lock of a verify, an activation or the cleanup holding that row, after all
+          // advisory locks (every row lock comes after the advisory locks of its transaction).
+          await client.query(FEISHU_LOGIN_SUPERSEDE_FLOW_SQL, [input.flowHash]);
+          // The creation time is read once after the three locks and the void (`clock_timestamp()`,
+          // not the transaction start `now()`), so waiting for a lock never shortens the two-minute
           // reservation and creation times follow the commit order. The cooldown (index
           // `(email_hmac, created_at)`) and the budget (index `(created_at)`, counted up to
           // the budget only) are decided against that same instant; every row counts, whatever
@@ -259,8 +340,9 @@ export function createFeishuLoginCodeStore(pool: Pool): FeishuLoginCodeStore {
             ],
           );
           const { at, cooldown, recent } = decision.rows[0]!;
-          // A refused request writes nothing: it never extends the cooldown and never takes a
-          // slot of the budget, so retrying does not delay the recovery of either.
+          // A refused request writes no new row (it commits only the void above): it never
+          // extends the cooldown and never takes a slot of the budget, so retrying does not
+          // delay the recovery of either.
           if (cooldown) {
             refused = "cooldown";
             return;
@@ -294,7 +376,9 @@ export function createFeishuLoginCodeStore(pool: Pool): FeishuLoginCodeStore {
       assertText(input?.id, "INVALID_FEISHU_LOGIN_ROW_ID");
       assertHex(input.emailHmac, "INVALID_FEISHU_LOGIN_EMAIL_HMAC");
       return inTransaction(pool, async (client) => {
-        await lockEmail(client, input.emailHmac);
+        if (!(await lockFlowThenEmail(client, input.id, input.emailHmac))) {
+          return { kind: "not_reserved", reason: "not_reserved" } as const;
+        }
         // The row lock is taken by a statement of its own, so the expiry below is read after
         // every lock wait (`clock_timestamp()`, never the transaction start `now()`).
         await client.query("select 1 from feishu_login_codes where id = $1 and email_hmac = $2 for update", [
@@ -332,25 +416,24 @@ export function createFeishuLoginCodeStore(pool: Pool): FeishuLoginCodeStore {
       if (typeof input.displayName !== "string") throw new Error("INVALID_FEISHU_LOGIN_DISPLAY_NAME");
       assertHex(input.codeHmac, "INVALID_FEISHU_LOGIN_CODE_HMAC");
       return inTransaction(pool, async (client) => {
-        await lockEmail(client, input.emailHmac);
+        // FSL-154: the flow lock, then the email lock, whatever the Feishu result was.
+        if (!(await lockFlowThenEmail(client, input.id, input.emailHmac))) {
+          return { kind: "not_reserved", reason: "not_reserved" } as const;
+        }
         // Every row lock this transaction needs (this row and every active row of the email,
         // which the activation voids) is taken by a statement of its own, before the check:
         // the state and the newest reservation are read by the next statement, after any wait
         // for those locks, and the updates below never wait again. Only an activation, under
-        // this email lock, makes a row active, so no new active row appears meanwhile.
+        // this email lock, makes a row active, so no new active row appears meanwhile. A later
+        // reservation of this row's flow (FSL-154) waits for the flow lock: it voids this row
+        // only before or after this transaction, and a voided row is no longer `reserved`.
         // `email_seq` follows the commit order of the reservations (the unique index of
         // FSL-163 fails a later committer that read the same maximum), so a larger one is a
         // later request whatever the timestamps say. The expiry is read with
         // `clock_timestamp()`, never the transaction start `now()`, and it is checked again by
         // the activating update itself, so an expiry that passes at any point before that
         // write still prevents the activation.
-        await client.query(
-          `select 1 from feishu_login_codes
-            where email_hmac = $2 and (id = $1 or state = 'active')
-            order by id
-            for update`,
-          [input.id, input.emailHmac],
-        );
+        await client.query(LOCK_ROW_AND_ACTIVE_ROWS_OF_EMAIL_SQL, [input.id, input.emailHmac]);
         const current = await client.query<{ state: string; live: boolean; superseded: boolean }>(
           `select c.state, c.expires_at > clock_timestamp() as live,
                   exists (select 1 from feishu_login_codes n
@@ -414,7 +497,11 @@ export function createFeishuLoginCodeStore(pool: Pool): FeishuLoginCodeStore {
       assertText(input?.id, "INVALID_FEISHU_LOGIN_ROW_ID");
       assertHex(input.emailHmac, "INVALID_FEISHU_LOGIN_EMAIL_HMAC");
       await inTransaction(pool, async (client) => {
-        await lockEmail(client, input.emailHmac);
+        // The same shape as the activation (FSL-154): flow lock, email lock, then the row locks
+        // the activation would take (this row and every active row of the email, in id order),
+        // so a later request meets the same waits whether the lookup found a member or not.
+        if (!(await lockFlowThenEmail(client, input.id, input.emailHmac))) return;
+        await client.query(LOCK_ROW_AND_ACTIVE_ROWS_OF_EMAIL_SQL, [input.id, input.emailHmac]);
         await client.query(
           `update feishu_login_codes
               set state = 'void', email = null, open_id = null, display_name = null, code_hmac = null
@@ -428,7 +515,7 @@ export function createFeishuLoginCodeStore(pool: Pool): FeishuLoginCodeStore {
       assertText(input?.id, "INVALID_FEISHU_LOGIN_ROW_ID");
       assertHex(input.emailHmac, "INVALID_FEISHU_LOGIN_EMAIL_HMAC");
       return inTransaction(pool, async (client) => {
-        await lockEmail(client, input.emailHmac);
+        if (!(await lockFlowThenEmail(client, input.id, input.emailHmac))) return { voided: false };
         // A conditional write-back: a row voided by a newer request or the cleanup, consumed
         // by verify, or past its expiry (even before the cleanup ran) is never restored or
         // overwritten here. The row lock is taken first by a statement of its own, so
@@ -499,16 +586,18 @@ function codeHmacMatches(expectedHex: string, storedHex: unknown): boolean {
  * transaction:
  * 1. locks the row of the largest `flow_seq` of the flow (whatever its state) with
  *    `SELECT … FOR UPDATE`, in a statement of its own. It is the only row of `feishu_login_codes`
- *    the transaction locks (the cleanup and the activation, which lock several, do so in id
- *    order). A concurrent verify that selects the same row waits here until this transaction ends;
+ *    the transaction locks (the cleanup, the activation and the void write-back of a delivery,
+ *    which lock several, do so in id order). A concurrent verify that selects the same row waits here until this transaction ends;
  * 2. reads the locked row again in the next statement (so after any lock wait, against its
  *    newest committed version and one `clock_timestamp()` sample). Only an `active` row that is
  *    unexpired (`expires_at > clock_timestamp()`), still the largest `flow_seq` of its flow in
  *    that statement's snapshot and below `FEISHU_LOGIN_MAX_FAILED_ATTEMPTS` goes on, and that
  *    statement returns the code HMAC only for such a row; anything else is `invalid` and changes
  *    nothing. A newer row of the flow committed after that statement started is not seen by this
- *    transaction (voiding the flow's newest row when a new one is reserved, which waits for this
- *    lock, is FSL-154);
+ *    transaction; it is harmless, because every reservation of the flow first voids the flow's
+ *    newest row (FSL-154) and that void waits for this row lock: a reservation that commits before
+ *    this transaction voided the row (this statement then reads it `void`), one that waits voids
+ *    it after this transaction ends (a consumed row is left as it is);
  * 3. compares `feishuLoginCodeHmac(key, row id, code)` with the stored code HMAC in constant time.
  *    A mismatch adds one to `failed_attempts`; the mismatch that brings it to
  *    `FEISHU_LOGIN_MAX_FAILED_ATTEMPTS` turns the row `void` clearing its email, open_id, name and
@@ -682,8 +771,8 @@ export interface FeishuLoginCleanupResult {
  * The two sets are disjoint by `created_at`, so no row is both updated and deleted.
  *
  * Every instance runs it on its own and it is idempotent. The due rows are locked in id order
- * (`order by id for update`), the same order in which an activation locks the rows of one email
- * (every other writer of the table locks a single row), so the cleanup never deadlocks with a
+ * (`order by id for update`), the same order in which an activation, or the void write-back of a
+ * delivery (FSL-154), locks the rows of one email (every other writer of the table locks a single row), so the cleanup never deadlocks with a
  * login transaction or with another cleanup. A row another transaction holds is waited for (at
  * most `FEISHU_LOGIN_CLEANUP_LOCK_TIMEOUT_MS`) rather than skipped, so a due row is handled by
  * this run as soon as that transaction ends: once locked, each candidate is re-checked against

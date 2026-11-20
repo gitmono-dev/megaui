@@ -2,25 +2,33 @@
 /**
  * FSL-122：验证码签发服务主流程（ADR-FSL-11「发码」）。
  *
- * `issueFeishuLoginCode({ flowHash, email })` runs four steps:
+ * FSL-154 splits the flow into two ports (ADR-FSL-11 「flow 绑定」): `reserveFeishuLoginCode`
+ * (step 1, database only; the request endpoint waits for it before it answers) and
+ * `deliverFeishuLoginCode` (steps 2–4, Feishu; run after the answer with what the reservation
+ * returned). `issueFeishuLoginCode({ flowHash, email })` runs both, one after the other:
  *
- * 1. the reservation transaction takes the email lock (the one activation takes), then the
- *    global lock (FSL-145), and while holding both decides the cooldown (a reservation of the
- *    email HMAC in the last 60 seconds: `FEISHU_LOGIN_COOLDOWN`) and the global budget (120
- *    reservations of all emails in the last 60 seconds: `FEISHU_LOGIN_GLOBAL_BUDGET`). A
- *    refused request writes no row and calls nothing. Otherwise it writes the `reserved` row
- *    of this request and commits, which releases both locks before any Feishu call;
- * 2. the delivery starts (FSL-154 later splits it into its own `deliver` port): a reservation
- *    already expired (two minutes after its creation) is voided and Feishu is never called
- *    (FSL-145). Then, outside any transaction, Directory v1 finds the single member of the
- *    email and reads whether the member is in office (`FeishuContactClient`, FSL-117);
- * 3. the activation transaction serializes the email with an advisory lock and locks this
+ * 1. the reservation transaction takes the flow lock, the email lock (the one activation
+ *    takes) and the global lock (FSL-145), in that order. It first voids the row of the
+ *    largest `flow_seq` of the flow (whatever its email and state, unless `consumed`), so
+ *    once it has committed no earlier reservation or code of the flow is valid any more; then
+ *    it decides the cooldown (a reservation of the email HMAC in the last 60 seconds:
+ *    `FEISHU_LOGIN_COOLDOWN`) and the global budget (120 reservations of all emails in the last
+ *    60 seconds: `FEISHU_LOGIN_GLOBAL_BUDGET`). A refused request commits only that void,
+ *    writes no new row and calls nothing. Otherwise it writes the `reserved` row of this request
+ *    and commits, which releases the locks before any Feishu call. It never calls Feishu and
+ *    never reads an account;
+ * 2. the delivery starts: a reservation already expired (two minutes after its creation) is
+ *    voided and Feishu is never called (FSL-145). Then, outside any transaction, Directory v1
+ *    finds the single member of the email and reads whether the member is in office
+ *    (`FeishuContactClient`, FSL-117);
+ * 3. the activation transaction takes the flow lock, then the email lock, and locks this
  *    row; only a still unexpired `reserved` row with no later reservation (`email_seq`) of
  *    the email activates (FSL-149): every `active` row of the email HMAC (in any flow,
  *    sensitive fields cleared) is voided and this row turns `active` with the email,
- *    open_id, name and code HMAC. A stale reservation is voided and nothing is sent. No
- *    target, several members, an inactive member or a failed Feishu call void this row in a
- *    transaction of the same shape instead;
+ *    open_id, name and code HMAC. A stale reservation (voided by a later request of the flow,
+ *    superseded by a later reservation of the email, expired) is voided or left as it is, and
+ *    nothing is sent. No target, several members, an inactive member or a failed Feishu call
+ *    void this row in a transaction of the same shape (flow lock, then email lock) instead;
  * 4. after the commit, `FeishuMessageClient` sends the code as a direct message with the
  *    row id as the stable UUID of this request. The transport makes exactly one HTTP
  *    attempt per call (`maxAttempts: 1`); this service owns the retries (FSL-149): an
@@ -57,7 +65,7 @@
  * during the send stops the retries, and the attempts made so far decide the outcome (an attempt
  * refused by the deadline never reached Feishu and counts as `rejected`).
  *
- * Out of this service: the HTTP entry (FSL-123) and the cleanup (FSL-146).
+ * Out of this service: the HTTP entry (FSL-123, FSL-154) and the cleanup (FSL-146).
  */
 import { AsyncLocalStorage } from "node:async_hooks";
 
@@ -157,14 +165,33 @@ export interface FeishuLoginIssueInput {
   readonly email: string;
 }
 
-export type FeishuLoginIssueResult =
-  /** The reservation collided with a concurrent one; the caller answers 503 retry. */
-  | { readonly status: "retry" }
-  /**
-   * FSL-145: refused before any row or Feishu call, because the email has a reservation of the
-   * last 60 seconds (`cooldown`) or the global budget is spent (`budget`). The request path
-   * answers these like any accepted request; they never depend on whether the account exists.
-   */
+/**
+ * What `reserveFeishuLoginCode` resolves with, once its transaction has committed (FSL-154); the
+ * request endpoint hands it, unread, to `deliverFeishuLoginCode` after the answer. It carries the
+ * normalized email for the lookup and is never logged or stored.
+ */
+export type FeishuLoginReservation =
+  | {
+      readonly status: "reserved";
+      /** The row id: also the stable UUID of the message. */
+      readonly id: string;
+      readonly email: string;
+      readonly emailHmac: string;
+      /** FSL-160: the absolute deadline of every Feishu request of this reservation. */
+      readonly deadline: number;
+    }
+  /** Refused by the cooldown or the budget; the delivery does nothing. */
+  | { readonly status: "cooldown" }
+  | { readonly status: "budget" };
+
+/**
+ * Thrown by `reserveFeishuLoginCode` when the reservation collided with a concurrent one on a
+ * unique order number (rolled back, nothing changed); the request endpoint answers 503 retry.
+ */
+export const FEISHU_LOGIN_RESERVE_RETRY = "FEISHU_LOGIN_RESERVE_RETRY";
+
+export type FeishuLoginDeliveryResult =
+  /** Refused at the reservation (FSL-145): nothing was called. */
   | { readonly status: "cooldown" }
   | { readonly status: "budget" }
   /** Zero or several members, or no unique match on the first page. */
@@ -187,7 +214,28 @@ export type FeishuLoginIssueResult =
    */
   | { readonly status: "sent"; readonly send: FeishuMessageResult["kind"] };
 
+export type FeishuLoginIssueResult =
+  /** The reservation collided with a concurrent one; the caller answers 503 retry. */
+  | { readonly status: "retry" }
+  /**
+   * FSL-145: refused before any new row or Feishu call, because the email has a reservation of
+   * the last 60 seconds (`cooldown`) or the global budget is spent (`budget`). The request path
+   * answers these like any accepted request; they never depend on whether the account exists.
+   */
+  | FeishuLoginDeliveryResult;
+
 export interface FeishuLoginIssuer {
+  /**
+   * FSL-154 step 1, database only: resolves once the reservation transaction has committed
+   * (refusals included; a failing logger does not change that); throws `FEISHU_LOGIN_RESERVE_RETRY`
+   * on a unique collision (rolled back) and rethrows any database error (the request endpoint
+   * answers both 503 retry). A database error is usually a rolled-back transaction; when the
+   * connection fails during the commit itself, its outcome is unknown.
+   */
+  readonly reserveFeishuLoginCode: (input: FeishuLoginIssueInput) => Promise<FeishuLoginReservation>;
+  /** FSL-154 steps 2–4: the Feishu lookup, the activation or void and the message. */
+  readonly deliverFeishuLoginCode: (reservation: FeishuLoginReservation) => Promise<FeishuLoginDeliveryResult>;
+  /** Both ports, one after the other; a unique collision is `{ status: "retry" }`. */
   readonly issueFeishuLoginCode: (input: FeishuLoginIssueInput) => Promise<FeishuLoginIssueResult>;
 }
 
@@ -332,98 +380,129 @@ export function createFeishuLoginIssuer(options: FeishuLoginIssuerOptions): Feis
     return result.kind;
   }
 
+  function logQuietly(key: FeishuLoginIssueLogKey): void {
+    try {
+      log(key);
+    } catch {
+      // A failing logger never changes the result of a committed reservation.
+    }
+  }
+
+  async function reserveFeishuLoginCode(input: FeishuLoginIssueInput): Promise<FeishuLoginReservation> {
+    const email = normalizeEmail(input?.email);
+    const emailHmac = feishuLoginEmailHmac(otpHmacKey, email);
+    // FSL-160: the absolute deadline of every Feishu request of this reservation. The clock is
+    // read before the reservation transaction, and the row's `created_at` is read by the
+    // database after it; the deadline is this reading plus the same two-minute TTL. Only the
+    // elapsed time on each clock matters, so a constant offset between the service clock and
+    // the database clock cancels out: the deadline falls at most two minutes after this
+    // instant, never after the stored `expires_at`.
+    const deadline = now() + FEISHU_LOGIN_RESERVATION_TTL_SECONDS * 1000;
+
+    // ① Reserve and commit before any Feishu call (FSL-154: before the request answers). The
+    // flow's newest row is voided first; the cooldown and the global budget are then decided
+    // under the flow, email and global locks, and a refusal writes no new row.
+    const reservation = await store.reserve({ flowHash: input.flowHash, emailHmac });
+    if (reservation.kind === "retry") throw new Error(FEISHU_LOGIN_RESERVE_RETRY);
+    // The transaction has committed (the flow's earlier code is void): from here on nothing may
+    // throw, or the request would answer 503 for a reservation that stands. A failing logger is
+    // ignored.
+    if (reservation.kind === "cooldown") {
+      logQuietly(FEISHU_LOGIN_COOLDOWN);
+      return { status: "cooldown" };
+    }
+    if (reservation.kind === "budget") {
+      logQuietly(FEISHU_LOGIN_GLOBAL_BUDGET);
+      return { status: "budget" };
+    }
+    return { status: "reserved", id: reservation.id, email, emailHmac, deadline };
+  }
+
+  async function deliverFeishuLoginCode(reservation: FeishuLoginReservation): Promise<FeishuLoginDeliveryResult> {
+    if (reservation.status !== "reserved") return { status: reservation.status };
+    const { id, email, emailHmac, deadline } = reservation;
+    // ② The delivery starts: an expired reservation is voided and Feishu is never called
+    // (the budget counts reservations, each one triggers at most one delivery).
+    const delivery = await store.beginDelivery({ id, emailHmac });
+    if (delivery.kind !== "live") return { status: "not_reserved" };
+
+    // Take the one token of this delivery (through the shared refresh), then look the member
+    // up outside every transaction with that token; every call carries the deadline, and a
+    // passed deadline (`transport_deadline`) voids the row like any failed lookup (FSL-160).
+    let token: string;
+    let openId: string;
+    let displayName: string;
+    try {
+      token = await tokenManager.getToken(credentials, { deadline });
+      const found = await contact.findByEmail(email, { token, deadline });
+      if (found.kind !== "unique") {
+        await voidWith(id, emailHmac, FEISHU_LOGIN_NO_TARGET);
+        return { status: "no_target" };
+      }
+      const member = await contact.readMember(found.openId, { token, deadline });
+      if (member.kind !== "active") {
+        await voidWith(id, emailHmac, FEISHU_LOGIN_INACTIVE);
+        return { status: "inactive" };
+      }
+      openId = found.openId;
+      displayName = member.name;
+    } catch {
+      // Transport errors and unacceptable shapes alike: fail closed, never echo the cause.
+      await voidWith(id, emailHmac, FEISHU_LOGIN_PROVIDER_FAILED);
+      return { status: "provider_failed" };
+    }
+
+    // ③ Activate under the flow lock, then the email lock (the same two locks as every
+    // write-back above, FSL-154); the code itself never reaches the database. A reservation
+    // voided by a later request of the flow is no longer `reserved` and sends nothing.
+    const code = generateCode();
+    const activated = await store.activate({
+      id,
+      emailHmac,
+      email,
+      openId,
+      displayName,
+      codeHmac: feishuLoginCodeHmac(otpHmacKey, id, code),
+    });
+    if (activated.kind !== "active") return { status: "not_reserved" };
+
+    // ④ Send after the commit, with the row id as the stable UUID of this request; the
+    // attempt key is logged by `sendOnce` before each HTTP attempt. Only an
+    // `unknown` attempt is retried, with the same UUID and payload, the token of this delivery
+    // and its deadline: no token is refreshed here, and once the deadline has passed the next
+    // attempt is refused before it leaves (`rejected`), which ends the retries (FSL-160).
+    let sawUnknown = false;
+    for (let attempt = 0; ; attempt += 1) {
+      const outcome = await sendOnce(openId, code, id, token, deadline);
+      if (outcome === "accepted") return { status: "sent", send: "accepted" };
+      if (outcome === "rejected") break;
+      sawUnknown = true;
+      if (attempt >= FEISHU_LOGIN_SEND_MAX_RETRIES) break;
+      await sleep(retryBackoffMs * 2 ** attempt);
+    }
+    if (sawUnknown) {
+      // Feishu may hold the message: the code stays valid until it expires.
+      log(FEISHU_LOGIN_SEND_UNKNOWN);
+      return { status: "sent", send: "unknown" };
+    }
+    // Every attempt was rejected: void the row unless it changed meanwhile.
+    await store.voidRejectedSend({ id, emailHmac });
+    log(FEISHU_LOGIN_SEND_REJECTED);
+    return { status: "sent", send: "rejected" };
+  }
+
   return {
+    reserveFeishuLoginCode,
+    deliverFeishuLoginCode,
     async issueFeishuLoginCode(input) {
-      const email = normalizeEmail(input?.email);
-      const emailHmac = feishuLoginEmailHmac(otpHmacKey, email);
-      // FSL-160: the absolute deadline of every Feishu request of this reservation. The clock is
-      // read before the reservation transaction, and the row's `created_at` is read by the
-      // database after it; the deadline is this reading plus the same two-minute TTL. Only the
-      // elapsed time on each clock matters, so a constant offset between the service clock and
-      // the database clock cancels out: the deadline falls at most two minutes after this
-      // instant, never after the stored `expires_at`.
-      const deadline = now() + FEISHU_LOGIN_RESERVATION_TTL_SECONDS * 1000;
-
-      // ① Reserve and commit before any Feishu call; the cooldown and the global budget are
-      // decided under the email lock and the global lock, and a refusal writes nothing.
-      const reservation = await store.reserve({ flowHash: input.flowHash, emailHmac });
-      if (reservation.kind === "retry") return { status: "retry" };
-      if (reservation.kind === "cooldown") {
-        log(FEISHU_LOGIN_COOLDOWN);
-        return { status: "cooldown" };
-      }
-      if (reservation.kind === "budget") {
-        log(FEISHU_LOGIN_GLOBAL_BUDGET);
-        return { status: "budget" };
-      }
-      const id = reservation.id;
-
-      // ② The delivery starts: an expired reservation is voided and Feishu is never called
-      // (the budget counts reservations, each one triggers at most one delivery).
-      const delivery = await store.beginDelivery({ id, emailHmac });
-      if (delivery.kind !== "live") return { status: "not_reserved" };
-
-      // Take the one token of this delivery (through the shared refresh), then look the member
-      // up outside every transaction with that token; every call carries the deadline, and a
-      // passed deadline (`transport_deadline`) voids the row like any failed lookup (FSL-160).
-      let token: string;
-      let openId: string;
-      let displayName: string;
+      let reservation: FeishuLoginReservation;
       try {
-        token = await tokenManager.getToken(credentials, { deadline });
-        const found = await contact.findByEmail(email, { token, deadline });
-        if (found.kind !== "unique") {
-          await voidWith(id, emailHmac, FEISHU_LOGIN_NO_TARGET);
-          return { status: "no_target" };
-        }
-        const member = await contact.readMember(found.openId, { token, deadline });
-        if (member.kind !== "active") {
-          await voidWith(id, emailHmac, FEISHU_LOGIN_INACTIVE);
-          return { status: "inactive" };
-        }
-        openId = found.openId;
-        displayName = member.name;
-      } catch {
-        // Transport errors and unacceptable shapes alike: fail closed, never echo the cause.
-        await voidWith(id, emailHmac, FEISHU_LOGIN_PROVIDER_FAILED);
-        return { status: "provider_failed" };
+        reservation = await reserveFeishuLoginCode(input);
+      } catch (error) {
+        if (error instanceof Error && error.message === FEISHU_LOGIN_RESERVE_RETRY) return { status: "retry" };
+        throw error;
       }
-
-      // ③ Activate under the email lock; the code itself never reaches the database.
-      const code = generateCode();
-      const activated = await store.activate({
-        id,
-        emailHmac,
-        email,
-        openId,
-        displayName,
-        codeHmac: feishuLoginCodeHmac(otpHmacKey, id, code),
-      });
-      if (activated.kind !== "active") return { status: "not_reserved" };
-
-      // ④ Send after the commit, with the row id as the stable UUID of this request; the
-      // attempt key is logged by `sendOnce` before each HTTP attempt. Only an
-      // `unknown` attempt is retried, with the same UUID and payload, the token of this delivery
-      // and its deadline: no token is refreshed here, and once the deadline has passed the next
-      // attempt is refused before it leaves (`rejected`), which ends the retries (FSL-160).
-      let sawUnknown = false;
-      for (let attempt = 0; ; attempt += 1) {
-        const outcome = await sendOnce(openId, code, id, token, deadline);
-        if (outcome === "accepted") return { status: "sent", send: "accepted" };
-        if (outcome === "rejected") break;
-        sawUnknown = true;
-        if (attempt >= FEISHU_LOGIN_SEND_MAX_RETRIES) break;
-        await sleep(retryBackoffMs * 2 ** attempt);
-      }
-      if (sawUnknown) {
-        // Feishu may hold the message: the code stays valid until it expires.
-        log(FEISHU_LOGIN_SEND_UNKNOWN);
-        return { status: "sent", send: "unknown" };
-      }
-      // Every attempt was rejected: void the row unless it changed meanwhile.
-      await store.voidRejectedSend({ id, emailHmac });
-      log(FEISHU_LOGIN_SEND_REJECTED);
-      return { status: "sent", send: "rejected" };
+      return deliverFeishuLoginCode(reservation);
     },
   };
 }

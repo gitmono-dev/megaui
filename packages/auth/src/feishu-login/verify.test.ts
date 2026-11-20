@@ -56,7 +56,7 @@ function buildAuth(withVerify = true) {
     email: { sendVerificationEmail: vi.fn(), sendResetPasswordEmail: vi.fn() } as never,
     nodeEnv: "test",
     feishuLogin: {
-      issue: async () => undefined,
+      issue: { reserve: async () => undefined, deliver: async () => undefined },
       ...(withVerify ? { verify: { pool: database.pool, appId: APP_ID, otpHmacKey: KEY } } : {}),
     },
   });
@@ -404,7 +404,7 @@ describe("feishu login verify (FSL-124 success path, FSL-151 failure path and co
       baseURL: ORIGIN,
       db: database.db,
       email: {} as never,
-      feishuLogin: { issue: async () => undefined, verify: { pool: database.pool, appId: APP_ID, otpHmacKey: new Uint8Array(16) } },
+      feishuLogin: { issue: { reserve: async () => undefined, deliver: async () => undefined }, verify: { pool: database.pool, appId: APP_ID, otpHmacKey: new Uint8Array(16) } },
     })).toThrow("INVALID_FEISHU_LOGIN_PLUGIN_CONFIG");
     expect(() => createAuth({
       appName: "megaui-test",
@@ -412,7 +412,7 @@ describe("feishu login verify (FSL-124 success path, FSL-151 failure path and co
       baseURL: ORIGIN,
       db: database.db,
       email: {} as never,
-      feishuLogin: { issue: async () => undefined, verify: { pool: database.pool, appId: " ", otpHmacKey: KEY } },
+      feishuLogin: { issue: { reserve: async () => undefined, deliver: async () => undefined }, verify: { pool: database.pool, appId: " ", otpHmacKey: KEY } },
     })).toThrow("INVALID_FEISHU_LOGIN_PLUGIN_CONFIG");
   });
 });

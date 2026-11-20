@@ -13,12 +13,14 @@ import { admitProvider, type ProviderTarget } from "@megaui/core";
 import {
   createFeishuLoginCodeStore,
   FEISHU_LOGIN_EMAIL_LOCK_CLASS,
+  FEISHU_LOGIN_FLOW_LOCK_CLASS,
   FEISHU_LOGIN_GLOBAL_BUDGET as GLOBAL_BUDGET,
   FEISHU_LOGIN_GLOBAL_LOCK_CLASS,
   FEISHU_LOGIN_GLOBAL_LOCK_KEY,
   feishuLoginCodeHmac,
   feishuLoginEmailHmac,
   feishuLoginEmailLockKey,
+  feishuLoginFlowLockKey,
 } from "@megaui/database";
 import { createIsolatedPostgres, type IsolatedPostgres } from "@megaui/database/test-support";
 import { FEISHU_MESSAGE_PATH } from "../enterprise/feishu/message";
@@ -1811,9 +1813,11 @@ describe("Feishu login code issue main flow with real Mock HTTP and PostgreSQL (
     });
   }
 
-  scenario("FSL-145: a reservation takes the email lock first, then the global lock, and holds neither during Feishu calls", async () => {
+  scenario("FSL-145/FSL-154: a reservation takes the flow and email locks first, then the global lock, and holds none during Feishu calls", async () => {
     const emailHmac = feishuLoginEmailHmac(hmacKey, ALICE.email);
     const emailLock = `${FEISHU_LOGIN_EMAIL_LOCK_CLASS}:${feishuLoginEmailLockKey(emailHmac) >>> 0}`;
+    const flow = flowHash();
+    const flowLock = `${FEISHU_LOGIN_FLOW_LOCK_CLASS}:${feishuLoginFlowLockKey(flow) >>> 0}`;
     const globalLock = `${FEISHU_LOGIN_GLOBAL_LOCK_CLASS}:${FEISHU_LOGIN_GLOBAL_LOCK_KEY}`;
     // Another connection holds the global lock: the reservation gets the email lock, then waits.
     const holder = await pool.connect();
@@ -1827,7 +1831,7 @@ describe("Feishu login code issue main flow with real Mock HTTP and PostgreSQL (
       const arrived = deferred();
       const release = deferred();
       plan(SEARCH_PATHNAME, { kind: "forward", arrived: arrived.resolve, release: release.promise });
-      pending = issuer.issueFeishuLoginCode({ flowHash: flowHash(), email: ALICE.email });
+      pending = issuer.issueFeishuLoginCode({ flowHash: flow, email: ALICE.email });
       await waitForAdvisoryWaiters(1);
       const waiting = (
         await pool.query<{ granted: boolean; lock: string }>(
@@ -1836,8 +1840,10 @@ describe("Feishu login code issue main flow with real Mock HTTP and PostgreSQL (
             "where l.locktype = 'advisory' and a.wait_event_type = 'Lock' and a.datname = current_database() order by 2",
         )
       ).rows;
-      expect(waiting).toEqual(
+      // FSL-154: the flow lock comes before the email lock.
+      expect(waiting.sort((x, y) => x.lock.localeCompare(y.lock))).toEqual(
         [
+          { granted: true, lock: flowLock },
           { granted: true, lock: emailLock },
           { granted: false, lock: globalLock },
         ].sort((x, y) => x.lock.localeCompare(y.lock)),
@@ -1864,10 +1870,13 @@ describe("Feishu login code issue main flow with real Mock HTTP and PostgreSQL (
         // (its own connection) waits for the email lock meanwhile.
         const gate = pauseFirst((text) => text === "commit");
         const gated = buildIssuer(gate.pool);
-        const first = gated.issueFeishuLoginCode({ flowHash: flowHash(), email: ALICE.email });
+        const firstFlow = flowHash();
+        const first = gated.issueFeishuLoginCode({ flowHash: firstFlow, email: ALICE.email });
         await gate.arrived;
-        expect(await grantedAdvisoryLocks()).toEqual(
+        // FSL-154: the flow lock, the email lock and the global lock.
+        expect((await grantedAdvisoryLocks()).sort()).toEqual(
           [
+            `${FEISHU_LOGIN_FLOW_LOCK_CLASS}:${feishuLoginFlowLockKey(firstFlow) >>> 0}`,
             `${FEISHU_LOGIN_EMAIL_LOCK_CLASS}:${feishuLoginEmailLockKey(feishuLoginEmailHmac(hmacKey, ALICE.email)) >>> 0}`,
             `${FEISHU_LOGIN_GLOBAL_LOCK_CLASS}:${FEISHU_LOGIN_GLOBAL_LOCK_KEY}`,
           ].sort(),

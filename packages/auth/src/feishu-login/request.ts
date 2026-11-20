@@ -1,26 +1,34 @@
 // megaui:packages/auth/src/enterprise-otp/request.ts@24a8551 (megaui-only FSL-123: the request contract of the Feishu login)
 /**
- * FSL-123: the request contract of `POST /feishu-login/request` (ADR-FSL-11 「请求」).
+ * FSL-123, FSL-154: the request contract of `POST /feishu-login/request` (ADR-FSL-11 「请求」
+ * 「flow 绑定」).
  *
  * - The request is `application/json` and its body (at most 4096 bytes) is exactly
  *   `{ "email": <string> }`. The email is trimmed and lowercased and must
  *   pass `normalizeFeishuLoginEmail`; anything else answers 400 `{ "code": "INVALID_INPUT" }`
- *   with no cookie, and the issue port is never called.
- * - A valid email always answers 202 `{ "status": "accepted" }`. A request that carries a valid
- *   flow cookie keeps that flow and sets the cookie again with the same value (its ten minutes
- *   count again); otherwise a new flow is drawn. The answer never depends on the email beyond
- *   its syntax: the request path reads no account, no identity and calls no Feishu API, so a
- *   known, an unknown and a shared email get the same status, body and cookie attributes.
+ *   with no cookie, and no port is called.
+ * - A valid email first waits for the injected `reserve` port (FSL-154): the reservation
+ *   transaction of the flow, database only, which voids the flow's earlier code and commits
+ *   before the answer. When it resolves (a reservation refused by the cooldown or the budget
+ *   included; its value is never read) the answer is 202 `{ "status": "accepted" }`. A request
+ *   that carries a valid flow cookie keeps that flow and sets the cookie again with the same
+ *   value (its ten minutes count again); otherwise a new flow is drawn. When `reserve` rejects
+ *   or throws, the answer is 503 `{ "status": "retry" }` without a cookie, `deliver` is never
+ *   called and only the stable key `FEISHU_LOGIN_RESERVE_FAILED` is logged. The answer never
+ *   depends on the email beyond its syntax: the request path reads no account, no identity and
+ *   calls no Feishu API, so a known, an unknown and a shared email get the same status, body and
+ *   cookie attributes.
  * - Better Auth's per-address limit (production) keeps applying, but only to admissible
  *   requests: the limiter runs before any endpoint, so its rule for this path first checks the
  *   request with `precheckFeishuLoginHttpRequest` and lets an invalid input through to its
  *   400 (ADR-FSL-11 order: invalid input ① before the limit ②). Invalid inputs do no work. A
  *   body over 4 KiB is invalid input, answered 400 before the endpoint parses it.
- * - The issue port runs only after the answer, in this Node process: it is scheduled with
- *   `setImmediate`, which fires after the current turn of the event loop has handed the
- *   response back. Its result is ignored; a rejection or a throw is reported as the single
- *   stable log key `FEISHU_LOGIN_ISSUE_FAILED` (never the error, the email or the flow), and
- *   the request still answered 202.
+ * - The `deliver` port (Feishu lookup, activation and message) runs only after the answer, in
+ *   this Node process, with what `reserve` resolved: it is scheduled with `setImmediate`, which
+ *   fires after the current turn of the event loop has handed the response back. Its result is
+ *   ignored; a rejection or a throw is reported as the single stable log key
+ *   `FEISHU_LOGIN_ISSUE_FAILED` (never the error, the email or the flow), and the request still
+ *   answered 202.
  */
 import { normalizeFeishuLoginEmail } from "./input";
 import {
@@ -31,11 +39,13 @@ import {
   type FeishuLoginFlowCookie,
 } from "./cookie";
 
-/** The stable log key of a failed or thrown issue port. */
+/** The stable log key of a failed or thrown `deliver` port. */
 export const FEISHU_LOGIN_ISSUE_FAILED = "FEISHU_LOGIN_ISSUE_FAILED";
-export type FeishuLoginRequestLogKey = typeof FEISHU_LOGIN_ISSUE_FAILED;
+/** FSL-154: the stable log key of a failed or thrown `reserve` port (answered 503 retry). */
+export const FEISHU_LOGIN_RESERVE_FAILED = "FEISHU_LOGIN_RESERVE_FAILED";
+export type FeishuLoginRequestLogKey = typeof FEISHU_LOGIN_ISSUE_FAILED | typeof FEISHU_LOGIN_RESERVE_FAILED;
 
-/** What the issue port receives: the flow hash and the normalized email, nothing else. */
+/** What the `reserve` port receives: the flow hash and the normalized email, nothing else. */
 export interface FeishuLoginIssueInput {
   /** The SHA-256 of the flow cookie value, as 64 lowercase hex characters. */
   readonly flowHash: string;
@@ -44,10 +54,19 @@ export interface FeishuLoginIssueInput {
 }
 
 /**
- * The injected issue service (the engine's `issueFeishuLoginCode`, wired by FSL-150). It runs
- * after the response; its result is not read.
+ * The injected issue service in two ports (FSL-154; the engine's `reserveFeishuLoginCode` and
+ * `deliverFeishuLoginCode`, wired by FSL-150).
  */
-export type FeishuLoginIssuePort = (input: FeishuLoginIssueInput) => Promise<unknown>;
+export interface FeishuLoginIssuePort {
+  /**
+   * Database only, awaited before the answer: resolves once the reservation transaction of the
+   * flow has committed, refusals included. Its value is not read here; it is handed to `deliver`.
+   * A rejection or a throw answers 503 `{ "status": "retry" }`.
+   */
+  reserve(input: FeishuLoginIssueInput): Promise<unknown>;
+  /** Called after the answer with what `reserve` resolved; its result is not read. */
+  deliver(reservation: unknown): Promise<unknown>;
+}
 
 export type FeishuLoginRequestOutcome =
   | { readonly status: 400; readonly body: { readonly code: "INVALID_INPUT" } }
@@ -159,9 +178,10 @@ export async function precheckFeishuLoginHttpRequest(request: Request): Promise<
 }
 
 /**
- * Decides the answer of one request from its parsed JSON body, its `Cookie` header and its
+ * Decides the admission of one request from its parsed JSON body, its `Cookie` header and its
  * `Content-Type` header (the same admission as `precheckFeishuLoginHttpRequest`). Pure
- * apart from drawing a new flow; it never calls the issue port.
+ * apart from drawing a new flow; it never calls a port. A 202 outcome is only answered once
+ * `reserveFeishuLoginIssue` succeeded.
  */
 export function admitFeishuLoginRequest(
   body: unknown,
@@ -180,33 +200,58 @@ export function admitFeishuLoginRequest(
   };
 }
 
-function report(log: (key: FeishuLoginRequestLogKey) => void): void {
+function report(log: (key: FeishuLoginRequestLogKey) => void, key: FeishuLoginRequestLogKey): void {
   try {
-    log(FEISHU_LOGIN_ISSUE_FAILED);
+    log(key);
   } catch {
     // A failing logger must not turn into an unhandled rejection of the request process.
   }
 }
 
+/** The answer of a request whose reservation failed (FSL-154). */
+export const FEISHU_LOGIN_RETRY_BODY = { status: "retry" } as const;
+
+export type FeishuLoginReserveAttempt =
+  | { readonly ok: true; readonly reservation: unknown }
+  | { readonly ok: false };
+
 /**
- * Runs the issue port after the current synchronous run, so `auth.handler` settles with an already
- * fixed response before the port is called (when the response bytes reach the client is up to
- * the host server); never inline, never awaited by the request.
- * A rejection or a synchronous throw only logs `FEISHU_LOGIN_ISSUE_FAILED`.
+ * FSL-154: runs the `reserve` port and waits for it, before the request answers. A rejection or a
+ * synchronous throw only logs `FEISHU_LOGIN_RESERVE_FAILED` (never the error, the email or the
+ * flow) and is reported as `{ ok: false }`: the endpoint answers 503 retry and never delivers.
  */
-export function scheduleFeishuLoginIssue(
+export async function reserveFeishuLoginIssue(
   port: FeishuLoginIssuePort,
   input: FeishuLoginIssueInput,
+  log: (key: FeishuLoginRequestLogKey) => void,
+): Promise<FeishuLoginReserveAttempt> {
+  try {
+    return { ok: true, reservation: await port.reserve(input) };
+  } catch {
+    report(log, FEISHU_LOGIN_RESERVE_FAILED);
+    return { ok: false };
+  }
+}
+
+/**
+ * Runs the `deliver` port after the current synchronous run, so `auth.handler` settles with an
+ * already fixed response before the port is called (when the response bytes reach the client is
+ * up to the host server); never inline, never awaited by the request.
+ * A rejection or a synchronous throw only logs `FEISHU_LOGIN_ISSUE_FAILED`.
+ */
+export function scheduleFeishuLoginDelivery(
+  port: FeishuLoginIssuePort,
+  reservation: unknown,
   log: (key: FeishuLoginRequestLogKey) => void,
 ): void {
   setImmediate(() => {
     let pending: Promise<unknown>;
     try {
-      pending = Promise.resolve(port(input));
+      pending = Promise.resolve(port.deliver(reservation));
     } catch {
-      report(log);
+      report(log, FEISHU_LOGIN_ISSUE_FAILED);
       return;
     }
-    pending.catch(() => report(log));
+    pending.catch(() => report(log, FEISHU_LOGIN_ISSUE_FAILED));
   });
 }

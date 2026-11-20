@@ -1,16 +1,41 @@
-// FSL-123: the request contract of `POST /feishu-login/request`, driven through the real
-// `createAuth` handler with an injected issue port (no database, no Feishu).
+// FSL-123, FSL-154: the request contract of `POST /feishu-login/request`, driven through the real
+// `createAuth` handler with injected `reserve` / `deliver` ports (no database, no Feishu).
 import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createAuth } from "../create-auth";
 import { FEISHU_LOGIN_FLOW_COOKIE } from "./cookie";
-import { FEISHU_LOGIN_PLUGIN_ID } from "./plugin";
-import { FEISHU_LOGIN_ISSUE_FAILED, type FeishuLoginIssueInput, type FeishuLoginIssuePort } from "./request";
+import { FEISHU_LOGIN_PLUGIN_ID, feishuLogin } from "./plugin";
+import {
+  FEISHU_LOGIN_ISSUE_FAILED,
+  FEISHU_LOGIN_RESERVE_FAILED,
+  type FeishuLoginIssueInput,
+  type FeishuLoginIssuePort,
+} from "./request";
 
 const ORIGIN = "http://127.0.0.1:3000";
 const URL_REQUEST = `${ORIGIN}/api/auth/feishu-login/request`;
 const FLOW_VALUE = /^[A-Za-z0-9_-]{43}$/;
+
+type ReserveFn = (input: FeishuLoginIssueInput) => Promise<unknown>;
+type DeliverFn = (reservation: unknown) => Promise<unknown>;
+
+/**
+ * Two spied ports. By default `reserve` resolves with a reservation that names its input, and
+ * `deliver` resolves with nothing.
+ */
+function makePorts(options: { reserve?: ReserveFn; deliver?: DeliverFn } = {}) {
+  const reserve = vi.fn<ReserveFn>(options.reserve ?? (async (input) => ({ reservedFor: input })));
+  const deliver = vi.fn<DeliverFn>(options.deliver ?? (async () => undefined));
+  return { reserve, deliver } satisfies FeishuLoginIssuePort;
+}
+
+type Ports = ReturnType<typeof makePorts>;
+
+function expectNoPortCalled(issue: Ports): void {
+  expect(issue.reserve).not.toHaveBeenCalled();
+  expect(issue.deliver).not.toHaveBeenCalled();
+}
 
 function buildAuth(options: {
   issue?: FeishuLoginIssuePort;
@@ -27,7 +52,7 @@ function buildAuth(options: {
     nodeEnv: options.nodeEnv ?? "test",
     ...(options.enabled === false
       ? {}
-      : { feishuLogin: { issue: options.issue ?? (async () => undefined), ...(options.log ? { log: options.log } : {}) } }),
+      : { feishuLogin: { issue: options.issue ?? makePorts(), ...(options.log ? { log: options.log } : {}) } }),
   });
 }
 
@@ -115,7 +140,7 @@ describe("feishu login request endpoint (FSL-123)", () => {
   });
 
   it("production limit: invalid input answers 400 before 429, admissible emails all answer the same 429", async () => {
-    const issue = vi.fn<FeishuLoginIssuePort>(async () => undefined);
+    const issue = makePorts();
     const auth = buildAuth({ issue, nodeEnv: "production" });
     const address = { "x-forwarded-for": "198.51.100.23" };
     let limited: Response | undefined;
@@ -159,11 +184,13 @@ describe("feishu login request endpoint (FSL-123)", () => {
     // Another address is not limited.
     expect((await post(auth, { email: "known@example.com" }, undefined, { "x-forwarded-for": "198.51.100.24" })).status).toBe(202);
     await flushScheduled();
-    expect(issue.mock.calls.every(call => call[0].email === "known@example.com")).toBe(true);
+    expect(issue.reserve.mock.calls.every(call => call[0].email === "known@example.com")).toBe(true);
+    // A limited request reserves nothing; every admitted one was reserved, then delivered.
+    expect(issue.deliver).toHaveBeenCalledTimes(issue.reserve.mock.calls.length);
   });
 
   it("AC1/AC2: a valid email answers 202 accepted and sets a new host-only flow cookie", async () => {
-    const issue = vi.fn<FeishuLoginIssuePort>(async () => undefined);
+    const issue = makePorts();
     const auth = buildAuth({ issue });
     const response = await post(auth, { email: "alice@example.com" });
 
@@ -179,7 +206,10 @@ describe("feishu login request endpoint (FSL-123)", () => {
     expect(cookie.attributes.some(attribute => attribute.startsWith("domain"))).toBe(false);
 
     await flushScheduled();
-    expect(issue).toHaveBeenCalledExactlyOnceWith({ flowHash: sha256Hex(cookie.value), email: "alice@example.com" });
+    const input = { flowHash: sha256Hex(cookie.value), email: "alice@example.com" };
+    expect(issue.reserve).toHaveBeenCalledExactlyOnceWith(input);
+    // FSL-154: `deliver` receives exactly what `reserve` resolved with.
+    expect(issue.deliver).toHaveBeenCalledExactlyOnceWith({ reservedFor: input });
   });
 
   it("AC2: two requests without a valid cookie get independent flows", async () => {
@@ -195,7 +225,7 @@ describe("feishu login request endpoint (FSL-123)", () => {
     ["a duplicated cookie", `${FEISHU_LOGIN_FLOW_COOKIE}=${EXISTING_FLOW}; ${FEISHU_LOGIN_FLOW_COOKIE}=${EXISTING_FLOW}`],
     ["another cookie only", "theme=dark"],
   ])("AC2: %s is not a valid flow, so a new flow cookie is set", async (_label, header) => {
-    const issue = vi.fn<FeishuLoginIssuePort>(async () => undefined);
+    const issue = makePorts();
     const response = await post(buildAuth({ issue }), { email: "alice@example.com" }, header);
     expect(response.status).toBe(202);
     const cookie = parseSetCookie(flowSetCookie(response)[0]!);
@@ -203,11 +233,11 @@ describe("feishu login request endpoint (FSL-123)", () => {
     expect(cookie.value).not.toBe(EXISTING_FLOW);
     expect(cookie.attributes).toEqual(EXPECTED_ATTRIBUTES);
     await flushScheduled();
-    expect(issue.mock.calls[0]?.[0].flowHash).toBe(sha256Hex(cookie.value));
+    expect(issue.reserve.mock.calls[0]?.[0].flowHash).toBe(sha256Hex(cookie.value));
   });
 
   it("AC3: a valid flow cookie is set again with the same value and a fresh Max-Age of 600", async () => {
-    const issue = vi.fn<FeishuLoginIssuePort>(async () => undefined);
+    const issue = makePorts();
     const auth = buildAuth({ issue });
     const response = await post(auth, { email: "alice@example.com" }, `theme=dark; ${FEISHU_LOGIN_FLOW_COOKIE}=${EXISTING_FLOW}`);
     expect(response.status).toBe(202);
@@ -217,14 +247,14 @@ describe("feishu login request endpoint (FSL-123)", () => {
     expect(cookie.value).toBe(EXISTING_FLOW);
     expect(cookie.attributes).toEqual(EXPECTED_ATTRIBUTES);
     await flushScheduled();
-    expect(issue).toHaveBeenCalledExactlyOnceWith({ flowHash: sha256Hex(EXISTING_FLOW), email: "alice@example.com" });
+    expect(issue.reserve).toHaveBeenCalledExactlyOnceWith({ flowHash: sha256Hex(EXISTING_FLOW), email: "alice@example.com" });
   });
 
   it("AC3: a flow cookie with less than 5 minutes left is renewed for 10 minutes with the same flow", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     const start = new Date("2026-11-21T08:00:00.000Z");
     vi.setSystemTime(start);
-    const issue = vi.fn<FeishuLoginIssuePort>(async () => undefined);
+    const issue = makePorts();
     const auth = buildAuth({ issue });
 
     const first = parseSetCookie(flowSetCookie(await post(auth, { email: "alice@example.com" }))[0]!);
@@ -237,26 +267,26 @@ describe("feishu login request endpoint (FSL-123)", () => {
     expect(renewed.attributes).toContain("max-age=600");
     expect(renewed.attributes).toEqual(EXPECTED_ATTRIBUTES);
     await flushScheduled();
-    expect(issue.mock.calls.map(call => call[0].flowHash)).toEqual([sha256Hex(first.value), sha256Hex(first.value)]);
+    expect(issue.reserve.mock.calls.map(call => call[0].flowHash)).toEqual([sha256Hex(first.value), sha256Hex(first.value)]);
   });
 
-  it("AC4: surrounding whitespace is trimmed and the email is lowercased before the issue port", async () => {
-    const issue = vi.fn<FeishuLoginIssuePort>(async () => undefined);
+  it("AC4: surrounding whitespace is trimmed and the email is lowercased before the reserve port", async () => {
+    const issue = makePorts();
     const response = await post(buildAuth({ issue }), { email: " \t Alice.Smith@Example.COM \n" });
     expect(response.status).toBe(202);
     await flushScheduled();
-    expect(issue).toHaveBeenCalledTimes(1);
-    expect(issue.mock.calls[0]?.[0].email).toBe("alice.smith@example.com");
-    expect(issue.mock.calls[0]?.[0].flowHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(issue.reserve).toHaveBeenCalledTimes(1);
+    expect(issue.reserve.mock.calls[0]?.[0].email).toBe("alice.smith@example.com");
+    expect(issue.reserve.mock.calls[0]?.[0].flowHash).toMatch(/^[0-9a-f]{64}$/);
   });
 
   it("AC5: an email of exactly 254 characters is still admitted", async () => {
-    const issue = vi.fn<FeishuLoginIssuePort>(async () => undefined);
+    const issue = makePorts();
     const email = `${"a".repeat(64)}@${"b".repeat(63)}.${"c".repeat(63)}.${"d".repeat(57)}.com`;
     expect(email).toHaveLength(254);
     expect((await post(buildAuth({ issue }), { email })).status).toBe(202);
     await flushScheduled();
-    expect(issue.mock.calls[0]?.[0].email).toBe(email);
+    expect(issue.reserve.mock.calls[0]?.[0].email).toBe(email);
   });
 
   const tooLong = `${"a".repeat(64)}@${"b".repeat(63)}.${"c".repeat(63)}.${"d".repeat(58)}.com`;
@@ -272,31 +302,31 @@ describe("feishu login request endpoint (FSL-123)", () => {
     ["a missing email", {}],
     ["an extra field", { email: "alice@example.com", name: "x" }],
     ["an array body", ["alice@example.com"]],
-  ])("AC5: %s answers 400 INVALID_INPUT without a cookie and without the issue port", async (_label, body) => {
+  ])("AC5: %s answers 400 INVALID_INPUT without a cookie and without any port", async (_label, body) => {
     if (_label === "more than 254 characters") expect(tooLong).toHaveLength(255);
-    const issue = vi.fn<FeishuLoginIssuePort>(async () => undefined);
+    const issue = makePorts();
     const response = await post(buildAuth({ issue }), body, `${FEISHU_LOGIN_FLOW_COOKIE}=${EXISTING_FLOW}`);
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({ code: "INVALID_INPUT" });
     expect(response.headers.getSetCookie()).toEqual([]);
     await flushScheduled();
-    expect(issue).not.toHaveBeenCalled();
+    expectNoPortCalled(issue);
   });
 
   it.each(["application/json-extra", "application/jsonp"])(
-    "AC5: a valid email sent as %s answers 400 INVALID_INPUT without a cookie and without the issue port",
+    "AC5: a valid email sent as %s answers 400 INVALID_INPUT without a cookie and without any port",
     async contentType => {
-      const issue = vi.fn<FeishuLoginIssuePort>(async () => undefined);
+      const issue = makePorts();
       const response = await post(buildAuth({ issue }), { email: "alice@example.com" }, undefined, { "content-type": contentType });
       expect(response.status).toBe(400);
       expect(await response.json()).toEqual({ code: "INVALID_INPUT" });
       expect(response.headers.getSetCookie()).toEqual([]);
       await flushScheduled();
-      expect(issue).not.toHaveBeenCalled();
+      expectNoPortCalled(issue);
     });
 
   it("AC5: a body over 4096 bytes answers 400 INVALID_INPUT even when it carries a valid email", async () => {
-    const issue = vi.fn<FeishuLoginIssuePort>(async () => undefined);
+    const issue = makePorts();
     const auth = buildAuth({ issue });
     const atLimit = `{"email":"alice@example.com"${" ".repeat(4096 - 29)}}`;
     expect(new TextEncoder().encode(atLimit).byteLength).toBe(4096);
@@ -308,7 +338,8 @@ describe("feishu login request endpoint (FSL-123)", () => {
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(response.headers.getSetCookie()).toEqual([]);
     await flushScheduled();
-    expect(issue).toHaveBeenCalledTimes(1);
+    expect(issue.reserve).toHaveBeenCalledTimes(1);
+    expect(issue.deliver).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -316,20 +347,20 @@ describe("feishu login request endpoint (FSL-123)", () => {
     ["application/json", "not json"],
     ["application/json", ""],
   ])("AC5: a %s body %j answers the same 400 INVALID_INPUT before the framework parses it", async (contentType, body) => {
-    const issue = vi.fn<FeishuLoginIssuePort>(async () => undefined);
+    const issue = makePorts();
     const response = await post(buildAuth({ issue }), body, undefined, { "content-type": contentType });
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({ code: "INVALID_INPUT" });
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(response.headers.getSetCookie()).toEqual([]);
     await flushScheduled();
-    expect(issue).not.toHaveBeenCalled();
+    expectNoPortCalled(issue);
   });
 
   it.each(["application/json", "application/json-extra"])(
     "AC5: a streamed body over 4096 bytes sent as %s answers 400 after reading only a bounded prefix",
     async contentType => {
-      const issue = vi.fn<FeishuLoginIssuePort>(async () => undefined);
+      const issue = makePorts();
       const chunk = new TextEncoder().encode(" ".repeat(1024));
       let pulled = 0;
       let first = true;
@@ -357,11 +388,11 @@ describe("feishu login request endpoint (FSL-123)", () => {
       // Only the bounded prefix was pulled, never the whole megabyte.
       expect(pulled).toBeLessThan(64 * 1024);
       await flushScheduled();
-      expect(issue).not.toHaveBeenCalled();
+      expectNoPortCalled(issue);
     });
 
   it("AC5: a single body chunk over 4096 bytes answers 400 and no later chunk is pulled", async () => {
-    const issue = vi.fn<FeishuLoginIssuePort>(async () => undefined);
+    const issue = makePorts();
     const big = new TextEncoder().encode(`{"email":"alice@example.com","pad":"${"x".repeat(64 * 1024)}"}`);
     let pulls = 0;
     const stream = new ReadableStream<Uint8Array>({
@@ -384,7 +415,7 @@ describe("feishu login request endpoint (FSL-123)", () => {
     // The oversized first chunk is the last one read: the stream is not drained.
     expect(pulls).toBeLessThan(50);
     await flushScheduled();
-    expect(issue).not.toHaveBeenCalled();
+    expectNoPortCalled(issue);
   });
 
   it("AC1: a JSON content type with parameters is admitted", async () => {
@@ -393,11 +424,17 @@ describe("feishu login request endpoint (FSL-123)", () => {
   });
 
   it("AC6: known, unknown and shared emails get the same status, body and cookie", async () => {
-    // The port would behave differently per email; none of it can reach the response.
-    const issue = vi.fn<FeishuLoginIssuePort>(async ({ email }: FeishuLoginIssueInput) => {
-      if (email === "known@example.com") return { status: "sent", send: "accepted" };
-      if (email === "shared@example.com") return { status: "no_target" };
-      throw new Error("unknown member");
+    // The ports would behave differently per email; none of it can reach the response: the
+    // reservation of one email is refused by the cooldown, `deliver` fails for another.
+    const issue = makePorts({
+      reserve: async ({ email }: FeishuLoginIssueInput) =>
+        email === "shared@example.com" ? { status: "cooldown" } : { status: "reserved", email },
+      deliver: async (reservation) => {
+        const { email } = reservation as { email?: string };
+        if (email === "known@example.com") return { status: "sent", send: "accepted" };
+        if (email === undefined) return { status: "cooldown" };
+        throw new Error("unknown member");
+      },
     });
     const auth = buildAuth({ issue, log: () => undefined });
     const emails = ["known@example.com", "unknown@example.com", "shared@example.com"];
@@ -428,40 +465,121 @@ describe("feishu login request endpoint (FSL-123)", () => {
     expect(redacted[1]).toEqual(redacted[0]);
     expect(redacted[2]).toEqual(redacted[0]);
     await flushScheduled();
-    expect(issue).toHaveBeenCalledTimes(6);
+    expect(issue.reserve).toHaveBeenCalledTimes(6);
+    expect(issue.deliver).toHaveBeenCalledTimes(6);
   });
 
-  it("answers before the issue port is called", async () => {
+  it("answers after reserve and before deliver is called", async () => {
     let responded = false;
-    let portSawResponse: boolean | undefined;
-    const issue = vi.fn<FeishuLoginIssuePort>(async () => {
-      portSawResponse = responded;
+    let reserveSawResponse: boolean | undefined;
+    let deliverSawResponse: boolean | undefined;
+    const issue = makePorts({
+      reserve: async () => {
+        reserveSawResponse = responded;
+        return "reservation";
+      },
+      deliver: async () => {
+        deliverSawResponse = responded;
+      },
     });
     const auth = buildAuth({ issue });
     const response = await post(auth, { email: "alice@example.com" });
     responded = true;
     expect(response.status).toBe(202);
-    expect(issue).not.toHaveBeenCalled();
+    expect(issue.reserve).toHaveBeenCalledTimes(1);
+    expect(issue.deliver).not.toHaveBeenCalled();
     await flushScheduled();
-    expect(issue).toHaveBeenCalledTimes(1);
-    expect(portSawResponse).toBe(true);
+    expect(issue.deliver).toHaveBeenCalledExactlyOnceWith("reservation");
+    expect(reserveSawResponse).toBe(false);
+    expect(deliverSawResponse).toBe(true);
   });
 
-  it("does not wait for a slow issue port", async () => {
+  it("does not wait for a slow deliver port", async () => {
     let release!: () => void;
-    const issue = vi.fn<FeishuLoginIssuePort>(() => new Promise<void>(resolve => { release = resolve; }));
+    const issue = makePorts({ deliver: () => new Promise<void>(resolve => { release = resolve; }) });
     const auth = buildAuth({ issue });
     expect((await post(auth, { email: "alice@example.com" })).status).toBe(202);
     await flushScheduled();
-    expect(issue).toHaveBeenCalledTimes(1);
+    expect(issue.deliver).toHaveBeenCalledTimes(1);
     expect((await post(auth, { email: "bob@example.com" })).status).toBe(202);
     release();
   });
 
+  it("FSL-154 AC1: the answer waits until reserve has resolved (its transaction committed)", async () => {
+    let commit!: (value: unknown) => void;
+    const issue = makePorts({ reserve: () => new Promise(resolve => { commit = resolve; }) });
+    const auth = buildAuth({ issue });
+    let settled = false;
+    const pending = post(auth, { email: "alice@example.com" }).then((response) => {
+      settled = true;
+      return response;
+    });
+    // However long the reservation takes, the handler has not answered.
+    await flushScheduled();
+    await new Promise(resolve => setTimeout(resolve, 50));
+    expect(issue.reserve).toHaveBeenCalledTimes(1);
+    expect(settled).toBe(false);
+    expect(issue.deliver).not.toHaveBeenCalled();
+
+    commit({ committed: true });
+    const response = await pending;
+    expect(response.status).toBe(202);
+    expect(await response.json()).toEqual({ status: "accepted" });
+    expect(flowSetCookie(response)).toHaveLength(1);
+    await flushScheduled();
+    expect(issue.deliver).toHaveBeenCalledExactlyOnceWith({ committed: true });
+  });
+
   it.each([
-    ["rejects", vi.fn<FeishuLoginIssuePort>(async () => { throw new Error("db down: alice@example.com"); })],
-    ["throws synchronously", vi.fn<FeishuLoginIssuePort>(() => { throw new Error("boom alice@example.com"); })],
-  ])("AC7: when the issue port %s the request still answers 202 and only the stable key is logged", async (_label, issue) => {
+    ["rejects", async () => { throw new Error("db down: alice@example.com"); }],
+    ["throws synchronously", () => { throw new Error("boom alice@example.com"); }],
+  ] as Array<[string, ReserveFn]>)(
+    "FSL-154 AC2: when reserve %s the answer is 503 retry without a cookie, and deliver is never called",
+    async (_label, reserve) => {
+      const issue = makePorts({ reserve });
+      const log = vi.fn<(key: string) => void>();
+      const auth = buildAuth({ issue, log });
+      const shapes = [];
+      for (const [email, cookie] of [
+        ["known@example.com", undefined],
+        ["unknown@example.com", `${FEISHU_LOGIN_FLOW_COOKIE}=${EXISTING_FLOW}`],
+        ["shared@example.com", undefined],
+      ] as const) {
+        const response = await post(auth, { email }, cookie);
+        shapes.push({
+          status: response.status,
+          body: await response.text(),
+          setCookie: response.headers.getSetCookie(),
+          cacheControl: response.headers.get("cache-control"),
+          contentType: response.headers.get("content-type"),
+        });
+      }
+      expect(shapes[0]!.status).toBe(503);
+      expect(JSON.parse(shapes[0]!.body)).toEqual({ status: "retry" });
+      expect(shapes[0]!.setCookie).toEqual([]);
+      expect(shapes[0]!.cacheControl).toBe("no-store");
+      // Known, unknown and shared emails, with or without a flow cookie: the same answer.
+      expect(shapes[1]).toEqual(shapes[0]);
+      expect(shapes[2]).toEqual(shapes[0]);
+      await flushScheduled();
+      expect(issue.reserve).toHaveBeenCalledTimes(3);
+      expect(issue.deliver).not.toHaveBeenCalled();
+      // Only the stable key: no error, email or flow.
+      expect(log.mock.calls).toEqual([[FEISHU_LOGIN_RESERVE_FAILED], [FEISHU_LOGIN_RESERVE_FAILED], [FEISHU_LOGIN_RESERVE_FAILED]]);
+    });
+
+  it("FSL-154: the plugin refuses an issue option without both ports", () => {
+    expect(() => feishuLogin({ issue: (async () => undefined) as never })).toThrow("INVALID_FEISHU_LOGIN_PLUGIN_CONFIG");
+    expect(() => feishuLogin({ issue: { reserve: async () => undefined } as never })).toThrow("INVALID_FEISHU_LOGIN_PLUGIN_CONFIG");
+    expect(() => feishuLogin({ issue: { deliver: async () => undefined } as never })).toThrow("INVALID_FEISHU_LOGIN_PLUGIN_CONFIG");
+    expect(() => feishuLogin({ issue: makePorts() })).not.toThrow();
+  });
+
+  it.each([
+    ["rejects", async () => { throw new Error("db down: alice@example.com"); }],
+    ["throws synchronously", () => { throw new Error("boom alice@example.com"); }],
+  ] as Array<[string, DeliverFn]>)("AC7: when deliver %s the request still answers 202 and only the stable key is logged", async (_label, deliver) => {
+    const issue = makePorts({ deliver });
     const log = vi.fn<(key: string) => void>();
     const auth = buildAuth({ issue, log });
     const response = await post(auth, { email: "alice@example.com" });
@@ -469,7 +587,7 @@ describe("feishu login request endpoint (FSL-123)", () => {
     expect(await response.json()).toEqual({ status: "accepted" });
     expect(flowSetCookie(response)).toHaveLength(1);
     await flushScheduled();
-    expect(issue).toHaveBeenCalledTimes(1);
+    expect(issue.deliver).toHaveBeenCalledTimes(1);
     expect(log.mock.calls).toEqual([[FEISHU_LOGIN_ISSUE_FAILED]]);
   });
 
@@ -477,7 +595,7 @@ describe("feishu login request endpoint (FSL-123)", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     try {
-      const auth = buildAuth({ issue: async () => { throw new Error("private detail alice@example.com"); } });
+      const auth = buildAuth({ issue: makePorts({ deliver: async () => { throw new Error("private detail alice@example.com"); } }) });
       expect((await post(auth, { email: "alice@example.com" })).status).toBe(202);
       await flushScheduled();
       expect(warn.mock.calls).toEqual([[FEISHU_LOGIN_ISSUE_FAILED]]);
@@ -493,10 +611,16 @@ describe("feishu login request endpoint (FSL-123)", () => {
     process.on("unhandledRejection", unhandled);
     try {
       const auth = buildAuth({
-        issue: async () => { throw new Error("x"); },
+        issue: makePorts({ deliver: async () => { throw new Error("x"); } }),
         log: () => { throw new Error("logger down"); },
       });
       expect((await post(auth, { email: "alice@example.com" })).status).toBe(202);
+      // A failed reservation with a throwing logger still answers 503.
+      const failing = buildAuth({
+        issue: makePorts({ reserve: async () => { throw new Error("x"); } }),
+        log: () => { throw new Error("logger down"); },
+      });
+      expect((await post(failing, { email: "alice@example.com" })).status).toBe(503);
       await flushScheduled();
       expect(unhandled).not.toHaveBeenCalled();
     } finally {

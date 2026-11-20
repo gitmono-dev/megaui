@@ -23,8 +23,10 @@ import { createAuthEndpoint } from "better-auth/api";
 
 import {
   admitFeishuLoginRequest,
+  FEISHU_LOGIN_RETRY_BODY,
   precheckFeishuLoginHttpRequest,
-  scheduleFeishuLoginIssue,
+  reserveFeishuLoginIssue,
+  scheduleFeishuLoginDelivery,
   type FeishuLoginIssuePort,
   type FeishuLoginRequestLogKey,
 } from "./request";
@@ -40,7 +42,10 @@ export const FEISHU_LOGIN_REQUEST_PATH = "/feishu-login/request";
 export const FEISHU_LOGIN_VERIFY_PATH = "/feishu-login/verify";
 
 export interface FeishuLoginPluginOptions {
-  /** The issue service; called after the 202 has been answered (FSL-150 injects the engine's). */
+  /**
+   * The issue service (FSL-150 injects the engine's): `reserve` is awaited before the answer,
+   * `deliver` is called after it (FSL-154).
+   */
   readonly issue: FeishuLoginIssuePort;
   /** Receives stable log keys only. Defaults to `console.warn`. */
   readonly log?: (key: FeishuLoginRequestLogKey) => void;
@@ -114,7 +119,11 @@ function defaultLog(key: FeishuLoginRequestLogKey): void {
 }
 
 export function feishuLogin(options: FeishuLoginPluginOptions): BetterAuthPlugin {
-  if (!options || typeof options.issue !== "function") {
+  if (
+    !options ||
+    typeof options.issue?.reserve !== "function" ||
+    typeof options.issue.deliver !== "function"
+  ) {
     throw new Error("INVALID_FEISHU_LOGIN_PLUGIN_CONFIG");
   }
   const issue = options.issue;
@@ -153,6 +162,15 @@ export function feishuLogin(options: FeishuLoginPluginOptions): BetterAuthPlugin
           ctx.setStatus(400);
           return ctx.json(outcome.body);
         }
+        // FSL-154: the reservation of this flow commits before the answer; once it has, every
+        // earlier code of the flow is invalid. A failed reservation (usually rolled back; its
+        // outcome is unknown only when the connection fails during the commit) answers 503
+        // retry, with no cookie and no delivery.
+        const reserved = await reserveFeishuLoginIssue(issue, outcome.issue, log);
+        if (!reserved.ok) {
+          ctx.setStatus(503);
+          return ctx.json(FEISHU_LOGIN_RETRY_BODY);
+        }
         const { cookie } = outcome;
         ctx.setCookie(cookie.name, cookie.value, {
           path: cookie.path,
@@ -161,8 +179,8 @@ export function feishuLogin(options: FeishuLoginPluginOptions): BetterAuthPlugin
           sameSite: cookie.sameSite,
           maxAge: cookie.maxAge,
         });
-        // Scheduled, not started: the port runs after this response has been handed back.
-        scheduleFeishuLoginIssue(issue, outcome.issue, log);
+        // Scheduled, not started: `deliver` runs after this response has been handed back.
+        scheduleFeishuLoginDelivery(issue, reserved.reservation, log);
         ctx.setStatus(202);
         return ctx.json(outcome.body);
       }),

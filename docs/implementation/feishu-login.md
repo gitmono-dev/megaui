@@ -147,7 +147,7 @@ work_info.staff_status
 
 ## 发码
 
-`packages/engine/src/services/feishu-login/issue.ts` 的 `createFeishuLoginIssuer(options).issueFeishuLoginCode({ flowHash, email })`（FSL-122）实现签发主流程，FSL-145 在其预约事务中加入全局锁、邮箱冷却与全局预算。验证码表 `feishu_login_codes` 的读写集中在 `packages/database/src/feishu-login-store.ts`（`createFeishuLoginCodeStore(pool)`，由 `@megaui/database` 导出）。**当前状态：** 本服务尚未接入任何进程，由 FSL-123 的 request 端点与 FSL-150 的 Web 接线调用。
+`packages/engine/src/services/feishu-login/issue.ts` 的 `createFeishuLoginIssuer(options)`（FSL-122）实现签发主流程，FSL-145 在其预约事务中加入全局锁、邮箱冷却与全局预算。FSL-154 把签发拆为两个端口：`reserveFeishuLoginCode({ flowHash, email })`（第 1 步预约，只访问数据库，request 端点在 `auth.handler` 确定响应之前等待它提交）与 `deliverFeishuLoginCode(reservation)`（第 2–4 步，飞书查询、激活或作废与私聊，request 端点在 `auth.handler` 确定 202 响应之后以前者的返回值调用；响应字节何时写到客户端由宿主服务器决定，见「HTTP 接口」）；`issueFeishuLoginCode({ flowHash, email })` 依次执行两者，唯一冲突时返回 `{ status: "retry" }`。验证码表 `feishu_login_codes` 的读写集中在 `packages/database/src/feishu-login-store.ts`（`createFeishuLoginCodeStore(pool)`，由 `@megaui/database` 导出）。**当前状态：** 本服务尚未接入任何进程，由 FSL-123 的 request 端点与 FSL-150 的 Web 接线调用。
 
 ### 构造
 
@@ -163,17 +163,28 @@ work_info.staff_status
 
 邮箱先去首尾空白并整体转小写（长度 1–254），再计算邮箱 HMAC。每一步都不在飞书调用期间持有事务或锁。
 
-1. **预约**：一个事务按固定顺序取得两把事务级咨询锁——先取得与激活相同的邮箱锁（`pg_advisory_xact_lock(<类键>, <邮箱 HMAC 派生键>)`，见第 3 步），后取得全局锁（`pg_advisory_xact_lock(0x46534c02, 0)`，FSL-145；激活只取邮箱锁，因此该顺序不会死锁）——持有两把锁时做冷却与预算判定（见下文「冷却与全局预算」），通过判定才写入本次请求的 `reserved` 行并提交，提交即释放两把锁，之后才调用飞书，飞书调用期间不持有任何锁或事务；被拒绝时不写入任何行，服务返回 `{ status: "cooldown" }` 或 `{ status: "budget" }`，不调用飞书。该行只含邮箱 HMAC、flow 哈希（flow Cookie 值的 SHA-256，64 位小写十六进制）、创建时间与预约到期时间（创建后 2 分钟；创建时间在取得两把锁之后以 `clock_timestamp()` 读取一次，冷却与预算判定使用同一时刻，写入的创建时间恰为该时刻，等待锁不会缩短预约有效期）。`flow_seq` 取该 flow 现有最大值加 1，`email_seq` 取该邮箱 HMAC 现有最大值加 1（同一条 `insert … select max(...) + 1` 语句，在邮箱锁内执行），因此同一邮箱的预约在锁下串行，已提交的 `email_seq` 在同一邮箱内严格递增且与提交顺序一致，激活只按它判定先后，不依赖 `created_at`（时间戳相同或倒序都不影响）。预约与激活持有同一把邮箱锁，所以在激活读出「没有 `email_seq` 更大的预约」之后、写入 `active` 之前，同一邮箱不可能提交新的预约（FSL-149）。FSL-163 的唯一索引 `feishu_login_codes_email_seq_uidx`（`(email_hmac, email_seq)`）与 `feishu_login_codes_flow_seq_uidx`（`(flow_hash, flow_seq)`）保留为纵深防御：绕过邮箱锁的写入取到同一序号时后提交者以唯一冲突失败（不同邮箱、同一 flow 的两次并发预约取到同一 `flow_seq` 时同样如此），服务返回 `{ status: "retry" }`，由 request 端点按预约失败返回 503 重试。
-2. **开始发码与查询**：发码（`deliver`，FSL-154 起拆为单独端口）开始时先以一个事务（同一把邮箱锁，再以单独一条 `SELECT … FOR UPDATE` 锁定本行，存储函数 `beginDelivery`）检查本行：已过期（`expires_at <= clock_timestamp()`，创建后 2 分钟）的 `reserved` 行置为 `void` 并清空敏感字段，已不是 `reserved` 的行保持原状，两种情况都不调用飞书（不取 token、不查询、不发送），服务返回 `{ status: "not_reserved" }`、不输出日志键（FSL-145）。仍有效时先经 `FeishuTokenManager` 取得本次发码唯一的 token（共享刷新，见下文「绝对截止时间」），再在事务外以 `FeishuContactClient`（见「飞书接口」）用这一 token 按邮箱查找唯一成员，再按 open_id 读取在职状态。
-3. **激活**：激活事务先以 `pg_advisory_xact_lock(<类键>, <邮箱 HMAC 派生键>)` 串行化同一邮箱（类键为常量 `0x46534c01`，派生键为邮箱 HMAC 前 32 位的有符号整数），再以单独一条 `SELECT … FOR UPDATE`（按 `id` 排序）锁定本行与该邮箱 HMAC 的全部 `active` 行（即激活将要作废的行），之后用下一条语句读取状态并校验（FSL-149；到期以取得全部锁之后的 `clock_timestamp()` 判断，而不是事务开始时的 `now()`，因此等待邮箱锁或任一行锁期间到期的预约同样不激活；校验之后的更新不再等待锁。只有持邮箱锁的激活会产生 `active` 行，期间不会出现新的 `active` 行），三条同时满足才激活：
+1. **预约**（`reserveFeishuLoginCode`，request 响应之前，FSL-154）：一个事务按固定顺序取得三把事务级咨询锁——先取得 flow 锁（`pg_advisory_xact_lock(0x46534c03, <flow 哈希派生键>)`，派生键为 flow 哈希前 32 位的有符号整数，FSL-154），再取得与激活相同的邮箱锁（`pg_advisory_xact_lock(<类键>, <邮箱 HMAC 派生键>)`，见第 3 步），最后取得全局锁（`pg_advisory_xact_lock(0x46534c02, 0)`，FSL-145）——持锁后先以一条语句作废该 flow 中 `flow_seq` 最大的一行（见下文「flow 绑定」），再做冷却与预算判定（见下文「冷却与全局预算」），通过判定才写入本次请求的 `reserved` 行并提交，提交即释放三把锁，之后才调用飞书，飞书调用期间不持有任何锁或事务；被拒绝时不写入新行（只提交上述作废），服务返回 `{ status: "cooldown" }` 或 `{ status: "budget" }`（提交之后输出日志键时日志函数抛错被忽略，不改变该结果），不调用飞书。预约不访问飞书、不查询账号。该行只含邮箱 HMAC、flow 哈希（flow Cookie 值的 SHA-256，64 位小写十六进制）、创建时间与预约到期时间（创建后 2 分钟；创建时间在取得三把锁并执行作废语句之后以 `clock_timestamp()` 读取一次，冷却与预算判定使用同一时刻，写入的创建时间恰为该时刻，等待锁不会缩短预约有效期）。`flow_seq` 取该 flow 现有最大值加 1，`email_seq` 取该邮箱 HMAC 现有最大值加 1（同一条 `insert … select max(...) + 1` 语句，在 flow 锁与邮箱锁内执行），因此同一 flow 的预约在 flow 锁下串行、同一邮箱的预约在邮箱锁下串行：已提交的 `flow_seq` 在同一 flow 现存的行中、`email_seq` 在同一邮箱现存的行中各自严格递增且与提交顺序一致（清理删除创建超过 24 小时的行后，序号只在现存行中比较，见「flow 绑定」），作废、校验与激活只按它们判定先后，不依赖 `created_at`（时间戳相同或倒序都不影响）。预约与激活持有同一把邮箱锁，所以在激活读出「没有 `email_seq` 更大的预约」之后、写入 `active` 之前，同一邮箱不可能提交新的预约（FSL-149）。FSL-163 的唯一索引 `feishu_login_codes_flow_seq_uidx`（`(flow_hash, flow_seq)`）与 `feishu_login_codes_email_seq_uidx`（`(email_hmac, email_seq)`）保留为纵深防御：绕过 flow 锁或邮箱锁的写入取到同一序号时后提交者以唯一冲突失败、整个预约事务回滚（什么都不改变），`reserveFeishuLoginCode` 抛出 `FEISHU_LOGIN_RESERVE_RETRY`（`issueFeishuLoginCode` 返回 `{ status: "retry" }`），request 端点按预约失败返回 503 重试。
+2. **开始发码与查询**：发码（`deliverFeishuLoginCode`，FSL-154）开始时先以一个事务（flow 锁、邮箱锁，再以单独一条 `SELECT … FOR UPDATE` 锁定本行，存储函数 `beginDelivery`）检查本行：已过期（`expires_at <= clock_timestamp()`，创建后 2 分钟）的 `reserved` 行置为 `void` 并清空敏感字段，已不是 `reserved` 的行保持原状，两种情况都不调用飞书（不取 token、不查询、不发送），服务返回 `{ status: "not_reserved" }`、不输出日志键（FSL-145）。仍有效时先经 `FeishuTokenManager` 取得本次发码唯一的 token（共享刷新，见下文「绝对截止时间」），再在事务外以 `FeishuContactClient`（见「飞书接口」）用这一 token 按邮箱查找唯一成员，再按 open_id 读取在职状态。
+3. **激活**：激活事务先取得本行的 flow 锁（FSL-154），再以 `pg_advisory_xact_lock(<类键>, <邮箱 HMAC 派生键>)` 串行化同一邮箱（类键为常量 `0x46534c01`，派生键为邮箱 HMAC 前 32 位的有符号整数），再以单独一条 `SELECT … FOR UPDATE`（按 `id` 排序）锁定本行与该邮箱 HMAC 的全部 `active` 行（即激活将要作废的行），之后用下一条语句读取状态并校验（FSL-149；到期以取得全部锁之后的 `clock_timestamp()` 判断，而不是事务开始时的 `now()`，因此等待邮箱锁或任一行锁期间到期的预约同样不激活；校验之后的更新不再等待锁。只有持邮箱锁的激活会产生 `active` 行，期间不会出现新的 `active` 行），三条同时满足才激活：
    - 本行仍是 `reserved`；
    - 本行未过期（`expires_at > clock_timestamp()`）；
    - 该邮箱 HMAC 没有 `email_seq` 更大的预约行（不论其状态与 flow）。
 
-   满足时，先以条件更新（`where id = $1 and state = 'reserved' and expires_at > clock_timestamp()`）把本行由 `reserved` 置为 `active`（写入时再次判断到期，校验之后、写入之前到期的预约同样不激活，此时本行置为 `void`、不改动其它行），该更新生效后再把同一邮箱 HMAC 的其它全部 `active` 行（不论 flow）置为 `void` 并在同一语句中清空邮箱、open_id、姓名与验证码 HMAC；本行激活时写入邮箱、open_id、姓名（`base_info.name.name.default_value`，空字符串照样保存）、验证码 HMAC 与到期时间（激活后 5 分钟）。不满足时不发送、不改动其它行，服务返回 `{ status: "not_reserved" }`（存储层的 `reason` 为 `not_reserved`、`expired` 或 `superseded`）：本行仍是 `reserved` 但已过期或已被更晚的预约取代时，在同一事务内置为 `void`（并清空敏感字段）；本行已不是 `reserved`（已作废、已消费）时保持原状。因此较早的预约在较晚的预约之后完成飞书查询时不发送私聊，作废或过期的行不能复活。
+   满足时，先以条件更新（`where id = $1 and state = 'reserved' and expires_at > clock_timestamp()`）把本行由 `reserved` 置为 `active`（写入时再次判断到期，校验之后、写入之前到期的预约同样不激活，此时本行置为 `void`、不改动其它行），该更新生效后再把同一邮箱 HMAC 的其它全部 `active` 行（不论 flow）置为 `void` 并在同一语句中清空邮箱、open_id、姓名与验证码 HMAC；本行激活时写入邮箱、open_id、姓名（`base_info.name.name.default_value`，空字符串照样保存）、验证码 HMAC 与到期时间（激活后 5 分钟）。不满足时不发送、不改动其它行，服务返回 `{ status: "not_reserved" }`（存储层的 `reason` 为 `not_reserved`、`expired` 或 `superseded`）：本行仍是 `reserved` 但已过期或已被更晚的预约取代时，在同一事务内置为 `void`（并清空敏感字段）；本行已不是 `reserved`（已作废——含被同一 flow 较晚的请求作废、已消费）时保持原状。因此较早的预约在较晚的预约之后完成飞书查询时不发送私聊，作废或过期的行不能复活。
 4. **发送**：激活提交后经 `FeishuMessageClient` 私聊发送，`uuid` 取本行 ID（同一请求的稳定 UUID，每次尝试的载荷逐字节相同），成功判据见「发送验证码私聊」。每次私聊 HTTP 尝试之前输出 `FEISHU_LOGIN_SEND_ATTEMPT`（该键在请求发出之前输出，未能到达飞书的请求同样计入）。自 FSL-160 起由服务在每次发送尝试开始时输出：截止时间已过的尝试不输出该键、不发请求；否则先输出该键，再交给传输层，传输层在输出之后、调用 `fetch` 之前作最后一次截止检查（读时钟、设计时器、调用 `fetch` 在同一段同步执行中），因此耗时的日志输出不会使请求在截止之后发起。仅当在日志输出之后、传输层最后一次检查之前（日志输出本身、消息准备与正文序列化或进程调度期间）越过截止时间时，该键已输出而传输层拒绝发出请求；因此该键条数不少于私聊请求数，正常情况下二者相等。发送结果见下文。
 
-未命中、多人或不在职，以及查询阶段的飞书调用（token、按邮箱搜索、按 open_id 读取）失败或遇到截止时间（`transport_deadline`，见下文）时，本行在与激活相同形态的事务中（同一把邮箱锁，条件 `state = 'reserved'`）置为 `void`，不生成验证码、不发送（失败与截止时间同样返回 `{ status: "provider_failed" }`、输出 `FEISHU_LOGIN_PROVIDER_FAILED`）。
+未命中、多人或不在职，以及查询阶段的飞书调用（token、按邮箱搜索、按 open_id 读取）失败或遇到截止时间（`transport_deadline`，见下文）时，本行在与激活相同形态的事务中（先 flow 锁、后邮箱锁，再以与激活同一条 `SELECT … FOR UPDATE` 锁定本行与该邮箱的 `active` 行，存储函数 `voidReservation`，条件 `state = 'reserved'`）置为 `void`，不生成验证码、不发送（失败与截止时间同样返回 `{ status: "provider_failed" }`、输出 `FEISHU_LOGIN_PROVIDER_FAILED`）。
+
+### flow 绑定
+
+FSL-154 按 ADR-FSL-11「flow 绑定」把 flow 只绑定到最近一次请求：
+
+- **作废语句**：预约事务取得三把锁之后、冷却与预算判定之前，以一条语句（`FEISHU_LOGIN_SUPERSEDE_FLOW_SQL`）把该 flow 中 `flow_seq` 最大的一行置为 `void` 并清空邮箱、open_id、姓名与验证码 HMAC（只使用 FSL-119 的现有列）：不论该行属于哪个邮箱，也不论其为 `reserved`、`active` 还是 `void`；为 `consumed` 时不改写。每次预约都先作废当时序号最大的行，激活又只接受仍为 `reserved` 的行，所以同一 flow 中可能有效的行至多一行且必为 `flow_seq` 最大的行，作废它即可；该语句恰好改写 0 或 1 行（0 只在 flow 尚无记录或最新行已消费时出现，与邮箱是否对应成员无关），改写行数不随该 flow 的历史行数增长，也不取决于前次请求的飞书结果。被冷却或预算拒绝的请求同样提交这一作废，只是不写入新行。该语句在全部咨询锁之后才等待行锁：该行正被 verify、激活或清理锁定时等到其事务结束（被 verify 消费的行随后不再改写）。
+- **`flow_seq` 的分配**：获准时新行的 `flow_seq` 为 `coalesce(max(flow_seq), 0) + 1`，在 flow 锁内分配，因此在该 flow 现存的行中严格递增且与预约提交顺序一致，不依赖时间戳或 UUID（清理删除创建超过 24 小时的行，一个 flow 的行全部被删除后序号可重新从 1 开始；此时该 flow 已无可能有效的行，不影响绑定）；第二个预约在 flow 锁上等待后提交时取得更大的序号。`(flow_hash, flow_seq)` 唯一索引 `feishu_login_codes_flow_seq_uidx`（FSL-163）只作纵深防御（见第 1 步）。verify 同样按 `flow_seq` 选取该 flow 的最新行，只在其为未过期 `active` 时比较（见「HTTP 接口」的 verify）。
+- **锁顺序**：全部咨询锁按 flow → 邮箱 → 全局的固定顺序取得。预约取三把；发码的每个写回事务（`beginDelivery`、激活、`voidReservation`、`voidRejectedSend`）先以不加锁的读取取得本行的 flow 哈希（行的 flow 哈希不会改变），再取 flow 锁与邮箱锁，之后才取行锁；verify 与清理不取咨询锁。每个事务取得的咨询锁都是该顺序的前缀，行锁都在咨询锁之后取得，因此咨询锁之间不会形成等待环。
+- **写回形态与结果无关**：`deliver` 无论命中、未命中、多人、不在职或飞书调用失败，都以同一形态的「flow 锁 → 邮箱锁 → 本行与该邮箱 `active` 行的行锁」事务写回本行（激活或作废），后续请求遇到的锁等待不随结果变化。
+- **线性化点**：`reserve` 事务的提交。request 只在其提交之后返回 202，此时该 flow 更早请求的预约与验证码均已失效（verify 读取到的最新行已是新预约行，或被作废的行）。在激活之前被作废的预约不会激活，即使其飞书查询稍后完成也不发码；激活已提交、私聊尚未送达时被作废的请求，其私聊仍可能送达，但其中的验证码在后一次 `reserve` 提交时已无效——保证的是有效性，不是送达。因此同一 flow 中更换邮箱或重发后，无论新邮箱是否命中、发送是否成功、是否被冷却或预算拒绝，旧验证码都失效。
+- **与账号无关**：`reserve` 不访问飞书、不查询账号，响应体、状态码与 Cookie 与邮箱是否对应成员无关；响应前的数据库工作（三把锁、改写 0 或 1 行的作废语句、判定与至多一行插入）也不依赖前次请求的飞书结果。耗时随数据库负载与锁等待波动，不承诺严格常数时间。
 
 ### 绝对截止时间
 
@@ -188,7 +199,7 @@ FSL-160 按 ADR-FSL-11「请求预算」以预约到期时间（创建后 2 分�
 
 ### 冷却与全局预算
 
-FSL-145 按 ADR-FSL-11「请求预算」在预约事务中持有邮箱锁与全局锁时判定，判定以取得两把锁之后读取的同一时刻 `t`（`clock_timestamp()`）为准，依次为：
+FSL-145 按 ADR-FSL-11「请求预算」在预约事务中持有 flow 锁、邮箱锁与全局锁时（FSL-154 起，作废语句之后）判定，判定以取锁并作废之后读取的同一时刻 `t`（`clock_timestamp()`）为准，依次为：
 
 | 判定 | 条件（`t` 为取锁后的时刻） | 服务返回 | 日志键 |
 |---|---|---|---|
@@ -197,8 +208,8 @@ FSL-145 按 ADR-FSL-11「请求预算」在预约事务中持有邮箱锁与全�
 
 - 两项都按行计数，不论行的状态（`reserved`、`active`、`consumed`、`void`）：每一行都曾是一次预约。预约行由清理在创建 24 小时后才删除，不影响 60 秒窗口。
 - 窗口为左开区间：恰好创建于 60 秒前（`created_at = t − 60 秒`）的行已不在窗口内。请求须同时通过两项判定才写入预约。
-- 被拒绝的请求不写入任何行（事务只做判定后提交），因此持续重试不会延长冷却，也不占用全局预算。两项各自恢复：邮箱冷却在该邮箱最近一行滑出 60 秒窗口后恢复；全局预算在窗口内行数降到 120 以下（即足够早的行滑出窗口）后恢复；两项同时触发时，须两项都已恢复才放行。
-- 两项判定与账号是否存在无关：未命中、多人与在职成员的邮箱同样计入、同样被拒绝，被拒绝的请求不访问飞书，不暴露账号存在性；request 端点（FSL-123）对被拒绝的请求照常返回 202。
+- 被拒绝的请求不写入新行（事务只提交该 flow 最新行的作废，见「flow 绑定」），因此持续重试不会延长冷却，也不占用全局预算。两项各自恢复：邮箱冷却在该邮箱最近一行滑出 60 秒窗口后恢复；全局预算在窗口内行数降到 120 以下（即足够早的行滑出窗口）后恢复；两项同时触发时，须两项都已恢复才放行。
+- 两项判定与账号是否存在无关：未命中、多人与在职成员的邮箱同样计入、同样被拒绝，被拒绝的请求不访问飞书，不暴露账号存在性；request 端点（FSL-123）对被拒绝的请求照常返回 202（`deliver` 收到被拒绝的预约时不做任何事）。
 - 预算约束的是预约数：每个邮箱每 60 秒至多一个预约，全部邮箱合计每 60 秒至多 120 个预约；每个预约至多触发一次发码流程（开始发码时已过期则不调用飞书，见第 2 步）。贯穿每次飞书请求的绝对截止时间见上文「绝对截止时间」（FSL-160）。
 - 全局锁使全部实例的预约依次判定，同一时刻不会有两个预约同时看到最后一个名额；同一邮箱的并发请求在邮箱锁上串行，先取得锁者提交后，后者在锁释放后读到该行并被冷却拒绝。
 - 常量由 `@megaui/database` 导出：`FEISHU_LOGIN_COOLDOWN_SECONDS`（60）、`FEISHU_LOGIN_GLOBAL_BUDGET_WINDOW_SECONDS`（60）、`FEISHU_LOGIN_GLOBAL_BUDGET`（120）、`FEISHU_LOGIN_GLOBAL_LOCK_CLASS`（`0x46534c02`）与 `FEISHU_LOGIN_GLOBAL_LOCK_KEY`（0）。
@@ -225,7 +236,7 @@ FSL-145 按 ADR-FSL-11「请求预算」在预约事务中持有邮箱锁与全�
 - 所有尝试都返回 `rejected`（即首次尝试即被拒绝）时，以条件更新把本行置为 `void`（仅当本行仍为 `active` 且未过期；发送期间已改变的行保持原状） 并在同一语句中清空邮箱、open_id、姓名与验证码 HMAC，输出 `FEISHU_LOGIN_SEND_REJECTED`，返回 `send: "rejected"`。
 - 任一次尝试返回 `unknown` 且没有 `accepted` 时，无论后续返回 `unknown` 还是 `rejected`，都不回写，仍为 `active` 的本行保持 `active`（不能证明此前未送达，验证码在到期前有效），输出 `FEISHU_LOGIN_SEND_UNKNOWN`，返回 `send: "unknown"`。
 
-发送结果的回写一律为条件更新（存储函数 `voidRejectedSend`，同一把邮箱锁；先以单独一条 `SELECT … FOR UPDATE` 取得本行行锁，再执行下面的语句，因此到期以所有锁等待之后的时间判断）：
+发送结果的回写一律为条件更新（存储函数 `voidRejectedSend`，先 flow 锁、后邮箱锁；先以单独一条 `SELECT … FOR UPDATE` 取得本行行锁，再执行下面的语句，因此到期以所有锁等待之后的时间判断）：
 
 ```sql
 update feishu_login_codes
@@ -261,7 +272,7 @@ update feishu_login_codes
 | `FEISHU_LOGIN_COOLDOWN` | 同一邮箱 HMAC 60 秒内已有预约行，不写入新行、不调用飞书（FSL-145） | `{ status: "cooldown" }` |
 | `FEISHU_LOGIN_GLOBAL_BUDGET` | 全部邮箱最近 60 秒内的预约行数达到 120，不写入新行、不调用飞书（FSL-145） | `{ status: "budget" }` |
 
-预约冲突（`retry`）、开始发码时预约已过期或已不是 `reserved`，以及激活前状态校验未通过（`not_reserved`：已不是 `reserved`、已过期或已被更晚的预约取代）不输出日志键。
+预约冲突（`FEISHU_LOGIN_RESERVE_RETRY`，`issueFeishuLoginCode` 的 `retry`）、开始发码时预约已过期或已不是 `reserved`，以及激活前状态校验未通过（`not_reserved`：已不是 `reserved`（含被同一 flow 较晚的请求作废）、已过期或已被更晚的预约取代）不由本服务输出日志键；预约失败由 request 端点输出 `FEISHU_LOGIN_RESERVE_FAILED`（见「HTTP 接口」）。
 
 ### 测试
 
@@ -273,11 +284,13 @@ FSL-160 的用例向服务注入时钟（真实时钟加偏移），代理以该
 
 FSL-145 的用例以代理收到的全部请求数断言飞书调用次数：同一邮箱 60 秒内的第二次请求（含未命中邮箱的重复请求）不发起任何飞书请求、不写入新行；冷却边界（58 秒内拒绝、61 秒后放行）；以注入时钟（预约提交之后，测试连接池把后续语句读取的 `clock_timestamp()` 推后 121 秒）使预约在开始发码时已过期，断言不发起任何飞书请求且本行置为 `void`；最近 60 秒内已有 120 行时新请求（已知与未知邮箱）不调用飞书、不写入新行，119 行或窗口外的行不阻止预约；冷却与预算各自在窗口即将结束时每 50 毫秒重试一次，断言重试期间行数不变、窗口结束后立即放行；另以一个连接持有全局锁，断言预约先持有邮箱锁、再等待全局锁。并发用例以多个连接交错执行：同一邮箱的两个请求（一个停在预约提交前、另一个在邮箱锁上等待，以及不加控制的并发）恰好触发一次飞书查询；预算剩余 1 个名额时，不同邮箱的多个请求（一个停在预约提交前、其余各自持有邮箱锁并在全局锁上等待，以及不加控制的并发）合计只触发一次飞书查询；飞书查询被代理暂扣期间以 `pg_locks` 断言没有任何已授予的咨询锁，并断言 `FEISHU_LOGIN_COOLDOWN` / `FEISHU_LOGIN_GLOBAL_BUDGET` 日志键的条数。
 
+FSL-154 起上述用例中断言已授予或正在等待的咨询锁集合的，按新的锁顺序包含 flow 锁（预约先持有 flow 锁与邮箱锁、再等待全局锁）。`packages/engine/src/services/feishu-login/flow-binding.integration.test.ts`（FSL-154）同样使用一次性 PG、真实 `apps/feishu-mock` 进程与记录代理，以 `consumeFeishuLoginCode` 判定验证码是否有效（本套件不建绑定，有效的验证码返回 `unbound` 且事务回滚、不改变该行）：同一 flow 中 A 的验证码有效后，B 的 `reserve` 提交即令其无效，B 分别为命中、未命中、被冷却拒绝与被预算拒绝（后两者不写新行）；A 激活已提交、代理暂扣 A 的私聊期间插入 B，断言 A 的私聊随后仍送达而其验证码无效；代理暂扣 A 的按邮箱搜索期间 B 被冷却拒绝或获准，断言 A 不发私聊；两个连接并发与受控交错（B 在 A 激活持有的 flow 锁上等待）后该 flow 至多一行 `active` 且为序号最大的行；`reserve` 期间代理未收到请求、飞书调用期间没有已授予的咨询锁；前次请求为命中、未命中、多人时后一次 `reserve` 的作废语句影响行数都为 1，本 flow 预置 1000 行历史记录时只有序号最大的一行产生新版本（`xmin`），`created_at` 相同或倒序时按 `flow_seq` 作废，在 flow 锁上等待后提交的预约取得更大的 `flow_seq`；命中、未命中、多人、不在职与飞书调用失败五种结果下，预约、开始发码与写回事务取得的咨询锁序列（flow → 邮箱 → 全局，flow → 邮箱）与加锁语句都相同。
+
 `packages/engine/src/services/enterprise/feishu/http.test.ts` 以脚本化的 `fetch` 固定传输层现有的重试基线（默认 3 次、暂时性失败重试、永久性失败不重试），并断言 `maxAttempts: 1` 对 5xx、429、连接中断与超时都只发起一次 HTTP 请求；FSL-160 另断言已过截止时间时不调用 `fetch` 并抛出 `transport_deadline`、单次尝试的计时器恰为 `min(传输预算, deadline − 当前时间)`（含传输层重试的第二次尝试）、截止时间之后不再重试，以及不传 `deadline` 时重试与预算不变。`token.test.ts` 以本地 HTTP 服务断言已过截止时间的调用不发请求、两个截止时间不同的调用共享一次刷新时较早截止者在其截止时间以 `transport_deadline` 返回而共享刷新照常完成、刷新请求的单次超时受首个调用方截止时间约束，以及不传 `deadline` 的调用方照旧共享并等待同一次刷新。
 
 ## HTTP 接口
 
-飞书登录的 HTTP 端点由 `@megaui/auth` 的 better-auth 插件 `feishuLogin`（`packages/auth/src/feishu-login/`，插件 ID `megaui-feishu-login`）提供。`createAuth` 只在收到 `feishuLogin` 选项（`{ issue, log?, verify? }`）时注册该插件，未传入时两个端点都不存在（404）；verify 端点另外只在选项含 `verify`（`{ pool, appId, otpHmacKey }`：数据库连接池、`FEISHU_APP_ID` 与解码后的 32 字节 `ENTERPRISE_OTP_HMAC_KEY`，缺少应用 ID 或密钥不是 32 字节时构造即抛出 `INVALID_FEISHU_LOGIN_PLUGIN_CONFIG`）时注册，否则为 404。**当前状态：** Web 尚未传入该选项，由 FSL-150 在飞书模式下接线；在此之前任何部署都不暴露这些端点。
+飞书登录的 HTTP 端点由 `@megaui/auth` 的 better-auth 插件 `feishuLogin`（`packages/auth/src/feishu-login/`，插件 ID `megaui-feishu-login`）提供。`createAuth` 只在收到 `feishuLogin` 选项（`{ issue: { reserve, deliver }, log?, verify? }`；`issue` 缺少任一端口时构造即抛出 `INVALID_FEISHU_LOGIN_PLUGIN_CONFIG`）时注册该插件，未传入时两个端点都不存在（404）；verify 端点另外只在选项含 `verify`（`{ pool, appId, otpHmacKey }`：数据库连接池、`FEISHU_APP_ID` 与解码后的 32 字节 `ENTERPRISE_OTP_HMAC_KEY`，缺少应用 ID 或密钥不是 32 字节时构造即抛出 `INVALID_FEISHU_LOGIN_PLUGIN_CONFIG`）时注册，否则为 404。**当前状态：** Web 尚未传入该选项，由 FSL-150 在飞书模式下接线；在此之前任何部署都不暴露这些端点。
 
 ### request
 
@@ -287,21 +300,27 @@ FSL-145 的用例以代理收到的全部请求数断言飞书调用次数：同
 
 | 情形 | 状态码 | 响应体 | flow Cookie | 签发端口 |
 |---|---|---|---|---|
-| 媒体类型不恰为 `application/json`；请求体超过 4096 字节、为空或不是合法 JSON；请求体不是恰含 `email` 一个字段的对象；或 `email` 不是字符串、规范化后为空、缺少 `@`、超过 254 个字符、含内部空白或其它不符合语法 | 400 | `{ "code": "INVALID_INPUT" }` | 不设置 | 不调用 |
-| 合法邮箱，请求不带有效 flow Cookie | 202 | `{ "status": "accepted" }` | 签发新 flow | 响应之后调用 |
-| 合法邮箱，请求带有效 flow Cookie | 202 | `{ "status": "accepted" }` | 以同一值重新设置 | 响应之后调用 |
+| 媒体类型不恰为 `application/json`；请求体超过 4096 字节、为空或不是合法 JSON；请求体不是恰含 `email` 一个字段的对象；或 `email` 不是字符串、规范化后为空、缺少 `@`、超过 254 个字符、含内部空白或其它不符合语法 | 400 | `{ "code": "INVALID_INPUT" }` | 不设置 | 都不调用 |
+| 合法邮箱，`reserve` 拒绝或同步抛错（预约事务失败，含唯一冲突，FSL-154） | 503 | `{ "status": "retry" }` | 不设置 | `reserve` 已调用，`deliver` 不调用 |
+| 合法邮箱，`reserve` 成功（含被冷却或预算拒绝），请求不带有效 flow Cookie | 202 | `{ "status": "accepted" }` | 签发新 flow | `reserve` 在 `auth.handler` 确定响应之前完成，`deliver` 在响应确定之后调用（见下文「签发端口」） |
+| 合法邮箱，`reserve` 成功（含被冷却或预算拒绝），请求带有效 flow Cookie | 202 | `{ "status": "accepted" }` | 以同一值重新设置 | `reserve` 在 `auth.handler` 确定响应之前完成，`deliver` 在响应确定之后调用（见下文「签发端口」） |
 
-上表的 400 与 202 带 `Cache-Control: no-store`（限流 429 由 better-auth 返回，不保证带该头）。媒体类型须恰为 `application/json`（可带 `charset` 等参数，不区分大小写）。上表的 400 由插件的 `onRequest` 钩子在框架解析请求体之前给出（位于限流之后、端点之前，各环境都执行）：钩子读取请求的副本，按实际读取的字节计（不依赖 `Content-Length`），累计读取超过 4096 字节（`FEISHU_LOGIN_PRECHECK_MAX_BODY_BYTES`）即停止并取消读取（按流的分块计：越限的那一块已被读入，因此已读字节至多为 4096 加一个分块的大小，不会继续读取后续分块），只有媒体类型相符、请求体不超过 4096 字节、是合法 JSON 且通过上述校验的请求才进入端点，其余请求一律返回 400 `INVALID_INPUT`。因此任何请求体都不会在通过这一有界检查之前被完整读取，框架自身的 415 与 `BAD_REQUEST` 不会出现在本路径上；端点内仍保留同一校验作为纵深防御。
+上表的 400、503 与 202 带 `Cache-Control: no-store`（限流 429 由 better-auth 返回，不保证带该头）。媒体类型须恰为 `application/json`（可带 `charset` 等参数，不区分大小写）。上表的 400 由插件的 `onRequest` 钩子在框架解析请求体之前给出（位于限流之后、端点之前，各环境都执行）：钩子读取请求的副本，按实际读取的字节计（不依赖 `Content-Length`），累计读取超过 4096 字节（`FEISHU_LOGIN_PRECHECK_MAX_BODY_BYTES`）即停止并取消读取（按流的分块计：越限的那一块已被读入，因此已读字节至多为 4096 加一个分块的大小，不会继续读取后续分块），只有媒体类型相符、请求体不超过 4096 字节、是合法 JSON 且通过上述校验的请求才进入端点，其余请求一律返回 400 `INVALID_INPUT`。因此任何请求体都不会在通过这一有界检查之前被完整读取，框架自身的 415 与 `BAD_REQUEST` 不会出现在本路径上；端点内仍保留同一校验作为纵深防御。
 
 **限流**：better-auth 自带的按地址与路径限流在 production 照常以其默认窗口与上限作用于端点会受理的请求，触发时返回 better-auth 的 429，只取决于地址与路径、与邮箱无关。better-auth 在进入任何端点与插件钩子之前判定限流，因此 `createAuth` 为本路径登记限流规则函数 `feishuLoginRequestRateLimitRule`：它读取请求的副本（累计超过 4096 字节即停止，按分块计，见上文；原请求体保持完整），只有端点会受理的请求才沿用 better-auth 解析出的规则并计数；其余请求（媒体类型不符、超过 4096 字节、非合法 JSON 或未通过上述校验）不计数、不受限流，由上述钩子返回 400。这样保持 ADR-FSL-11 的响应顺序「输入非法 400 先于限流 429」，且豁免的请求都不会被受理，不构成限流绕过。非法输入不做任何签发工作。
 
 **flow Cookie**（`cookie.ts`）：名称 `__Host-megaui.feishu-login-flow`，属性 HttpOnly、Secure、SameSite=Lax、Path=/、Max-Age=600，不带 Domain。flow 是 CSPRNG 生成的 256 位随机值，以无填充 base64url 编码（43 个字符）。请求的 `Cookie` 头恰含一个该名称的 Cookie 且其值是规范的 32 字节 base64url 时视为有效，沿用该 flow 并以同一值重新设置 Cookie，Max-Age 重新计为 600 秒（剩余有效期不足 5 分钟的 Cookie 也续期 10 分钟，保证新验证码 5 分钟有效期内 Cookie 不会先到期）；没有该 Cookie、值不规范或重复出现时签发新 flow。服务端不保存 flow 明文：签发端口与验证码表只接收其 SHA-256（64 个小写十六进制字符）。
 
-**签发端口**：202 的响应在任何签发工作之前确定并由 `auth.handler` 返回。端点以 `setImmediate` 把签发端口 `issue({ flowHash, email })`（FSL-150 注入 engine 的 `issueFeishuLoginCode`）排到当前同步执行段之后，在同一 Node 进程内异步执行，请求不等待其结果：`auth.handler` 返回的 `Response` 在端口被调用之前已经完整确定（状态码、响应体与 Cookie 都不依赖端口）。本插件的保证止于 `auth.handler` 的边界：响应字节何时写到客户端由宿主服务器（FSL-150 的 Next 路由）决定，端口调用可能早于字节写出，但不能改变已经确定的响应。端口的返回值不被读取；端口拒绝或同步抛错时只输出稳定日志键 `FEISHU_LOGIN_ISSUE_FAILED`（默认 `console.warn`，不输出错误对象、邮箱或 flow），请求仍为 202。日志函数本身抛错时被吞掉，不产生未处理的 Promise 拒绝。进程在端口执行前退出时本次验证码不会发出，用户重新请求即可（ADR-FSL-11）。
+**签发端口**（FSL-154 起分为两段，FSL-150 注入 engine 的 `reserveFeishuLoginCode` 与 `deliverFeishuLoginCode`）：
 
-请求路径不访问飞书、不查询账号或身份，因此已知、未知与多人邮箱的状态码、响应体与 Cookie 属性相同；带同一 flow Cookie 时 `Set-Cookie` 逐字节相同。自 FSL-154 起，响应前改为先等待只访问数据库的预约事务提交（失败时 503 `{ "status": "retry" }`）；本卡的请求路径不访问数据库。
+- **`reserve({ flowHash, email })`**：只访问数据库的预约事务（作废本 flow 最新行、冷却与预算判定、写入预约，见「发码」的「flow 绑定」）。端点在校验输入、确定 flow 之后等待它完成，`auth.handler` 只在它兑现（即预约事务已提交，含被冷却或预算拒绝）之后才返回 202；它的返回值不被端点读取，原样交给 `deliver`。它拒绝或同步抛错时返回 503 `{ "status": "retry" }`、不设置 Cookie、不调用 `deliver`，只输出稳定日志键 `FEISHU_LOGIN_RESERVE_FAILED`（不输出错误对象、邮箱或 flow）；用户重试即可。拒绝通常意味着预约事务已回滚、数据库未改变（含唯一冲突的 `FEISHU_LOGIN_RESERVE_RETRY`）；只有在提交阶段连接中断时提交结果未知，此时作废与预约可能已经提交，503 不保证数据库未改变（重试同样先作废该 flow 的最新行）。engine 的 `reserveFeishuLoginCode` 在事务提交之后不再抛错：被冷却或预算拒绝时输出日志键失败（日志函数抛错）被忽略，结果照常兑现，request 照常返回 202。
+- **`deliver(reservation)`**：飞书查询、激活与私聊。端点在 202 的响应确定之后以 `setImmediate` 把它排到当前同步执行段之后，在同一 Node 进程内异步执行，请求不等待其结果：`auth.handler` 返回的 `Response` 在 `deliver` 被调用之前已经完整确定（状态码、响应体与 Cookie 都不依赖 `deliver`）。本插件的保证止于 `auth.handler` 的边界：响应字节何时写到客户端由宿主服务器（FSL-150 的 Next 路由）决定，`deliver` 调用可能早于字节写出，但不能改变已经确定的响应。`deliver` 的返回值不被读取；它拒绝或同步抛错时只输出稳定日志键 `FEISHU_LOGIN_ISSUE_FAILED`，请求仍为 202。进程在 `deliver` 执行前退出时本次验证码不会发出，用户重新请求即可（ADR-FSL-11）。
 
-`packages/auth/src/feishu-login/request.test.ts` 以 `createAuth` 加注入端口构造，经 `auth.handler` 断言上述响应、Cookie 属性与续期、端口收到的规范化邮箱与 flow 哈希、400 时不设置 Cookie 且不调用端口、响应先于端口调用返回、端口出错时只记录稳定日志键、未传入选项时端点为 404，以及 production 限流配置下同一地址超限后非法输入（含超过 4096 字节的请求体）仍返回 400、已知 / 未知 / 多人邮箱返回相同的 429。
+两个日志键默认经 `console.warn` 输出；日志函数本身抛错时被吞掉，不产生未处理的 Promise 拒绝。
+
+请求路径不访问飞书、不查询账号或身份，因此已知、未知与多人邮箱的状态码、响应体与 Cookie 属性相同（202 与 503 两种结果各自如此）；带同一 flow Cookie 时 `Set-Cookie` 逐字节相同。响应前只做数据库预约（FSL-154），其工作量与锁序列不依赖前次请求的飞书结果，耗时随数据库负载与锁等待波动，不承诺严格常数时间。
+
+`packages/auth/src/feishu-login/request.test.ts` 以 `createAuth` 加注入的 `reserve` / `deliver` 端口构造，经 `auth.handler` 断言上述响应、Cookie 属性与续期、`reserve` 收到的规范化邮箱与 flow 哈希、`deliver` 收到 `reserve` 的返回值、400 时不设置 Cookie 且两个端口都不调用、`reserve` 未完成时响应未返回、响应先于 `deliver` 调用返回、`reserve` 拒绝或同步抛错时为 503 `{ "status": "retry" }`（不设置 Cookie、不调用 `deliver`、已知 / 未知 / 多人邮箱同形）、`deliver` 出错时仍为 202 且只记录稳定日志键、缺少任一端口时构造失败、未传入选项时端点为 404，以及 production 限流配置下同一地址超限后非法输入（含超过 4096 字节的请求体）仍返回 400、已知 / 未知 / 多人邮箱返回相同的 429。
 
 ### verify
 
@@ -325,8 +344,8 @@ FSL-145 的用例以代理收到的全部请求数断言飞书调用次数：同
 
 **校验事务**（`@megaui/database` 的 `consumeFeishuLoginCode`，一个事务）：
 
-1. 以单独一条 `SELECT … FOR UPDATE` 锁定该 flow 的 SHA-256 对应的、`flow_seq` 最大的一行（不论状态；该语句只返回行 ID）。这是本事务在 `feishu_login_codes` 中锁定的唯一一行（清理与激活锁定多行时按 ID 顺序）；选中同一行的并发 verify 在此等待，直到持锁事务提交或回滚；
-2. 在下一条语句（因而在任何锁等待之后，按该行最新提交的版本与一次 `clock_timestamp()` 取样）重新读取被锁定的行：只有其为 `active`、`expires_at > clock_timestamp()`、在该语句的快照中仍是该 flow 中 `flow_seq` 最大的行（锁定语句的快照之后、该语句开始之前提交的新预约会使其失去资格；该语句开始之后才提交的新预约本事务看不到；预约时作废该 flow 最新行（须等待本行锁）由 FSL-154 交付）且 `failed_attempts` 小于 5 时继续，否则返回 401 且不改变该行；该语句只对这样的行返回 `code_hmac`，因此在该语句的时钟取样时已过期（含尚未被清理）的行的敏感字段不会被该语句返回；
+1. 以单独一条 `SELECT … FOR UPDATE` 锁定该 flow 的 SHA-256 对应的、`flow_seq` 最大的一行（不论状态；该语句只返回行 ID）。这是本事务在 `feishu_login_codes` 中锁定的唯一一行（清理、激活与发码的作废写回锁定多行时按 ID 顺序）；选中同一行的并发 verify 在此等待，直到持锁事务提交或回滚；
+2. 在下一条语句（因而在任何锁等待之后，按该行最新提交的版本与一次 `clock_timestamp()` 取样）重新读取被锁定的行：只有其为 `active`、`expires_at > clock_timestamp()`、在该语句的快照中仍是该 flow 中 `flow_seq` 最大的行（锁定语句的快照之后、该语句开始之前提交的新预约会使其失去资格；该语句开始之后才提交的新预约本事务看不到；这无碍正确性：同一 flow 的每次预约都先作废该 flow 的最新行（FSL-154），该作废须等待本行锁——在本事务之前提交的预约已使本行为 `void`，在本行锁上等待的预约则在本事务结束后才作废它（已消费的行不再改写））且 `failed_attempts` 小于 5 时继续，否则返回 401 且不改变该行；该语句只对这样的行返回 `code_hmac`，因此在该语句的时钟取样时已过期（含尚未被清理）的行的敏感字段不会被该语句返回；
 3. 以 `feishuLoginCodeHmac(key, 行 ID, 验证码)` 与本行 `code_hmac` 做常量时间比较（`timingSafeEqual`，两侧均为 32 字节）。不相等时以一条语句使 `failed_attempts + 1`，加 1 后达到 5 时同一语句置为 `void` 并清空四个敏感字段，提交后返回 401；
 4. 相等时读取本行的邮箱、open_id 与姓名（该读取语句同样要求本行仍为 `active` 且按该语句的时钟取样未过期，此时已到期的行不会被读取敏感字段），再以一条语句把本行置为 `consumed` 并清空 `email`、`open_id`、`display_name`、`code_hmac`（该语句重复 `active` 与未过期条件，在两条语句之间到期的行不会被消费，返回 401）；
 5. 以 `open_id_hmac` = HMAC-SHA256(`ENTERPRISE_OTP_HMAC_KEY`, `"feishu-identity:v1:" + app_id + ":" + open_id`)（`verify.ts` 的 `feishuLoginOpenIdHmac`，64 个小写十六进制字符，open_id 明文不落库）查找 `feishu_identities` 中 `(app_id, open_id_hmac)` 的绑定：存在时提交；不存在时整个事务回滚。
