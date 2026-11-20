@@ -394,6 +394,22 @@ FSL-152 的用例：同邮箱本地用户已存在而无绑定时返回 409 `{ "
 
 FSL-169 的用例（同在 `signup.test.ts`，以测试数据库中的触发器注入故障）：首次登录时 `session` 的插入失败，与首次登录时 `feishu_login_sessions` 的插入失败（另以 `session` 上的插入审计触发器证明会话曾经签发），各自断言 503 `{ "status": "retry" }`、带 `Cache-Control: no-store`、不设置会话 Cookie、响应与控制台输出都不含注入的数据库错误（其消息含该行内容，`session` 行含 token）、`session` 与 `feishu_login_sessions` 都没有行、注入的 `log` 恰好收到一次 `FEISHU_LOGIN_SESSION_FAILED`、验证码行为 `consumed`、用户与绑定各一行；已有绑定的再次登录时把 `user` 表临时改名使读取用户抛错，或以替身使 `findUserById` 返回空、抛出 better-auth `APIError`，同样断言 503 与两表无行。这些情形随后都断言原验证码再次提交返回 401，再经 request 端点在同一 flow 重新请求验证码（其 `reserve` 为签发存储的预约，`deliver` 以 Mock 代替飞书查询与私聊、激活预约行），以新验证码登录返回 200，`user` 全部行的全部列与 `feishu_identities` 不变，会话属于原用户且恰有一行来源标记。另断言：来源标记写入与会话删除同时失败时依次输出 `FEISHU_LOGIN_SESSION_REVOKE_FAILED`、`FEISHU_LOGIN_SESSION_FAILED`，仍返回 503 且不设置会话 Cookie，`session` 留一行、`feishu_login_sessions` 无行，随后同样重新取码登录成功且不新建用户（残留的未标记会话行仍在）；未传入 `log` 时 `console.warn` 恰好收到 `FEISHU_LOGIN_SESSION_FAILED`，`log` 抛错时仍返回 503；已封禁用户登录时返回 better-auth 的 403 `BANNED_USER`，不新增会话或来源标记、不输出日志键。
 
+## 公开资料
+
+成员、聊天、cls、文档评论、文档、议题、发布七个共享服务经 `packages/engine/src/services/enterprise/public-profile.ts` 的 `resolvePublicProfiles` 取用户的公开资料行（`id`、`username`、`displayName`、可选的 `avatarUrl`、`avatarInitials`、`avatarColor`）。对在 `feishu_identities` 中有绑定（任一应用）的用户，该行按以下规则生成（FSL-153），且不论该用户是否另有企业资料都按此规则：
+
+- `username` 为用户 ID（不透明，不从邮箱派生）。
+- `displayName`：记 N 为 `user.name` 转小写、L 为登录邮箱（`user.email`）最后一个 `@` 之前的完整本地部分转小写；N 含 `@` 或 N 含子串 L 时为用户 ID，否则为按原样存储的 `user.name`（不去除首尾空白；通讯录姓名为空字符串时显示名同样为空字符串）。只比较完整本地部分，不比较域名或本地部分的片段：姓名 `Chen Qi` 对登录邮箱 `chen.qi@corp.example` 保留，姓名 `Zhang.San Ops` 对 `zhang.san@corp.example` 改为用户 ID。
+- `avatarInitials` 只由 `displayName` 派生：先取前两个以空白分隔的词的首字符并转大写（没有词时为 `U`）；该值转小写后含 `@` 或子串 L 时，依次改取第一个词的首字符转大写、该首字符原样，取第一个不含的值；没有词时改为空字符串。这覆盖姓名本身不含 L、但首字符拼出较短本地部分的情形：姓名 `Alice Brown` 对登录邮箱 `ab@corp.example` 时缩写为 `A`。单个首字符仍含 L 时 L 就是该字符、`displayName` 含有它，只在 `displayName` 为用户 ID 时出现，此时缩写取用户 ID 的首字符转大写。
+- `avatarColor` 为 `#64748b`；该值转小写后含 L（如登录邮箱 `647@corp.example`）时改为 `#525252`。
+- 不含 `avatarUrl`：即使 `user.image` 非空也不输出（飞书建号本身不写 `user.image`）。
+
+登录邮箱只在读取时用于上述比较，不进入公开资料行。两个颜色除 `#` 外没有共同字符，而飞书建号写入的登录邮箱经 request 的邮箱语法校验，本地部分非空且不含 `#` 与 `@`，所以至少有一个颜色不含 L。因此读到这样的登录邮箱时，飞书用户公开资料行的各字段都不含其登录邮箱的 `@` 或完整本地部分，取自用户 ID 的值除外：`id`、`username` 与取用户 ID 的 `displayName` 在用户 ID 偶然包含本地部分时含有它，取用户 ID 首字符的缩写在本地部分恰为该字符时含有它。规则只针对登录邮箱：姓名中不含 `@` 的其它邮箱信息（例如另一邮箱的本地部分）不被识别。两次读取之间该用户被删除、读不到登录邮箱时，该行的显示名为用户 ID，缩写与颜色取由用户 ID 派生的缩写与 `#64748b`，不做上述比较。
+
+没有飞书绑定的用户规则不变：有企业资料的用户以 `login_name` 为用户名、以去除首尾空白后的资料显示名为显示名（为空时依次取去除首尾空白后的 `user.name`、用户名）；其余（legacy）用户以邮箱第一个 `@` 前的前缀为用户名、以去除首尾空白后的 `user.name` 为显示名（为空时取用户名）；两者在 `user.image` 非空时输出 `avatarUrl`，`avatarColor` 恒为 `#64748b`。
+
+`packages/engine/src/services/enterprise/public-profile.test.ts` 以一次性 PG 断言公开资料行的全部字段（`toEqual`，飞书用户另断言无 `avatarUrl`）：飞书用户分姓名与邮箱无关、姓名等于邮箱、姓名含完整本地部分（大小写不同）、姓名只含域名片段（保留，且 `user.image` 非空时仍无 `avatarUrl`）、姓名只含本地部分的片段（保留）五种，另有用户 ID 偶然包含本地部分（用户名仍为用户 ID）、首字符拼出本地部分（缩写为 `A`、姓名保留）、本地部分为 `u` 且姓名为空（缩写为空字符串）、本地部分含于 `#64748b`（颜色为 `#525252`）、本地部分为单个字母且等于用户 ID 的首字符（显示名为用户 ID、缩写为其首字符）、姓名带首尾空白（原样保留）、姓名为空字符串与另有企业资料的飞书用户各一例，并断言这些行中（最后一种取用户 ID 首字符的情形除外）不等于用户 ID 的字段值不含 `@` 与（不区分大小写的）完整本地部分；legacy 用户与企业用户各一例，断言与本卡之前的规则一致；另经议题服务创建议题，断言作者等于同一公开资料行。
+
 ## 数据
 
 `feishu_login_codes` 的邮箱、open_id、姓名与验证码 HMAC 只在 `active` 期间保存（FSL-119 的双向 CHECK），消费、作废时在同一语句中清空；未使用而过期的行与超过保留期的行由到期清理处理（FSL-146）。**当前状态：** 调度器尚未接入任何进程，由 FSL-150 在 `apps/web/instrumentation.ts` 的 `register()` 中于飞书模式等待其启动。
