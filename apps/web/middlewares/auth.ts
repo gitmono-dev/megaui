@@ -1,7 +1,7 @@
 import { getTranslation, resolveApiLocale } from "@megaui/i18n";
 import { NextResponse, type NextRequest } from "next/server";
 
-import { resolveWebActor } from "../lib/enterprise-session";
+import { resolveWebActor, resolveWebSessionEntry } from "../lib/enterprise-session";
 import { i18n } from "../lib/i18n-config";
 
 // megaui:apps/next-app/middlewares/authMiddleware.ts@0ff3a9d
@@ -67,13 +67,33 @@ const enterpriseAuthOperations = new Set([
   "/sign-out",
 ]);
 
-function rejectEnterpriseAuthPathVariant(request: NextRequest): NextResponse | undefined {
+// FSL-126: in Feishu mode (and for an AUTH_MODE / AUTH_PROVIDER pair that
+// `resolveAuthMode` refuses) the anonymous Better Auth surface is only the
+// session read and sign-out; the old enterprise operations are not exposed.
+// `get-session` answers through `resolveWebActor`, so a non-Feishu session
+// reads as null there.
+const feishuAuthOperations = new Set([
+  "/get-session",
+  "/sign-out",
+]);
+
+function allowedAuthOperations(): ReadonlySet<string> | undefined {
+  if (resolveWebSessionEntry() !== "existing") return feishuAuthOperations;
   const mode = process.env.AUTH_MODE?.trim() ?? "legacy";
   if (mode !== "enterprise" && mode !== "maintenance") return undefined;
+  return enterpriseAuthOperations;
+}
+
+function rejectEnterpriseAuthPathVariant(request: NextRequest): NextResponse | undefined {
+  const allowed = allowedAuthOperations();
+  if (!allowed) return undefined;
   const pathname = request.nextUrl.pathname;
-  if (pathname !== "/api/auth" && pathname.startsWith("/api/auth/")) {
+  // The public route matches `/api/auth` case-insensitively, so a case variant of
+  // the prefix itself is a path variant too and is refused like any other.
+  const prefix = pathname.slice(0, "/api/auth/".length);
+  if (prefix.toLowerCase() === "/api/auth/") {
     const operation = pathname.slice("/api/auth".length);
-    if (!enterpriseAuthOperations.has(operation)) {
+    if (prefix !== "/api/auth/" || !allowed.has(operation)) {
       return NextResponse.json({ error: "NOT_FOUND" }, { status: 404, headers: { "cache-control": "no-store" } });
     }
   }
@@ -81,7 +101,8 @@ function rejectEnterpriseAuthPathVariant(request: NextRequest): NextResponse | u
 }
 
 function rejectLegacyAuthPage(request: NextRequest): NextResponse | undefined {
-  if ((process.env.AUTH_MODE?.trim() ?? "legacy") !== "enterprise") return undefined;
+  if (resolveWebSessionEntry() === "existing"
+    && (process.env.AUTH_MODE?.trim() ?? "legacy") !== "enterprise") return undefined;
   const pathname = request.nextUrl.pathname;
   if (!new RegExp(`^/(${localeAlt})/(signup|forgot-password|reset-password)/?$`, "i").test(pathname)) {
     return undefined;

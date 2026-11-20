@@ -4,7 +4,16 @@
 // grant fields. The resolver therefore treats the verified session id as the
 // only input from the request, reloads the server-side enterprise metadata,
 // and delegates the final qualification predicate to the shared engine port.
+//
+// FSL-126: with AUTH_MODE=enterprise and AUTH_PROVIDER=feishu the resolver
+// reads no enterprise configuration, builds no eligibility service and runs no
+// qualification; the Auth instance it reads sessions with is whatever
+// `getAuth()` returns (its Feishu-mode construction is FSL-150). It accepts only
+// a Better Auth session that has a `feishu_login_sessions` row written at most
+// eight hours ago; any other session of the same user is treated as signed out.
 import type { Auth } from "@megaui/auth";
+import { resolveAuthMode } from "@megaui/core";
+import { getPool } from "@megaui/database";
 import {
   createEnterpriseEligibilityService,
   createPostgresAuthenticationEligibilityReader,
@@ -34,7 +43,7 @@ export interface EnterpriseSessionAuthority {
 }
 
 export interface WebActor {
-  readonly kind: "legacy" | "enterprise";
+  readonly kind: "legacy" | "enterprise" | "feishu";
   readonly userId: string;
   readonly identityId?: string;
   readonly authEpoch?: number;
@@ -107,7 +116,88 @@ export function createWebActorResolver(ports: WebActorResolverPorts) {
   };
 }
 
+/** FSL-126: a Feishu login session is accepted for this long after its marker row was written. */
+export const FEISHU_SESSION_MAX_AGE_MS = 8 * 60 * 60 * 1000;
+
+/**
+ * Which session entry the deployment uses. `existing` keeps the pre-FSL-126
+ * path byte for byte: it is chosen whenever AUTH_PROVIDER is unset or blank,
+ * and for `AUTH_PROVIDER=local` with legacy mode. A pair that
+ * `resolveAuthMode` refuses is `invalid` and resolves no actor (fail-closed).
+ */
+export type WebSessionEntry = "existing" | "feishu" | "invalid";
+
+export function resolveWebSessionEntry(source: NodeJS.Dict<string> = process.env): WebSessionEntry {
+  if ((source.AUTH_PROVIDER ?? "").trim() === "") return "existing";
+  try {
+    const resolved = resolveAuthMode({ AUTH_MODE: source.AUTH_MODE, AUTH_PROVIDER: source.AUTH_PROVIDER });
+    return resolved.mode === "enterprise" && resolved.provider === "feishu" ? "feishu" : "existing";
+  } catch {
+    return "invalid";
+  }
+}
+
+export interface FeishuWebActorResolverPorts {
+  readonly readSession: (headers: Headers) => Promise<WebSessionSnapshot | null>;
+  /**
+   * Age in milliseconds of the session's `feishu_login_sessions` row, or null when it has
+   * none. Production measures it on the database clock, the clock that wrote `created_at`.
+   */
+  readonly readFeishuSessionAgeMs: (session: WebSessionSnapshot) => Promise<number | null>;
+}
+
+/**
+ * Pure Feishu-mode decision layer. Continued use never extends the limit:
+ * the age is measured from the marker row, which no request rewrites, so a
+ * Better Auth refresh of the session expiry cannot keep it alive. A negative
+ * age (a row dated in the future of its own clock) is refused as well.
+ */
+export function createFeishuWebActorResolver(ports: FeishuWebActorResolverPorts) {
+  return async (headers: Headers): Promise<WebActor | null> => {
+    let snapshot: WebSessionSnapshot | null;
+    try {
+      snapshot = await ports.readSession(headers);
+    } catch {
+      return null;
+    }
+    if (!validSnapshot(snapshot)) return null;
+    let ageMs: number | null;
+    try {
+      ageMs = await ports.readFeishuSessionAgeMs(snapshot);
+    } catch {
+      return null;
+    }
+    if (typeof ageMs !== "number" || !Number.isFinite(ageMs) || ageMs < 0 || ageMs > FEISHU_SESSION_MAX_AGE_MS) return null;
+    return Object.freeze({
+      kind: "feishu" as const,
+      userId: snapshot.user.id,
+      ...(snapshot.user.email !== undefined ? { email: snapshot.user.email } : {}),
+      sessionId: snapshot.session.id,
+    });
+  };
+}
+
 type Pool = EligibilitySqlClient;
+
+/**
+ * Both ends of the age come from PostgreSQL: `created_at` is written by the column
+ * default `now()`, and the age is taken against `clock_timestamp()` of this read, so
+ * the Web process clock (and any skew to the database) plays no part.
+ */
+async function readFeishuLoginSessionAgeMs(pool: Pool, session: WebSessionSnapshot): Promise<number | null> {
+  const result = await pool.query(
+    `select (extract(epoch from (clock_timestamp() - marker.created_at)) * 1000)::float8 as "ageMs"
+       from feishu_login_sessions as marker
+       join "session" as current_session on current_session.id = marker.session_id
+      where marker.session_id = $1
+        and current_session.user_id = $2
+      limit 2`,
+    [session.session.id, session.user.id],
+  );
+  if (result.rows.length !== 1) return null;
+  const ageMs = (result.rows[0] as { ageMs?: unknown }).ageMs;
+  return typeof ageMs === "number" ? ageMs : null;
+}
 
 function readSessionSnapshot(auth: Auth, headers: Headers): Promise<WebSessionSnapshot | null> {
   return auth.api.getSession({
@@ -187,6 +277,15 @@ export async function resolveEnterpriseEligibility(input: {
 /** Resolve a request into a qualified actor, or null for every failure. */
 export async function resolveWebActor(headers: Headers): Promise<WebActor | null> {
   try {
+    const entry = resolveWebSessionEntry();
+    if (entry === "invalid") return null;
+    if (entry === "feishu") {
+      const pool = getPool();
+      return await createFeishuWebActorResolver({
+        readSession: input => readSessionSnapshot(getAuth(), input),
+        readFeishuSessionAgeMs: session => readFeishuLoginSessionAgeMs(pool, session),
+      })(headers);
+    }
     const config = readEnterpriseWebConfig();
     // An unscoped legacy deployment has no persistent enterprise authority and
     // retains the historical Better Auth path.  Once a scope is declared,

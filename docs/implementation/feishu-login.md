@@ -4,7 +4,7 @@
 
 ## 配置
 
-`@megaui/core` 的 `resolveAuthMode({ AUTH_MODE, AUTH_PROVIDER })`（`packages/core/src/auth/mode.ts`，FSL-116）是认证模式与提供方的单一解析规则。它是不读取环境的纯函数，按下表返回结果或拒绝。**当前状态：** 本函数尚未接入任何进程；Web、collab 与 engine 仍按各自现有路径解析 `AUTH_MODE`。由 FSL-126（Web 会话入口）、FSL-150（Web 接线，同时接入 FSL-121 的 `readFeishuLoginConfig`）、FSL-128（collab）接入后，下表规则才对相应进程生效。飞书登录端点由 FSL-150 接线、FSL-131 切换入口；在此之前，设置 `AUTH_PROVIDER=feishu` 不会启用飞书登录。
+`@megaui/core` 的 `resolveAuthMode({ AUTH_MODE, AUTH_PROVIDER })`（`packages/core/src/auth/mode.ts`，FSL-116）是认证模式与提供方的单一解析规则。它是不读取环境的纯函数，按下表返回结果或拒绝。**当前状态：** 本函数只接入了 Web 的会话入口与中间件（FSL-126，仅在 `AUTH_PROVIDER` 已设置时调用，见「会话」）；其它 Web 路径、collab 与 engine 仍按各自现有路径解析 `AUTH_MODE`。由 FSL-150（Web 接线，同时接入 FSL-121 的 `readFeishuLoginConfig`）、FSL-128（collab）接入后，下表规则才对相应进程生效。飞书登录端点由 FSL-150 接线、FSL-131 切换入口；在此之前，设置 `AUTH_PROVIDER=feishu` 不会启用飞书登录。
 
 | `AUTH_MODE` | `AUTH_PROVIDER` | 结果 |
 |---|---|---|
@@ -395,6 +395,21 @@ FSL-154 起上述用例中断言已授予或正在等待的咨询锁集合的，
 FSL-152 的用例：同邮箱本地用户已存在而无绑定时返回 409 `{ "status": "account_conflict" }`（带 `Cache-Control: no-store`、不设置会话 Cookie、不签发会话），注入的 `log` 恰好收到一次 `FEISHU_LOGIN_ACCOUNT_CONFLICT`，验证码行为 `consumed` 且四个敏感字段为空，同一验证码再次提交返回 401；冲突前后 `user` 表全部行的全部列不变（含另一无关本地用户），且不写入绑定；持有该邮箱的是另一成员首次登录建立的用户时，该用户与其绑定同样不变；未传入 `log` 时 `console.warn` 恰好收到该键，`log` 抛错时仍返回 409。以测试数据库中的触发器分别在插入 `user` 与插入绑定（插入 `user` 之后）时注入故障（错误消息含新行内容，即含邮箱），断言返回 500、不设置会话 Cookie、响应与控制台输出都不含邮箱，`user` 与 `feishu_identities` 为空、验证码行全部列不变、没有会话，移除触发器后以同一验证码重试返回 200 且只建立一个用户。并发用例以同一成员的两个 flow 各一行 `active` 验证码（成员的两个邮箱，以及以伪造的邮箱 HMAC 构造的同一邮箱两行）两路交错执行：第三个连接先持有该成员的身份锁，两个校验事务在各自的连接上消费各自的行、未找到绑定后在身份锁上等待（以 `pg_locks` 断言恰有两个未授予的请求，此时 `user` 为空），放行后两者都返回 200、`user` 与 `feishu_identities` 各恰有一行、两个会话属于同一用户、两行都为 `consumed`；另以不加控制的两路并发重复 5 轮，每轮只建立一个用户和一条绑定；并在每个连接默认隔离级别为 `REPEATABLE READ` 的另一连接池上（verify 与 better-auth 都使用它）重复两种受控交错用例，断言结果相同。`verify.test.ts` 中无绑定且邮箱已被预置用户占用的用例同样断言 409 与 `consumed`。
 
 FSL-169 的用例（同在 `signup.test.ts`，以测试数据库中的触发器注入故障）：首次登录时 `session` 的插入失败，与首次登录时 `feishu_login_sessions` 的插入失败（另以 `session` 上的插入审计触发器证明会话曾经签发），各自断言 503 `{ "status": "retry" }`、带 `Cache-Control: no-store`、不设置会话 Cookie、响应与控制台输出都不含注入的数据库错误（其消息含该行内容，`session` 行含 token）、`session` 与 `feishu_login_sessions` 都没有行、注入的 `log` 恰好收到一次 `FEISHU_LOGIN_SESSION_FAILED`、验证码行为 `consumed`、用户与绑定各一行；已有绑定的再次登录时把 `user` 表临时改名使读取用户抛错，或以替身使 `findUserById` 返回空、抛出 better-auth `APIError`，同样断言 503 与两表无行。这些情形随后都断言原验证码再次提交返回 401，再经 request 端点在同一 flow 重新请求验证码（其 `reserve` 为签发存储的预约，`deliver` 以 Mock 代替飞书查询与私聊、激活预约行），以新验证码登录返回 200，`user` 全部行的全部列与 `feishu_identities` 不变，会话属于原用户且恰有一行来源标记。另断言：来源标记写入与会话删除同时失败时依次输出 `FEISHU_LOGIN_SESSION_REVOKE_FAILED`、`FEISHU_LOGIN_SESSION_FAILED`，仍返回 503 且不设置会话 Cookie，`session` 留一行、`feishu_login_sessions` 无行，随后同样重新取码登录成功且不新建用户（残留的未标记会话行仍在）；未传入 `log` 时 `console.warn` 恰好收到 `FEISHU_LOGIN_SESSION_FAILED`，`log` 抛错时仍返回 503；已封禁用户登录时返回 better-auth 的 403 `BANNED_USER`，不新增会话或来源标记、不输出日志键。
+
+## 会话
+
+页面、BFF、上传与 `get-session` 共用的 Web 会话入口 `resolveWebActor`（`apps/web/lib/enterprise-session.ts`）与中间件（`apps/web/middlewares/auth.ts`）在飞书模式下的行为（FSL-126）。
+
+- **入口选择：** `resolveWebSessionEntry` 只在 `AUTH_PROVIDER` 去掉首尾空白后非空时调用 `resolveAuthMode`（见「配置」）：结果为 `enterprise` + `feishu` 时使用飞书会话入口；`resolveAuthMode` 拒绝的组合（如 `legacy` + `feishu`、`enterprise` + `local`）不解析任何会话，一律视为未登录，中间件按下文飞书模式的规则限制认证接口与页面；`AUTH_PROVIDER` 未设置或空白，以及 `legacy` + `local` 时沿用本卡之前的路径，行为不变，也不读取 `feishu_login_sessions`。
+- **判定：** 飞书模式下会话入口自身不读取企业配置（`readEnterpriseWebConfig`）、不构造资格判定服务、不读取企业会话字段、不做资格判定。它以 `getAuth()` 返回的认证实例调用 better-auth `getSession`（关闭 Cookie 缓存与刷新）读取当前会话（该实例的来源见下文「当前状态」），再查询 `feishu_login_sessions` 中该会话 ID 的行（同时要求 `session.user_id` 等于会话用户）。该行的年龄只在数据库时钟上计量：`created_at` 由列默认值 `now()` 写入，年龄为同一数据库在读取时的 `clock_timestamp()` 减去 `created_at`，不使用 Web 进程时钟，因此 Web 与数据库之间的时钟偏差不影响该时限。没有该行、任一读取失败、年龄超过 8 小时或为负（该行时间晚于数据库当前时间）时视为未登录；否则得到 `kind: "feishu"` 的 actor（用户 ID、邮箱、会话 ID）。时限从标记行的写入时间起算，没有请求改写该行，因此持续使用（包括 better-auth 刷新会话而推后其 `expiresAt`）不延长这 8 小时；better-auth 自身判定会话无效（已过期或已删除）时同样视为未登录。
+- **非飞书会话：** 没有标记行的会话（包括同一已绑定用户在切换前以密码、社交登录或旧企业登录取得的会话）在飞书模式下视为未登录：受保护页面 302 到 `/[lang]/signin?callbackUrl=<原路径>`，中间件拦截的受保护 API 返回 401，BFF 与上传路由按各自的未登录响应处理，`get-session` 返回 200 `null`。
+- **`get-session`：** `/api/auth/get-session` 由路由经 `getMega2SessionResponse` 以 `resolveWebActor` 判定：飞书会话返回该会话的投影，非飞书会话与无会话返回 200 `null`（带 `Cache-Control: no-store`）。投影中 `user.name` 的取值由 FSL-156 修改，本卡沿用现有投影。
+- **中间件：** 飞书模式下 `/api/auth/*` 只放行 `/get-session` 与 `/sign-out` 两个路径（按路径逐字匹配；尾斜杠、重复斜杠、编码变体，以及操作部分或 `/api/auth` 前缀本身的大小写变体都不匹配），其余路径（包括邮箱密码与社交登录、旧 `/enterprise/*`）由中间件返回 404 `{ "error": "NOT_FOUND" }`（带 `Cache-Control: no-store`）；飞书登录端点 `/api/auth/feishu-login/*` 由 FSL-150 放行，在此之前同样返回 404。公开页面只有首页 `/[lang]` 与登录页 `/[lang]/signin`（已登录的飞书会话访问登录页时 302 到 `/[lang]/workspace`）；注册、找回与重置密码页由中间件返回 404，与现有企业模式相同。不属于认证的其它公开路由（健康检查、BFF、上传、内部回调）的放行不变，其中 BFF 与上传在路由内以 `resolveWebActor` 判定会话。
+- **`legacy` 部署：** 会话入口与中间件的判定与本卡之前相同。
+
+**当前状态：** 本卡只实现会话判定，不修改 `getAuth()`。飞书模式下 `getAuth()` 的构造与飞书登录端点由 FSL-150 接线（其写集含 `apps/web/lib/auth.ts`，并以真实 Web 中间件、better-auth 与一次性 PG 完成登录的端到端用例验证）。在此之前 `getAuth()` 仍是现有构造：`AUTH_MODE=enterprise` 时它先查企业运行时注册表，没有就绪的企业运行时时抛错，会话入口因此视为未登录；有就绪的企业运行时（由现有启动钩子按企业配置构建）时返回该运行时的认证实例。由于飞书登录端点尚未接线，部署中也还不会签发飞书会话。因此下述契约测试以替身替换 `getAuth()`，验证的是会话判定本身，不代表飞书模式在真实部署中已可登录。
+
+`apps/web/tests/contract/feishu-login-session.spec.ts` 使用一次性 PG，以真实的中间件、`resolveWebActor` 与 `/api/auth/[...all]` 路由构造（`getAuth()` 替换为同一数据库上的 `createAuth` 实例，读取标记行的是 `DATABASE_URL` 上的共享连接池）：同一已绑定用户以 better-auth 邮箱注册取得密码会话，并按 verify 的方式（`createSession` 签发 8 小时会话后 `recordFeishuLoginSession`）取得飞书会话；断言飞书会话的页面请求得到该用户，密码会话（better-auth 本身仍认可）在页面请求中重定向到登录页、`resolveWebActor` 为 `null`；无会话与无效 Cookie 的受保护页面重定向到 `/[lang]/signin`；`get-session` 对飞书会话返回该会话、对密码会话、无会话与删除了标记行的会话返回 `null`；推进时钟（Web 进程的 `Date` 以伪造计时器推进，数据库时钟的推进以把标记行 `created_at` 回拨同样时长模拟），在 8 小时内每小时请求一次（同时经 better-auth 刷新推后会话到期时间）都被接受，超过 8 小时后 better-auth 仍认可该会话，而页面重定向到登录页、`get-session` 返回 `null`；另在不改变 Web 进程时钟的情况下只改变标记行在数据库时钟上的年龄，断言 7 小时 59 分被接受、8 小时 1 分与晚于数据库当前时间 1 小时都被拒绝。`apps/web/tests/unit/auth-middleware-feishu.test.ts` 以替身替换 better-auth 与连接池，断言 `AUTH_PROVIDER` 未设置、空白或为 `local` 时会话入口与中间件的判定不变且不读取标记表，并覆盖飞书模式下认证接口与页面的放行范围、被拒绝组合的 fail-closed，以及年龄判定（0 至恰为 8 小时接受，超过 8 小时、为负或非有限值拒绝）。
 
 ## 公开资料
 
