@@ -1,15 +1,22 @@
-// megaui:packages/auth/src/enterprise-otp/plugin.ts@24a8551 (megaui-only FSL-123: the feishuLogin Better Auth plugin)
+// megaui:packages/auth/src/enterprise-otp/plugin.ts@24a8551 (megaui-only FSL-123, FSL-124: the feishuLogin Better Auth plugin)
 /**
- * FSL-123: the `feishuLogin` Better Auth plugin (ADR-FSL-11 「入口」「请求」).
+ * FSL-123, FSL-124: the `feishuLogin` Better Auth plugin (ADR-FSL-11 「入口」「请求」「校验」).
  *
- * It adds one endpoint, `POST /feishu-login/request` (`/api/auth/feishu-login/request` under
- * the web mount), whose contract lives in `request.ts`. `createAuth` registers the plugin only
+ * It adds `POST /feishu-login/request` (`/api/auth/feishu-login/request` under the web mount),
+ * whose contract lives in `request.ts`, and — only when the `verify` option is passed —
+ * `POST /feishu-login/verify`, whose contract lives in `verify.ts`. `createAuth` registers the plugin only
  * when it receives the `feishuLogin` option; the web wiring is FSL-150, so no deployment
  * exposes the endpoint before that card. Better Auth's own per-address rate limit (production
  * only) keeps applying to admissible requests with its default window and maximum; `createAuth`
  * only routes the path through `feishuLoginRequestRateLimitRule`, which exempts invalid inputs
  * so they answer 400 before any 429 (ADR-FSL-11 response order). `onRequest` answers every
  * inadmissible request (including a body over 4 KiB) 400 before the framework parses its body.
+ *
+ * The verify path has no custom rate-limit rule: Better Auth's per-address limit (production
+ * only, default window and maximum) counts every verify request, malformed ones included, and its
+ * 429 comes before anything the plugin answers. `onRequest` then answers a malformed verify body
+ * (another media type, over 4 KiB, not JSON, not exactly `{ "code": <8 characters> }`) 400 before
+ * the framework parses it; only an admissible one reaches the endpoint, which answers 401 or 200.
  */
 import type { BetterAuthPlugin } from "better-auth";
 import { createAuthEndpoint } from "better-auth/api";
@@ -21,15 +28,27 @@ import {
   type FeishuLoginIssuePort,
   type FeishuLoginRequestLogKey,
 } from "./request";
+import {
+  precheckFeishuLoginVerifyHttpRequest,
+  readFeishuLoginVerifyOptions,
+  verifyFeishuLoginCode,
+  type FeishuLoginVerifyOptions,
+} from "./verify";
 
 export const FEISHU_LOGIN_PLUGIN_ID = "megaui-feishu-login";
 export const FEISHU_LOGIN_REQUEST_PATH = "/feishu-login/request";
+export const FEISHU_LOGIN_VERIFY_PATH = "/feishu-login/verify";
 
 export interface FeishuLoginPluginOptions {
   /** The issue service; called after the 202 has been answered (FSL-150 injects the engine's). */
   readonly issue: FeishuLoginIssuePort;
   /** Receives stable log keys only. Defaults to `console.warn`. */
   readonly log?: (key: FeishuLoginRequestLogKey) => void;
+  /**
+   * FSL-124: the database pool, `FEISHU_APP_ID` and `ENTERPRISE_OTP_HMAC_KEY` of the verify
+   * endpoint. `POST /feishu-login/verify` is registered only when this is passed (FSL-150 wires it).
+   */
+  readonly verify?: FeishuLoginVerifyOptions;
 }
 
 type SchemaIssue = Readonly<{ readonly message: string; readonly path: readonly (string | number)[] }>;
@@ -80,11 +99,11 @@ function invalidInputResponse(): Response {
   });
 }
 
-function isRequestPath(request: Request, baseURL: string): boolean {
+function isPostTo(request: Request, baseURL: string, path: string): boolean {
   if (request.method !== "POST") return false;
   try {
     const basePath = new URL(baseURL).pathname.replace(/\/+$/, "");
-    return new URL(request.url).pathname === `${basePath}${FEISHU_LOGIN_REQUEST_PATH}`;
+    return new URL(request.url).pathname === `${basePath}${path}`;
   } catch {
     return false;
   }
@@ -100,6 +119,7 @@ export function feishuLogin(options: FeishuLoginPluginOptions): BetterAuthPlugin
   }
   const issue = options.issue;
   const log = options.log ?? defaultLog;
+  const verify = options.verify === undefined ? undefined : readFeishuLoginVerifyOptions(options.verify);
   return {
     id: FEISHU_LOGIN_PLUGIN_ID,
     version: "1",
@@ -110,9 +130,16 @@ export function feishuLogin(options: FeishuLoginPluginOptions): BetterAuthPlugin
     // ever read in full unless it passed the bounded check. The limiter's rule exempts exactly
     // these requests, so the 400 also comes ahead of any 429.
     async onRequest(request, ctx) {
-      if (!isRequestPath(request, ctx.baseURL)) return;
-      if ((await precheckFeishuLoginHttpRequest(request)) === "admissible") return;
-      return { response: invalidInputResponse() };
+      if (isPostTo(request, ctx.baseURL, FEISHU_LOGIN_REQUEST_PATH)) {
+        if ((await precheckFeishuLoginHttpRequest(request)) === "admissible") return;
+        return { response: invalidInputResponse() };
+      }
+      // The verify path gets the same bounded check against its own body shape; it is only
+      // registered (and only checked) when the verify option was passed.
+      if (verify !== undefined && isPostTo(request, ctx.baseURL, FEISHU_LOGIN_VERIFY_PATH)) {
+        if ((await precheckFeishuLoginVerifyHttpRequest(request)) === "admissible") return;
+        return { response: invalidInputResponse() };
+      }
     },
     endpoints: {
       feishuLoginRequest: createAuthEndpoint(FEISHU_LOGIN_REQUEST_PATH, {
@@ -139,6 +166,26 @@ export function feishuLogin(options: FeishuLoginPluginOptions): BetterAuthPlugin
         ctx.setStatus(202);
         return ctx.json(outcome.body);
       }),
+      ...(verify === undefined
+        ? {}
+        : {
+            feishuLoginVerify: createAuthEndpoint(FEISHU_LOGIN_VERIFY_PATH, {
+              method: "POST",
+              body: passThroughBody,
+            }, async (ctx) => {
+              ctx.setHeader("cache-control", "no-store");
+              const headers = ctx.request?.headers ?? ctx.headers;
+              const outcome = await verifyFeishuLoginCode(
+                ctx,
+                verify,
+                ctx.body,
+                headers?.get("cookie"),
+                headers?.get("content-type"),
+              );
+              ctx.setStatus(outcome.status);
+              return ctx.json(outcome.body);
+            }),
+          }),
     },
   };
 }

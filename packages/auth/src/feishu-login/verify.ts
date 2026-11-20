@@ -1,0 +1,210 @@
+// megaui:packages/auth/src/enterprise-otp/verify.ts@24a8551 (megaui-only FSL-124: the verify success path of the Feishu login)
+/**
+ * FSL-124: the success path of `POST /feishu-login/verify` (ADR-FSL-11 「校验」).
+ *
+ * - The request is `application/json` and its body (at most 4096 bytes) is exactly
+ *   `{ "code": <string> }`; the code is trimmed and uppercased and must then be 8 characters of
+ *   the code alphabet. Anything else answers 400 `{ "code": "INVALID_INPUT" }` and reads no row.
+ * - A well-formed code is checked against the newest row of the flow named by the flow cookie in
+ *   one transaction (`consumeFeishuLoginCode`): only an unexpired `active` row whose code HMAC
+ *   matches in constant time is consumed, its email, open_id, name and code HMAC cleared, and the
+ *   binding of `(app_id, open_id_hmac)` read, where `open_id_hmac` is
+ *   HMAC-SHA256(`ENTERPRISE_OTP_HMAC_KEY`, "feishu-identity:v1:" + app_id + ":" + open_id).
+ * - After that commit a plain Better Auth session (8 hours, no enterprise field) is issued with
+ *   `internalAdapter.createSession`, marked in `feishu_login_sessions`, and its cookie set: 200
+ *   `{ "status": "ok" }`.
+ * - Every other outcome — no flow cookie, no row, a newest row that is not an unexpired `active`
+ *   one, a wrong code, or (until FSL-125 creates accounts) a member without a binding — answers
+ *   the same 401 `{ "status": "invalid" }`. Failure counting and its limit are FSL-151; the
+ *   compensation of a failed session issue is FSL-169.
+ */
+import { createHmac } from "node:crypto";
+import { setSessionCookie } from "better-auth/cookies";
+import {
+  consumeFeishuLoginCode,
+  recordFeishuLoginSession,
+  type DatabaseClient,
+} from "@megaui/database";
+
+import { ENTERPRISE_OTP_ALPHABET, ENTERPRISE_OTP_LENGTH } from "../enterprise-otp/code";
+import { feishuLoginFlowHash, readFeishuLoginFlowCookie } from "./cookie";
+import { isFeishuLoginJsonMediaType } from "./request";
+
+/** The purpose label of the identity HMAC (ADR-FSL-11, FSL-120). */
+export const FEISHU_LOGIN_IDENTITY_HMAC_LABEL = "feishu-identity:v1:";
+/** A Feishu login session lives 8 hours from its issue (ADR-FSL-11). */
+export const FEISHU_LOGIN_SESSION_TTL_SECONDS = 8 * 60 * 60;
+/** The largest verify body accepted; larger bodies are invalid input (400). */
+export const FEISHU_LOGIN_VERIFY_MAX_BODY_BYTES = 4096;
+
+const HMAC_KEY_BYTES = 32;
+
+export interface FeishuLoginVerifyOptions {
+  /** The pool that holds `feishu_login_codes`, `feishu_identities` and `feishu_login_sessions`. */
+  readonly pool: DatabaseClient["pool"];
+  /** `FEISHU_APP_ID`. */
+  readonly appId: string;
+  /** The decoded 32-byte `ENTERPRISE_OTP_HMAC_KEY`. Private: never logged. */
+  readonly otpHmacKey: Uint8Array;
+}
+
+/** Validated verify options; the key is copied so later changes of the caller's buffer do not apply. */
+export function readFeishuLoginVerifyOptions(options: FeishuLoginVerifyOptions): FeishuLoginVerifyOptions {
+  if (
+    !options ||
+    !options.pool ||
+    typeof options.pool.connect !== "function" ||
+    typeof options.pool.query !== "function" ||
+    typeof options.appId !== "string" ||
+    options.appId.trim() === "" ||
+    !(options.otpHmacKey instanceof Uint8Array) ||
+    options.otpHmacKey.length !== HMAC_KEY_BYTES
+  ) {
+    throw new Error("INVALID_FEISHU_LOGIN_PLUGIN_CONFIG");
+  }
+  return { pool: options.pool, appId: options.appId, otpHmacKey: Uint8Array.from(options.otpHmacKey) };
+}
+
+/**
+ * HMAC-SHA256(key, "feishu-identity:v1:" + appId + ":" + openId) as 64 lowercase hex characters:
+ * the `open_id_hmac` of `feishu_identities`, which never stores the open_id itself (only an
+ * `active` code row holds it, until consumed, voided or cleaned up).
+ */
+export function feishuLoginOpenIdHmac(key: Uint8Array, appId: string, openId: string): string {
+  if (!(key instanceof Uint8Array) || key.length !== HMAC_KEY_BYTES) throw new Error("INVALID_FEISHU_LOGIN_HMAC_KEY");
+  if (typeof appId !== "string" || appId === "") throw new Error("INVALID_FEISHU_LOGIN_APP_ID");
+  if (typeof openId !== "string" || openId === "") throw new Error("INVALID_FEISHU_LOGIN_OPEN_ID");
+  return createHmac("sha256", key)
+    .update(`${FEISHU_LOGIN_IDENTITY_HMAC_LABEL}${appId}:${openId}`, "utf8")
+    .digest("hex");
+}
+
+/** The trimmed, uppercased code when it is 8 characters of the code alphabet; otherwise `null`. */
+export function normalizeFeishuLoginCode(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const code = value.trim().toUpperCase();
+  if (code.length !== ENTERPRISE_OTP_LENGTH) return null;
+  for (const char of code) if (!ENTERPRISE_OTP_ALPHABET.includes(char)) return null;
+  return code;
+}
+
+/** The normalized code of a parsed body that is exactly `{ "code": <string> }`, or `null`. */
+export function readFeishuLoginVerifyCode(body: unknown): string | null {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) return null;
+  const keys = Object.keys(body);
+  if (keys.length !== 1 || keys[0] !== "code") return null;
+  return normalizeFeishuLoginCode((body as { readonly code: unknown }).code);
+}
+
+/** Reads at most `limit` bytes; `null` (and the stream cancelled) once more have been read. */
+async function readBoundedBody(body: ReadableStream<Uint8Array>, limit: number): Promise<Uint8Array | null> {
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > limit) {
+        // Not awaited: cancelling one branch of a teed body only settles once the other one is.
+        reader.cancel().catch(() => undefined);
+        return null;
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
+/**
+ * Classifies an HTTP verify request before the framework parses its body, reading a clone and
+ * stopping once more than `FEISHU_LOGIN_VERIFY_MAX_BODY_BYTES` have been read (counted per chunk).
+ * Only `admissible` requests reach the endpoint; the plugin's `onRequest` answers the rest 400.
+ */
+export async function precheckFeishuLoginVerifyHttpRequest(request: Request): Promise<"admissible" | "invalid"> {
+  if (!isFeishuLoginJsonMediaType(request.headers.get("content-type"))) return "invalid";
+  const stream = request.clone().body;
+  if (stream === null) return "invalid";
+  let bytes: Uint8Array | null;
+  try {
+    bytes = await readBoundedBody(stream, FEISHU_LOGIN_VERIFY_MAX_BODY_BYTES);
+  } catch {
+    return "invalid";
+  }
+  if (bytes === null) return "invalid";
+  let body: unknown;
+  try {
+    body = JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
+    return "invalid";
+  }
+  return readFeishuLoginVerifyCode(body) !== null ? "admissible" : "invalid";
+}
+
+export const FEISHU_LOGIN_VERIFY_INVALID_INPUT = { code: "INVALID_INPUT" } as const;
+export const FEISHU_LOGIN_VERIFY_INVALID = { status: "invalid" } as const;
+export const FEISHU_LOGIN_VERIFY_OK = { status: "ok" } as const;
+
+type BetterAuthEndpointContext = Parameters<typeof setSessionCookie>[0];
+
+export type FeishuLoginVerifyResponse =
+  | { readonly status: 400; readonly body: typeof FEISHU_LOGIN_VERIFY_INVALID_INPUT }
+  | { readonly status: 401; readonly body: typeof FEISHU_LOGIN_VERIFY_INVALID }
+  | { readonly status: 200; readonly body: typeof FEISHU_LOGIN_VERIFY_OK };
+
+/**
+ * Issues the Feishu login session of `userId` after the consuming transaction committed: a plain
+ * Better Auth session of 8 hours (only `expiresAt` is overridden, no enterprise field is set),
+ * then its `feishu_login_sessions` row, then the session cookie. A failure of any step throws;
+ * its compensation (503 `retry`) is FSL-169.
+ */
+async function issueFeishuLoginSession(
+  ctx: BetterAuthEndpointContext,
+  options: FeishuLoginVerifyOptions,
+  userId: string,
+): Promise<void> {
+  const user = await ctx.context.internalAdapter.findUserById(userId);
+  if (!user) throw new Error("FEISHU_LOGIN_VERIFY_UNAVAILABLE");
+  const expiresAt = new Date(Date.now() + FEISHU_LOGIN_SESSION_TTL_SECONDS * 1000);
+  const session = await ctx.context.internalAdapter.createSession(userId, false, { expiresAt }, true);
+  await recordFeishuLoginSession(options.pool, session.id);
+  await setSessionCookie(ctx, { session, user }, false, { maxAge: FEISHU_LOGIN_SESSION_TTL_SECONDS });
+}
+
+/**
+ * Decides one verify call from its parsed body and its `Cookie` / `Content-Type` headers, and on
+ * success issues the session on `ctx`. The body is checked first (400), then the flow and the
+ * code (401 or 200).
+ */
+export async function verifyFeishuLoginCode(
+  ctx: BetterAuthEndpointContext,
+  options: FeishuLoginVerifyOptions,
+  body: unknown,
+  cookieHeader: string | null | undefined,
+  contentType: string | null | undefined,
+): Promise<FeishuLoginVerifyResponse> {
+  if (!isFeishuLoginJsonMediaType(contentType)) return { status: 400, body: FEISHU_LOGIN_VERIFY_INVALID_INPUT };
+  const code = readFeishuLoginVerifyCode(body);
+  if (code === null) return { status: 400, body: FEISHU_LOGIN_VERIFY_INVALID_INPUT };
+  const flow = readFeishuLoginFlowCookie(cookieHeader);
+  if (flow === undefined) return { status: 401, body: FEISHU_LOGIN_VERIFY_INVALID };
+  const result = await consumeFeishuLoginCode(options.pool, {
+    flowHash: feishuLoginFlowHash(flow),
+    code,
+    otpHmacKey: options.otpHmacKey,
+    appId: options.appId,
+    openIdHmac: (openId) => feishuLoginOpenIdHmac(options.otpHmacKey, options.appId, openId),
+  });
+  if (result.kind !== "consumed") return { status: 401, body: FEISHU_LOGIN_VERIFY_INVALID };
+  await issueFeishuLoginSession(ctx, options, result.userId);
+  return { status: 200, body: FEISHU_LOGIN_VERIFY_OK };
+}

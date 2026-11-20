@@ -25,7 +25,12 @@
 // engine scheduler runs on every Web instance: one statement that voids the expired `reserved`
 // and `active` rows, clearing their sensitive fields, and deletes the rows created more than 24
 // hours ago.
-import { createHmac, randomUUID } from "node:crypto";
+//
+// The verify side (FSL-124) is `consumeFeishuLoginCode`: one transaction that reads the newest
+// row of a flow, compares the code HMAC in constant time, consumes the row clearing its
+// sensitive fields and looks up the identity binding before it commits; and
+// `recordFeishuLoginSession`, which marks a session as issued by the Feishu login (FSL-147).
+import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 
 /** A reservation expires this long after it was created. */
@@ -441,6 +446,138 @@ export function createFeishuLoginCodeStore(pool: Pool): FeishuLoginCodeStore {
       });
     },
   };
+}
+
+export interface FeishuLoginConsumeInput {
+  /** The SHA-256 of the flow cookie value, as 64 lowercase hex characters. */
+  readonly flowHash: string;
+  /** The submitted code (already normalized by the caller); compared through its HMAC only. */
+  readonly code: string;
+  /** The decoded 32-byte `ENTERPRISE_OTP_HMAC_KEY`. */
+  readonly otpHmacKey: Uint8Array;
+  /** `FEISHU_APP_ID`: the `app_id` half of the binding key. */
+  readonly appId: string;
+  /**
+   * Derives the `open_id_hmac` of the held open_id (the auth verify module owns the rule). Called
+   * inside the transaction, after the row was consumed; its result must be 64 lowercase hex.
+   */
+  readonly openIdHmac: (openId: string) => string;
+}
+
+export type FeishuLoginConsumeResult =
+  /** The row is now `consumed` with its sensitive fields cleared; the binding names the user. */
+  | { readonly kind: "consumed"; readonly userId: string }
+  /**
+   * Nothing changed: the flow has no row, its newest row is not an unexpired `active` row, or the
+   * code does not match.
+   */
+  | { readonly kind: "invalid" }
+  /**
+   * The code matched but `(app_id, open_id_hmac)` has no binding: the transaction was rolled
+   * back, so the row is still `active` (account creation is FSL-125).
+   */
+  | { readonly kind: "unbound" };
+
+/** Thrown inside the consume transaction to roll it back when no binding exists. */
+const UNBOUND = Symbol("FEISHU_LOGIN_UNBOUND");
+
+function codeHmacMatches(expectedHex: string, storedHex: unknown): boolean {
+  // Both sides are 32-byte digests; a stored value of another shape can never match, and the
+  // comparison of two equal-length buffers takes the same time wherever they differ.
+  if (typeof storedHex !== "string" || !HEX_64.test(storedHex)) return false;
+  return timingSafeEqual(Buffer.from(expectedHex, "hex"), Buffer.from(storedHex, "hex"));
+}
+
+/**
+ * The success path of verify (FSL-124, ADR-FSL-11 「校验」), one transaction:
+ * 1. reads the row of the largest `flow_seq` of the flow (whatever its state); only an unexpired
+ *    `active` row (`expires_at > clock_timestamp()`) goes on, anything else is `invalid`. The code
+ *    HMAC is returned by that statement only for such a row;
+ * 2. compares `feishuLoginCodeHmac(key, row id, code)` with the stored code HMAC in constant time;
+ *    a mismatch is `invalid` and changes nothing (failure counting is FSL-151);
+ * 3. reads the held email, open_id and name (again only while the row is an unexpired `active`
+ *    one), then turns the row `consumed` clearing the email, open_id, name and code HMAC in the
+ *    same statement. The update repeats the `active` and expiry conditions, so when two
+ *    transactions read the same active row and the first to write commits, the other one finds
+ *    no row to update (READ COMMITTED re-checks the newest version) and is `invalid` (if the
+ *    first rolls back, the other goes on); the row lock and its concurrency acceptance are FSL-151;
+ * 4. derives `open_id_hmac` with `input.openIdHmac` and reads the binding of
+ *    `(app_id, open_id_hmac)` in `feishu_identities`. Found: the transaction commits and the
+ *    result names the bound user. Not found: the transaction is rolled back (`unbound`).
+ * The open_id leaves the row only as its HMAC; nothing else of the hold is returned.
+ */
+export async function consumeFeishuLoginCode(
+  pool: Pool,
+  input: FeishuLoginConsumeInput,
+): Promise<FeishuLoginConsumeResult> {
+  assertHex(input?.flowHash, "INVALID_FEISHU_LOGIN_FLOW_HASH");
+  assertKey(input.otpHmacKey);
+  if (typeof input.code !== "string" || input.code === "") throw new Error("INVALID_FEISHU_LOGIN_CODE");
+  assertText(input.appId, "INVALID_FEISHU_LOGIN_APP_ID");
+  if (typeof input.openIdHmac !== "function") throw new Error("INVALID_FEISHU_LOGIN_OPEN_ID_HMAC");
+  try {
+    return await inTransaction(pool, async (client) => {
+      // The newest row of the flow, whatever its state. Its code HMAC is only returned while it is
+      // an unexpired `active` row (decided against one clock sample), so no sensitive field of an
+      // expired row is ever read; the email, open_id and name are only read once the code matched.
+      const newest = await client.query<{ id: string; state: string; live: boolean; code_hmac: string | null }>(
+        `select c.id, c.state, t.live,
+                case when c.state = 'active' and t.live then c.code_hmac end as code_hmac
+           from (select id, state, expires_at, code_hmac
+                   from feishu_login_codes
+                  where flow_hash = $1
+                  order by flow_seq desc
+                  limit 1) c
+           cross join lateral (select c.expires_at > clock_timestamp() as live) t`,
+        [input.flowHash],
+      );
+      const row = newest.rows[0];
+      if (!row || row.state !== "active" || !row.live) return { kind: "invalid" } as const;
+      if (!codeHmacMatches(feishuLoginCodeHmac(input.otpHmacKey, row.id, input.code), row.code_hmac)) {
+        return { kind: "invalid" } as const;
+      }
+      // The hold (email, open_id, name) is read only now, and only while the row is still an
+      // unexpired `active` one at this statement: a row that expired after the first read is
+      // never read. The binding lookup below needs the open_id; the email and the name are what
+      // the account creation of FSL-125 builds on.
+      const held = await client.query<{ email: string | null; open_id: string | null; display_name: string | null }>(
+        `select email, open_id, display_name from feishu_login_codes
+          where id = $1 and state = 'active' and expires_at > clock_timestamp()`,
+        [row.id],
+      );
+      const hold = held.rows[0];
+      if (!hold || typeof hold.open_id !== "string") return { kind: "invalid" } as const;
+      const openId = hold.open_id;
+      const consumed = await client.query(
+        `update feishu_login_codes
+            set state = 'consumed', email = null, open_id = null, display_name = null, code_hmac = null
+          where id = $1 and state = 'active' and expires_at > clock_timestamp()`,
+        [row.id],
+      );
+      if (consumed.rowCount !== 1) return { kind: "invalid" } as const;
+      const openIdHmac = input.openIdHmac(openId);
+      assertHex(openIdHmac, "INVALID_FEISHU_LOGIN_OPEN_ID_HMAC");
+      const binding = await client.query<{ user_id: string }>(
+        "select user_id from feishu_identities where app_id = $1 and open_id_hmac = $2",
+        [input.appId, openIdHmac],
+      );
+      const userId = binding.rows[0]?.user_id;
+      if (userId === undefined) throw UNBOUND;
+      return { kind: "consumed", userId } as const;
+    });
+  } catch (error) {
+    if (error === UNBOUND) return { kind: "unbound" };
+    throw error;
+  }
+}
+
+/**
+ * Marks a Better Auth session as issued by the Feishu login (FSL-147 `feishu_login_sessions`):
+ * one row holding only the session ID; it disappears with its session.
+ */
+export async function recordFeishuLoginSession(pool: Pool, sessionId: string): Promise<void> {
+  assertText(sessionId, "INVALID_FEISHU_LOGIN_SESSION_ID");
+  await pool.query("insert into feishu_login_sessions (session_id) values ($1)", [sessionId]);
 }
 
 /** A row created more than this many seconds ago is deleted by the cleanup (FSL-146). */
