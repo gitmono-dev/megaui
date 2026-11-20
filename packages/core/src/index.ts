@@ -10,6 +10,9 @@ export * from './title-index'
 export * from './linkify-plain'
 export * from './embed-subtree'
 export * from './unread-math'
+// The single AUTH_MODE / AUTH_PROVIDER rule set (FSL-116). Web, collab and engine
+// adopt it in later cards (FSL-121, FSL-126, FSL-128).
+export * from './auth/mode'
 // Shared enterprise configuration contract: pure parsing and the server-only
 // boundary. Neither module reads the environment or holds runtime secrets.
 export * from './enterprise/config'

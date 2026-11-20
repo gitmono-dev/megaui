@@ -2,6 +2,26 @@
 
 本文记录飞书邮箱验证码最小登录路径的实现约定（`docs/plan/plan-20261118.md`）。各节由对应任务卡在其提交中补充；产品行为以源码与测试为准。
 
+## 配置
+
+`@megaui/core` 的 `resolveAuthMode({ AUTH_MODE, AUTH_PROVIDER })`（`packages/core/src/auth/mode.ts`，FSL-116）是认证模式与提供方的单一解析规则。它是不读取环境的纯函数，按下表返回结果或拒绝。**当前状态：** 本函数尚未接入任何进程；Web、collab 与 engine 仍按各自现有路径解析 `AUTH_MODE`。由 FSL-121（Web 配置）、FSL-126（Web 会话入口）、FSL-128（collab）接入后，下表规则才对相应进程生效。飞书登录端点由 FSL-150 接线、FSL-131 切换入口；在此之前，设置 `AUTH_PROVIDER=feishu` 不会启用飞书登录。
+
+| `AUTH_MODE` | `AUTH_PROVIDER` | 结果 |
+|---|---|---|
+| 未设置 / 空白 / `legacy` | 未设置 / `local` | `{ mode: "legacy" }` |
+| `enterprise` | `feishu` | `{ mode: "enterprise", provider: "feishu" }`：飞书邮箱验证码登录 |
+| `enterprise` | 未设置 | `{ mode: "enterprise", provider: undefined }`：过渡期，仍走现有企业实现 |
+| `maintenance` | 未设置 | `{ mode: "maintenance" }`：过渡期，保持现状 |
+| 任意（含非法值） | `local`、`feishu` 以外的值 | 以 `INVALID_AUTH_PROVIDER` 拒绝（先校验提供方） |
+| `legacy` / `maintenance` | `feishu` | 以 `INVALID_AUTH_PROVIDER` 拒绝 |
+| `enterprise` | `local` | 以 `INVALID_AUTH_PROVIDER` 拒绝 |
+| `maintenance` | `local` | 以 `INVALID_AUTH_PROVIDER` 拒绝 |
+| 其它值 | 未设置 / `local` / `feishu` | 以 `INVALID_AUTH_MODE` 拒绝 |
+
+取值去掉首尾空白后再判断，空白值视为未设置。错误信息只写键名，不写取值。
+
+**弃用声明（ADR-FSL-13）：** 现有企业模式已弃用，将由本文的飞书邮箱验证码登录取代。弃用范围：`AUTH_MODE=maintenance`、未设置 `AUTH_PROVIDER` 的 `AUTH_MODE=enterprise`、企业认证接口 `/api/auth/enterprise/*`（配对登录与企业 OTP）、飞书事件回调、内部资格接口、collab 企业撤销接口、企业 worker 任务与通讯录同步、admin CLI，以及 20 张 `enterprise_*` 表与 `session` 的企业列。弃用窗口期间（FSL-116 起共 33 个双仓版本）旧企业路径保持可用。自 FSL-132 所在版本起，`AUTH_MODE=enterprise` 但未设置 `AUTH_PROVIDER` 的配置，以及 `AUTH_MODE=maintenance`，都将以配置错误拒绝启动；之后的版本删除现有企业实现。
+
 ## 飞书接口
 
 按邮箱查找成员、读取成员在职状态，都通过 `packages/engine/src/services/feishu/contact.ts` 的 `FeishuContactClient`（FSL-117）完成。两个请求都使用飞书开放平台 Directory v1 接口。不使用 Contact v3，原因有两点：真实租户实测中，Contact v3 的 `users/batch_get_id` 查不到登记在 `enterprise_email` 中的企业邮箱；`users/:open_id` 在当前权限下不返回 `status`（见 `feishu-live-contract-lookup.md`、`feishu-live-contract-member.md`）。

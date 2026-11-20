@@ -23,8 +23,11 @@
 | `NEXT_PUBLIC_MEGA_COLLAB_PUBLIC_URL` | 协作 | 浏览器 WS |
 | `AI_BASE_URL` / `AI_API_KEY` / `AI_MODEL` | Agent | OpenAI-compatible |
 | `AUTH_MODE` | 否 | 认证模式：仅 `legacy` / `enterprise` / `maintenance`；缺省或空白按 `legacy`，其它取值构建失败 |
+| `AUTH_PROVIDER` | 否 | 认证提供方。规则由 `@megaui/core` 的 `resolveAuthMode`（FSL-116）定义：`AUTH_MODE=enterprise` 时为 `feishu`（飞书登录）或在过渡期缺省（仍走现有企业实现），`AUTH_MODE=legacy` 时缺省或为 `local`，`AUTH_MODE=maintenance` 在过渡期只接受缺省；非法的 `AUTH_PROVIDER` 取值或不允许的组合以 `INVALID_AUTH_PROVIDER` 拒绝（先校验提供方），提供方合法而 `AUTH_MODE` 为其它值时以 `INVALID_AUTH_MODE` 拒绝。过渡期（至 FSL-131）允许的「`enterprise` 不设提供方」与「`maintenance`」自 FSL-132 起拒绝。**当前尚无进程读取该键**：由 FSL-121、FSL-126、FSL-128 接入后生效，飞书登录由 FSL-150、FSL-131 启用 |
 | `FEISHU_TENANT_KEY` / `FEISHU_APP_ID` | 飞书 callback | v2 业务信封必须精确匹配的 tenant 与 app 标识 |
 | `FEISHU_EVENT_VERIFICATION_TOKEN` / `FEISHU_EVENT_ENCRYPT_KEY` | 飞书 callback | URL/业务信封 token 校验，以及 raw wire 签名与 AES-256-CBC 解密；仅从部署 secret store 注入 |
+
+> **弃用声明（plan-20261118，ADR-FSL-13）：** 现有企业模式已弃用，弃用范围：`AUTH_MODE=maintenance`、未设置 `AUTH_PROVIDER` 的 `AUTH_MODE=enterprise`、企业认证接口 `/api/auth/enterprise/*`（配对登录与企业 OTP）、飞书事件回调、内部资格接口、collab 企业撤销接口、企业 worker 任务与通讯录同步、admin CLI，以及 20 张 `enterprise_*` 表与 `session` 的企业列。弃用窗口期间（FSL-116 起共 33 个双仓版本）旧企业路径保持可用。现有企业模式将由飞书邮箱验证码登录（`AUTH_MODE=enterprise` + `AUTH_PROVIDER=feishu`）取代。自 FSL-132 所在版本起，`AUTH_MODE=enterprise` 但未设置 `AUTH_PROVIDER`、以及 `AUTH_MODE=maintenance` 都将以配置错误拒绝启动，之后的版本删除现有企业实现。新配置见 [飞书邮箱验证码登录 · 配置](./implementation/feishu-login.md#配置)。
 
 `AUTH_MODE` 由所有进程共享：`enterprise` 缺少当前能力必需配置时拒绝启动，部署持有持久激活标记时拒绝 `legacy`。解析器在 `@megaui/core` 内是纯函数（不读环境、不持 secret），客户端可见配置白名单之外的键默认 server-only；见[企业身份配置合同](./implementation/enterprise-auth.md)。
 
