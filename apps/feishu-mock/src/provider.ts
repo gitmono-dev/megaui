@@ -30,7 +30,7 @@ import {
 import { asyncFaultError, faultError, runFaultDelay, type MockFaultStore, type MockFaultTarget } from "./faults";
 import type { MockLifecycle } from "./lifecycle";
 import { admitMessageInput } from "./message-input";
-import type { MockMessageStore } from "./messages";
+import { messageSuccessResponse, type MockMessageStore } from "./messages";
 import { parseBearer } from "./control";
 import {
   mockError,
@@ -364,7 +364,9 @@ async function handleUserRequest(
  * Delivers a directed message.
  *
  * The request has to pass the tenant validator and the message admission of
- * FSM-20; only then is it written to the inbox of its receiver.
+ * FSM-20; only then is it written to the inbox of its receiver. A success is
+ * answered in the measured real shape (FSL-170), built by
+ * `messageSuccessResponse` for the first and every repeated answer.
  */
 async function handleMessageRequest(
   request: IncomingMessage,
@@ -418,17 +420,8 @@ async function handleMessageRequest(
       sendMockError(response, mockError(5, "mock_uuid_conflict"));
       return;
     }
-    sendMockJson(response, 200, {
-      code: 0,
-      msg: "ok",
-      data: {
-        message_id: recorded.messageId,
-        receive_id: recorded.payload.receive_id,
-        msg_type: recorded.payload.msg_type,
-        content: recorded.payload.content,
-        create_time: recorded.createTime,
-      },
-    });
+    // The same constructor as the first answer, from the same record.
+    sendMockJson(response, 200, messageSuccessResponse(recorded));
     return;
   }
   const admitted = admitMessageInput(body.body, state.users);
@@ -460,17 +453,7 @@ async function handleMessageRequest(
     sendMockError(response, outcome.error);
     return;
   }
-  sendMockJson(response, 200, {
-    code: 0,
-    msg: "ok",
-    data: {
-      message_id: outcome.message.messageId,
-      receive_id: outcome.message.receiveId,
-      msg_type: outcome.message.msgType,
-      content: outcome.message.content,
-      create_time: outcome.message.createTime,
-    },
-  });
+  sendMockJson(response, 200, messageSuccessResponse(outcome.record));
 }
 
 /** Reads and validates the query of the directory route. */

@@ -70,11 +70,15 @@ interface ProviderMessageEnvelope {
   readonly data?: unknown;
 }
 
+/**
+ * The fields of a successful send that the client reads (FSL-165 Q4).
+ *
+ * The real response has no `receive_id` and carries the text under
+ * `body.content`, re-serialized by the provider, so neither is compared.
+ */
 interface ProviderMessageData {
   readonly message_id?: unknown;
-  readonly receive_id?: unknown;
   readonly msg_type?: unknown;
-  readonly content?: unknown;
 }
 
 /**
@@ -170,7 +174,7 @@ export class FeishuMessageClient {
           },
         },
       );
-      const message = readMessageResponse(envelope, input.boundOpenId, content);
+      const message = readMessageResponse(envelope);
       if (!message) {
         return {
           kind: "rejected",
@@ -197,26 +201,22 @@ export function createFeishuMessageClient(
   return new FeishuMessageClient(options);
 }
 
+/**
+ * Reads an HTTP 200 answer the transport let through (ADR-FSL-11, FSL-165 Q4).
+ *
+ * The three conditions are sufficient: `code` is the number 0, `message_id`
+ * is non-blank text and `msg_type` is `text`. A non-zero numeric `code` never
+ * reaches this point, because the transport throws for it; a missing or
+ * non-numeric `code` does, and is an invalid response.
+ */
 function readMessageResponse(
   envelope: ProviderMessageEnvelope,
-  expectedReceiveId: string,
-  expectedContent: string,
 ): { messageId: string } | undefined {
-  if (
-    !envelope ||
-    envelope.code !== 0 ||
-    typeof envelope.msg !== "string" ||
-    !isRecord(envelope.data)
-  ) {
+  if (!isRecord(envelope) || envelope.code !== 0 || !isRecord(envelope.data)) {
     return undefined;
   }
   const data = envelope.data as ProviderMessageData;
-  if (
-    !isNonBlankText(data.message_id) ||
-    data.receive_id !== expectedReceiveId ||
-    data.msg_type !== FEISHU_MESSAGE_TYPE ||
-    data.content !== expectedContent
-  ) {
+  if (!isNonBlankText(data.message_id) || data.msg_type !== FEISHU_MESSAGE_TYPE) {
     return undefined;
   }
   return { messageId: data.message_id };

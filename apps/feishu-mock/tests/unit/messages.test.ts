@@ -101,12 +101,12 @@ describe("directed messages and the uuid ledger (FSM-10)", () => {
     expect(response.status).toBe(200);
     const payload = JSON.parse(response.body) as {
       code: number;
-      data: { message_id: string; receive_id: string; msg_type: string; content: string };
+      data: { message_id: string; msg_type: string; chat_id: string; body: { content: string } };
     };
     expect(payload.code).toBe(0);
-    expect(payload.data.receive_id).toBe("ou_mock_alice");
+    expect(payload.data.chat_id).toBe("oc_ou_mock_alice");
     expect(payload.data.msg_type).toBe("text");
-    expect(payload.data.content).toBe(JSON.stringify({ text: "hello" }));
+    expect(JSON.parse(payload.data.body.content)).toEqual({ text: "hello" });
     expect(payload.data.message_id.length).toBeGreaterThan(0);
 
     const state = await call(listener!.baseUrl, "/__mock/state", { headers: bearer(ADMIN_TOKEN) });
@@ -304,5 +304,177 @@ describe("directed messages and the uuid ledger (FSM-10)", () => {
     });
     expect(badContent.status).toBe(400);
     expect(JSON.parse(badContent.body)).toEqual({ code: 1, msg: "mock_content_invalid" });
+  });
+});
+
+interface SuccessAnswer {
+  code: unknown;
+  msg: unknown;
+  data: Record<string, unknown> & {
+    body?: { content?: unknown };
+    sender?: Record<string, unknown>;
+  };
+}
+
+/** Sends one message on a fresh listener and returns the request and answer. */
+async function sendOnce(
+  text = "hello",
+  uuid = "uuid-shape",
+): Promise<{ sentContent: string; answer: SuccessAnswer; status: number }> {
+  await startListener();
+  const token = await issueToken();
+  const body = message(uuid, text);
+  const response = await call(listener!.baseUrl, MESSAGE_PATH, {
+    method: "POST",
+    headers: bearer(token),
+    body,
+  });
+  return {
+    sentContent: (JSON.parse(body) as { content: string }).content,
+    answer: JSON.parse(response.body) as SuccessAnswer,
+    status: response.status,
+  };
+}
+
+describe("the success answer follows the measured real shape (FSL-170)", () => {
+  it("answers code 0 on the first send", async () => {
+    const { status, answer } = await sendOnce();
+    expect(status).toBe(200);
+    expect(answer.code).toBe(0);
+  });
+
+  it("answers msg success on the first send", async () => {
+    const { answer } = await sendOnce();
+    expect(answer.msg).toBe("success");
+  });
+
+  it("answers a non-empty string data.message_id", async () => {
+    const { answer } = await sendOnce();
+    expect(typeof answer.data.message_id).toBe("string");
+    expect(String(answer.data.message_id).length).toBeGreaterThan(0);
+  });
+
+  it("answers data.msg_type text", async () => {
+    const { answer } = await sendOnce();
+    expect(answer.data.msg_type).toBe("text");
+  });
+
+  it("answers a string data.body.content", async () => {
+    const { answer } = await sendOnce();
+    expect(typeof answer.data.body?.content).toBe("string");
+  });
+
+  it("answers a data.body.content that is not byte-identical to the request content", async () => {
+    const ascii = await sendOnce("hello", "uuid-ascii");
+    expect(ascii.answer.data.body?.content).not.toBe(ascii.sentContent);
+    expect(JSON.parse(String(ascii.answer.data.body?.content))).toEqual(JSON.parse(ascii.sentContent));
+    await listener!.close();
+    listener = undefined;
+    const chinese = await sendOnce("企业登录验证码：2ABCD4EF", "uuid-chinese");
+    expect(chinese.answer.data.body?.content).not.toBe(chinese.sentContent);
+    expect(JSON.parse(String(chinese.answer.data.body?.content))).toEqual(JSON.parse(chinese.sentContent));
+  });
+
+  it("answers a string data.chat_id", async () => {
+    const { answer } = await sendOnce();
+    expect(typeof answer.data.chat_id).toBe("string");
+  });
+
+  it("answers a string data.create_time", async () => {
+    const { answer } = await sendOnce();
+    expect(typeof answer.data.create_time).toBe("string");
+  });
+
+  it("answers a string data.update_time", async () => {
+    const { answer } = await sendOnce();
+    expect(typeof answer.data.update_time).toBe("string");
+  });
+
+  it("answers a string data.sender.id", async () => {
+    const { answer } = await sendOnce();
+    expect(typeof answer.data.sender?.id).toBe("string");
+  });
+
+  it("answers a string data.sender.id_type", async () => {
+    const { answer } = await sendOnce();
+    expect(typeof answer.data.sender?.id_type).toBe("string");
+  });
+
+  it("answers a string data.sender.sender_type", async () => {
+    const { answer } = await sendOnce();
+    expect(typeof answer.data.sender?.sender_type).toBe("string");
+  });
+
+  it("answers a string data.sender.tenant_key", async () => {
+    const { answer } = await sendOnce();
+    expect(typeof answer.data.sender?.tenant_key).toBe("string");
+  });
+
+  it("answers a boolean data.deleted", async () => {
+    const { answer } = await sendOnce();
+    expect(typeof answer.data.deleted).toBe("boolean");
+  });
+
+  it("answers a boolean data.updated", async () => {
+    const { answer } = await sendOnce();
+    expect(typeof answer.data.updated).toBe("boolean");
+  });
+
+  it("answers without data.receive_id", async () => {
+    const { answer } = await sendOnce();
+    expect(Object.hasOwn(answer.data, "receive_id")).toBe(false);
+  });
+
+  it("answers without a top-level data.content", async () => {
+    const { answer } = await sendOnce();
+    expect(Object.hasOwn(answer.data, "content")).toBe(false);
+  });
+
+  it("answers the same message_id for the same uuid and payload", async () => {
+    const { answer } = await sendOnce("hello", "uuid-replay");
+    const token = await issueToken();
+    const repeated = await call(listener!.baseUrl, MESSAGE_PATH, {
+      method: "POST",
+      headers: bearer(token),
+      body: message("uuid-replay", "hello"),
+    });
+    expect((JSON.parse(repeated.body) as SuccessAnswer).data.message_id).toBe(answer.data.message_id);
+  });
+
+  it("answers a repeated request with a body deeply equal to the first answer", async () => {
+    const { answer } = await sendOnce("企业登录验证码：2ABCD4EF", "uuid-replay-body");
+    const token = await issueToken();
+    const repeated = await call(listener!.baseUrl, MESSAGE_PATH, {
+      method: "POST",
+      headers: bearer(token),
+      body: message("uuid-replay-body", "企业登录验证码：2ABCD4EF"),
+    });
+    expect(repeated.status).toBe(200);
+    expect(JSON.parse(repeated.body)).toEqual(answer);
+  });
+
+  it("keeps exactly one message in the inbox after a repeated request", async () => {
+    await sendOnce("hello", "uuid-replay-inbox");
+    const token = await issueToken();
+    await call(listener!.baseUrl, MESSAGE_PATH, {
+      method: "POST",
+      headers: bearer(token),
+      body: message("uuid-replay-inbox", "hello"),
+    });
+    const state = await call(listener!.baseUrl, "/__mock/state", { headers: bearer(ADMIN_TOKEN) });
+    const view = JSON.parse(state.body) as { data: { inboxes: Record<string, unknown[]> } };
+    expect(view.data.inboxes.ou_mock_alice).toHaveLength(1);
+  });
+
+  it("still refuses the same uuid with another payload as mock_uuid_conflict", async () => {
+    await sendOnce("hello", "uuid-replay-conflict");
+    const token = await issueToken();
+    const conflict = await call(listener!.baseUrl, MESSAGE_PATH, {
+      method: "POST",
+      headers: bearer(token),
+      body: message("uuid-replay-conflict", "another text"),
+    });
+    expect(conflict.status).toBe(409);
+    expect(JSON.parse(conflict.body)).toEqual({ code: 5, msg: "mock_uuid_conflict" });
   });
 });

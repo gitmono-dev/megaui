@@ -87,6 +87,24 @@ work_info.staff_status
   - 缺少 `Authorization`：HTTP 400，`code=99991661`。
   - 伪造 token：HTTP 400，`code=99991663`。
 
+### 发送验证码私聊
+
+验证码通过 `packages/engine/src/services/enterprise/feishu/message.ts` 的 `FeishuMessageClient` 发送：`POST /open-apis/im/v1/messages?receive_id_type=open_id`，请求体为 `{ receive_id, msg_type: "text", content, uuid }`，同一次投递的重试复用同一 `uuid` 与同一载荷。
+
+发送成功判据（FSL-170，按 `feishu-live-contract-message.md` Q4 的实测）：传输层放行的 2xx 响应（传输层只对 `response.ok` 的响应解析业务体，客户端不再单独检查状态码）同时满足以下三条，即判为 `accepted`，`messageId` 取 `data.message_id`：
+
+- `code` 为数字 `0`；
+- `data.message_id` 为非空白字符串；
+- `data.msg_type` 为 `"text"`。
+
+这三条是充分条件，不比对回显：不要求 `msg`，不要求 `data.receive_id`（真实响应没有该字段），也不比对正文（真实正文位于 `data.body.content`，经服务端重新序列化，与发送的 `content` 不逐字节相等）。
+
+失败分类：
+
+- HTTP 2xx 以外的响应，以及 2xx 且 `code` 为非零数字，由传输层抛出 `FeishuTransportError`，映射为 `rejected`（`permission` / `provider`，带 `status` 与 `businessCode`）或 `unknown`（超时、暂时性失败）。
+- 传输层放行、但 `code` 缺失或不是数字 `0`，或 `data.message_id`、`data.msg_type` 不满足上述条件时，返回 `rejected`（`invalid_response`）。
+- token 失败、传输失败的分类与同一 UUID 重试不受该判据影响。
+
 ### 未实测分支
 
 以下分支无法在单人测试租户上构造，依据为官方文档（<https://open.feishu.cn/document/directory-v1/employee/search>、<https://open.feishu.cn/document/directory-v1/employee/mget>，2026-11-19 核对）与 `contact.test.ts` 中的替身用例，标为「未实测，按文档 + 替身」：

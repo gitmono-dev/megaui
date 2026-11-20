@@ -140,7 +140,9 @@
 
 - `POST /open-apis/im/v1/messages?receive_id_type=open_id`（provider Bearer）按成员定向投递。请求必须带 `receive_id_type=open_id`（缺省报 `mock_id_type_required`，写成别的值报 `mock_id_type_invalid`），body 为 `{receive_id,msg_type,content,uuid}`，未知字段拒绝。
 - 请求先过 FSM-02 的 tenant validator，再过 FSM-20 的准入判定，两者都通过才写入收件人的 inbox。
-- 成功响应是 provider 形状：`{"code":0,"msg":"ok","data":{"message_id":…,"receive_id":…,"msg_type":…,"content":…,"create_time":…}}`。`message_id` 由 `(app_id, uuid)` 稳定派生，同一个 uuid 永远是同一个 id。
+- 成功响应采用 FSL-165 Q4 实测的真实形状（FSL-170）：`{"code":0,"msg":"success","data":{"message_id":…,"msg_type":"text","body":{"content":…},"chat_id":"oc_<receive_id>","create_time":…,"update_time":…,"deleted":false,"updated":false,"sender":{"id":"cli_mock_megaui","id_type":"app_id","sender_type":"app","tenant_key":"tenant_mock_megaui"}}}`。不含 `data.receive_id`，也不含顶层 `data.content`；`sender` 取 Mock 固定值，`update_time` 等于 `create_time`。`message_id` 由 `(app_id, uuid)` 稳定派生，同一个 uuid 永远是同一个 id。
+- `data.body.content` 是请求 `content` 的确定性重新序列化，文本相同但与请求原文不逐字节相等：先紧凑序列化并把非 ASCII 字符转义为 `\uXXXX`；若结果仍与原文相同（ASCII 文本恰以该形式发送），改用一空格缩进的形式。
+- 首次应答与同一 uuid 的台账应答由同一构造函数 `messageSuccessResponse` 从同一条账本记录生成，两者深相等。
 - uuid 账本以 `(app_id, uuid)` 为键：同一 uuid 的同一规范载荷返回原结果且不新增 inbox 条目；同一 uuid 的不同规范载荷返回 `409 {"code":5,"msg":"mock_uuid_conflict"}`。
 - 成员 inbox 上限 100 条，满额时拒绝新消息：`429 {"code":6,"msg":"mock_inbox_full"}`；但既有 uuid 的同载荷重试仍返回原结果。
 - 账本保留到本 run reset 或进程结束，token 到期不释放它。消息与 uuid store 已注册到 reset，重置后 inbox 与账本都为空。

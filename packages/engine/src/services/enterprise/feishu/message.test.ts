@@ -47,6 +47,41 @@ function json(response: ServerResponse, status: number, payload: unknown): void 
   response.end(JSON.stringify(payload));
 }
 
+/**
+ * Re-serializes a sent content the way the provider does: the answer carries
+ * the same text, but not byte-identical to what was sent (FSL-165 Q4).
+ */
+function reserialized(content: unknown): string {
+  return JSON.stringify(JSON.parse(String(content))).replace(
+    /[\u0080-\uffff]/g,
+    (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`,
+  );
+}
+
+/** The measured success shape: no `receive_id`, no top-level `content`. */
+function realSuccess(messageId: string, content: unknown): Record<string, unknown> {
+  return {
+    code: 0,
+    msg: "success",
+    data: {
+      message_id: messageId,
+      msg_type: "text",
+      body: { content: reserialized(content) },
+      chat_id: "oc_chat_alice",
+      create_time: "1763500000000",
+      update_time: "1763500000000",
+      deleted: false,
+      updated: false,
+      sender: {
+        id: "cli_app_test",
+        id_type: "app_id",
+        sender_type: "app",
+        tenant_key: "tenant-test",
+      },
+    },
+  };
+}
+
 function transportFor(origin: string, budgetMs = 20_000): FeishuTransport {
   const target = admitProvider({
     enabled: true,
@@ -103,16 +138,7 @@ describe("application-bot direct messages (FS-12)", () => {
         expect(content.text).toContain(TRUSTED_SITE);
         expect(content.text).toContain(INPUT.code);
         expect(request.headers.authorization).toBe("Bearer tenant-token");
-        json(response, 200, {
-          code: 0,
-          msg: "ok",
-          data: {
-            message_id: "om-message-1",
-            receive_id: INPUT.boundOpenId,
-            msg_type: "text",
-            content: parsed.content,
-          },
-        });
+        json(response, 200, realSuccess("om-message-1", parsed.content));
         return;
       }
       json(response, 404, { code: 1, msg: "not_found" });
@@ -135,16 +161,7 @@ describe("application-bot direct messages (FS-12)", () => {
         return;
       }
       const parsed = JSON.parse(body) as Record<string, unknown>;
-      json(response, 200, {
-        code: 0,
-        msg: "ok",
-        data: {
-          message_id: `om-${String(parsed.uuid)}`,
-          receive_id: parsed.receive_id,
-          msg_type: parsed.msg_type,
-          content: parsed.content,
-        },
-      });
+      json(response, 200, realSuccess(`om-${String(parsed.uuid)}`, parsed.content));
     });
     const transport = transportFor(server.origin);
     const tokenManager = new FeishuTokenManager({ transport });
@@ -169,16 +186,7 @@ describe("application-bot direct messages (FS-12)", () => {
         return;
       }
       const parsed = JSON.parse(body) as Record<string, unknown>;
-      json(response, 200, {
-        code: 0,
-        msg: "ok",
-        data: {
-          message_id: "om-message-retry",
-          receive_id: parsed.receive_id,
-          msg_type: parsed.msg_type,
-          content: parsed.content,
-        },
-      });
+      json(response, 200, realSuccess("om-message-retry", parsed.content));
       void request;
     });
 
@@ -214,6 +222,126 @@ describe("application-bot direct messages (FS-12)", () => {
     server = await startServer((_request, response) => {
       json(response, 200, { code: 0, msg: "ok", data: { message_id: "" } });
     });
+    const result = await clientFor(server.origin).send(INPUT);
+    expect(result).toEqual({ kind: "rejected", uuid: INPUT.uuid, reason: "invalid_response" });
+  });
+});
+
+/** Answers every message request with the given HTTP 200 body. */
+async function answerWith(
+  build: (parsed: Record<string, unknown>) => unknown,
+): Promise<TestServer> {
+  return startServer((_request, response, body) => {
+    json(response, 200, build(JSON.parse(body) as Record<string, unknown>));
+  });
+}
+
+describe("send result follows the measured provider response (FSL-170)", () => {
+  it("accepts a success without data.receive_id", async () => {
+    let answered: Record<string, unknown> | undefined;
+    server = await answerWith((parsed) => {
+      answered = realSuccess("om-no-receive-id", parsed.content);
+      return answered;
+    });
+    const result = await clientFor(server.origin).send(INPUT);
+    expect((answered!.data as Record<string, unknown>).receive_id).toBeUndefined();
+    expect(result.kind).toBe("accepted");
+  });
+
+  it("accepts a success whose text is only under data.body.content", async () => {
+    let answered: Record<string, unknown> | undefined;
+    server = await answerWith((parsed) => {
+      answered = realSuccess("om-body-content", parsed.content);
+      return answered;
+    });
+    const result = await clientFor(server.origin).send(INPUT);
+    const data = answered!.data as { content?: unknown; body: { content: unknown } };
+    expect(data.content).toBeUndefined();
+    expect(typeof data.body.content).toBe("string");
+    expect(result.kind).toBe("accepted");
+  });
+
+  it("accepts a success whose data.body.content is not byte-identical to the sent content", async () => {
+    let sent: unknown;
+    let answered: Record<string, unknown> | undefined;
+    server = await answerWith((parsed) => {
+      sent = parsed.content;
+      answered = realSuccess("om-reserialized", parsed.content);
+      return answered;
+    });
+    const result = await clientFor(server.origin).send(INPUT);
+    const data = answered!.data as { body: { content: string } };
+    expect(data.body.content).not.toBe(sent);
+    expect(JSON.parse(data.body.content)).toEqual(JSON.parse(String(sent)));
+    expect(result.kind).toBe("accepted");
+  });
+
+  it("returns data.message_id as the messageId of an accepted result", async () => {
+    server = await answerWith((parsed) => realSuccess("om-the-provider-id", parsed.content));
+    const result = await clientFor(server.origin).send(INPUT);
+    expect(result).toEqual({ kind: "accepted", uuid: INPUT.uuid, messageId: "om-the-provider-id" });
+  });
+
+  it("accepts code 0 with only a non-blank message_id and msg_type text", async () => {
+    server = await answerWith(() => ({ code: 0, data: { message_id: "om-minimal", msg_type: "text" } }));
+    const result = await clientFor(server.origin).send(INPUT);
+    expect(result).toEqual({ kind: "accepted", uuid: INPUT.uuid, messageId: "om-minimal" });
+  });
+
+  it("rejects an HTTP 200 answer without code as invalid_response", async () => {
+    server = await answerWith((parsed) => {
+      const answer = realSuccess("om-no-code", parsed.content);
+      delete answer.code;
+      return answer;
+    });
+    const result = await clientFor(server.origin).send(INPUT);
+    expect(result).toEqual({ kind: "rejected", uuid: INPUT.uuid, reason: "invalid_response" });
+  });
+
+  it("rejects an HTTP 200 answer whose code is not a number as invalid_response", async () => {
+    server = await answerWith((parsed) => ({ ...realSuccess("om-string-code", parsed.content), code: "0" }));
+    const result = await clientFor(server.origin).send(INPUT);
+    expect(result).toEqual({ kind: "rejected", uuid: INPUT.uuid, reason: "invalid_response" });
+  });
+
+  it("rejects an HTTP 200 answer with a non-zero numeric code as a provider refusal", async () => {
+    server = await answerWith(() => ({ code: 230002, msg: "bot can not be used" }));
+    const result = await clientFor(server.origin).send(INPUT);
+    expect(result).toEqual({
+      kind: "rejected",
+      uuid: INPUT.uuid,
+      reason: "provider",
+      status: 200,
+      businessCode: 230002,
+    });
+  });
+
+  it("rejects code 0 without data.message_id as invalid_response", async () => {
+    server = await answerWith(() => ({ code: 0, msg: "success", data: { msg_type: "text" } }));
+    const result = await clientFor(server.origin).send(INPUT);
+    expect(result).toEqual({ kind: "rejected", uuid: INPUT.uuid, reason: "invalid_response" });
+  });
+
+  it("rejects code 0 with a non-string data.message_id as invalid_response", async () => {
+    server = await answerWith(() => ({ code: 0, msg: "success", data: { message_id: 42, msg_type: "text" } }));
+    const result = await clientFor(server.origin).send(INPUT);
+    expect(result).toEqual({ kind: "rejected", uuid: INPUT.uuid, reason: "invalid_response" });
+  });
+
+  it("rejects code 0 with a blank data.message_id as invalid_response", async () => {
+    server = await answerWith(() => ({ code: 0, msg: "success", data: { message_id: "  \t", msg_type: "text" } }));
+    const result = await clientFor(server.origin).send(INPUT);
+    expect(result).toEqual({ kind: "rejected", uuid: INPUT.uuid, reason: "invalid_response" });
+  });
+
+  it("rejects code 0 without data.msg_type as invalid_response", async () => {
+    server = await answerWith(() => ({ code: 0, msg: "success", data: { message_id: "om-no-type" } }));
+    const result = await clientFor(server.origin).send(INPUT);
+    expect(result).toEqual({ kind: "rejected", uuid: INPUT.uuid, reason: "invalid_response" });
+  });
+
+  it("rejects code 0 with a data.msg_type other than text as invalid_response", async () => {
+    server = await answerWith(() => ({ code: 0, msg: "success", data: { message_id: "om-post", msg_type: "post" } }));
     const result = await clientFor(server.origin).send(INPUT);
     expect(result).toEqual({ kind: "rejected", uuid: INPUT.uuid, reason: "invalid_response" });
   });
