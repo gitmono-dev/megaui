@@ -20,6 +20,11 @@
 // - `voidReservation` has the same shape and turns this row `void`;
 // - `voidRejectedSend` writes back a send that Feishu rejected on every attempt: a
 //   conditional update that only voids the row while it is still `active` and unexpired.
+//
+// Outside those transactions, `cleanupFeishuLoginCodes` (FSL-146) is the expiry cleanup that the
+// engine scheduler runs on every Web instance: one statement that voids the expired `reserved`
+// and `active` rows, clearing their sensitive fields, and deletes the rows created more than 24
+// hours ago.
 import { createHmac, randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 
@@ -436,4 +441,94 @@ export function createFeishuLoginCodeStore(pool: Pool): FeishuLoginCodeStore {
       });
     },
   };
+}
+
+/** A row created more than this many seconds ago is deleted by the cleanup (FSL-146). */
+export const FEISHU_LOGIN_CODE_RETENTION_SECONDS = 24 * 60 * 60;
+/**
+ * The cleanup waits at most this long for each row lock held by another transaction (the
+ * PostgreSQL `lock_timeout`, per lock acquisition, not cumulative); past it the run fails (and is
+ * retried by the next period) instead of hanging behind a stuck transaction.
+ */
+export const FEISHU_LOGIN_CLEANUP_LOCK_TIMEOUT_MS = 10_000;
+
+export interface FeishuLoginCleanupOptions {
+  /**
+   * The instant the cleanup decides against. Defaults to the database clock
+   * (`clock_timestamp()`, the clock every `expires_at` and `created_at` is written with); only
+   * tests inject it.
+   */
+  readonly now?: Date;
+  /** Overrides `FEISHU_LOGIN_CLEANUP_LOCK_TIMEOUT_MS`; only tests shorten it. */
+  readonly lockTimeoutMs?: number;
+}
+
+export interface FeishuLoginCleanupResult {
+  /** Expired `reserved` or `active` rows turned `void`, their sensitive fields cleared. */
+  readonly voided: number;
+  /** Rows created more than `FEISHU_LOGIN_CODE_RETENTION_SECONDS` ago, deleted. */
+  readonly deleted: number;
+}
+
+/**
+ * The expiry cleanup of `feishu_login_codes` (FSL-146, ADR-FSL-11 "本地数据与清理"), one
+ * transaction holding one statement:
+ * - a `reserved` or `active` row whose `expires_at` has passed (`expires_at <= now`) turns
+ *   `void` and its email, open_id, name and code HMAC are cleared in the same write;
+ * - a row created more than 24 hours ago (`created_at < now - 24h`), whatever its state, is
+ *   deleted.
+ * The two sets are disjoint by `created_at`, so no row is both updated and deleted.
+ *
+ * Every instance runs it on its own and it is idempotent. The due rows are locked in id order
+ * (`order by id for update`), the same order in which an activation locks the rows of one email
+ * (every other writer of the table locks a single row), so the cleanup never deadlocks with a
+ * login transaction or with another cleanup. A row another transaction holds is waited for (at
+ * most `FEISHU_LOGIN_CLEANUP_LOCK_TIMEOUT_MS`) rather than skipped, so a due row is handled by
+ * this run as soon as that transaction ends: once locked, each candidate is re-checked against
+ * its newest version (READ COMMITTED), so a row consumed, voided or deleted meanwhile (by a
+ * login or by a concurrent cleanup) is left alone and counted by nobody twice.
+ */
+export async function cleanupFeishuLoginCodes(
+  pool: Pool,
+  options: FeishuLoginCleanupOptions = {},
+): Promise<FeishuLoginCleanupResult> {
+  const now = options.now;
+  if (now !== undefined && !(now instanceof Date && Number.isFinite(now.getTime()))) {
+    throw new Error("INVALID_FEISHU_LOGIN_CLEANUP_NOW");
+  }
+  const lockTimeoutMs = options.lockTimeoutMs ?? FEISHU_LOGIN_CLEANUP_LOCK_TIMEOUT_MS;
+  if (!Number.isSafeInteger(lockTimeoutMs) || lockTimeoutMs < 1) {
+    throw new Error("INVALID_FEISHU_LOGIN_CLEANUP_LOCK_TIMEOUT");
+  }
+  return inTransaction(pool, async (client) => {
+    await client.query("select set_config('lock_timeout', $1, true)", [`${lockTimeoutMs}ms`]);
+    const result = await client.query<{ voided: number; deleted: number }>(
+      `with t as (
+         select coalesce($1::timestamptz, clock_timestamp()) as at
+       ), due as (
+         select c.id, c.created_at < t.at - make_interval(secs => $2::int) as stale
+           from feishu_login_codes c, t
+          where c.created_at < t.at - make_interval(secs => $2::int)
+             or (c.state in ('reserved', 'active') and c.expires_at <= t.at)
+          order by c.id
+            for update of c
+       ), voided as (
+         update feishu_login_codes c
+            set state = 'void', email = null, open_id = null, display_name = null, code_hmac = null
+           from due
+          where c.id = due.id and not due.stale and c.state in ('reserved', 'active')
+         returning c.id
+       ), deleted as (
+         delete from feishu_login_codes c
+          using due
+          where c.id = due.id and due.stale
+         returning c.id
+       )
+       select (select count(*) from voided)::int as voided,
+              (select count(*) from deleted)::int as deleted`,
+      [now === undefined ? null : now.toISOString(), FEISHU_LOGIN_CODE_RETENTION_SECONDS],
+    );
+    const row = result.rows[0];
+    return { voided: row?.voided ?? 0, deleted: row?.deleted ?? 0 };
+  });
 }
