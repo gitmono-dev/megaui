@@ -16,14 +16,24 @@
  * only, default window and maximum) counts every verify request, malformed ones included, and its
  * 429 comes before anything the plugin answers. `onRequest` then answers a malformed verify body
  * (another media type, over 4 KiB, not JSON, not exactly `{ "code": <8 characters> }`) 400 before
- * the framework parses it; only an admissible one reaches the endpoint, which answers 401 or 200.
+ * the framework parses it; only an admissible one reaches the endpoint (its answers are listed in
+ * `verify.ts`).
+ *
+ * FSL-161: when the `verify` option is passed, one key check (`createFeishuLoginKeyCheck`, built
+ * from that option's pool, app ID and key) runs in both endpoints: a request, after its 400 and
+ * before `reserve`, and a verify, after its 400 and before any code row is read; a mismatch or a
+ * failed check answers 503 `{ "status": "unavailable" }`. Without the `verify` option the plugin
+ * holds no database pool and no key, registers no endpoint that consumes a code or creates an
+ * account, and runs no key check.
  */
 import type { BetterAuthPlugin } from "better-auth";
 import { createAuthEndpoint } from "better-auth/api";
 
 import {
   admitFeishuLoginRequest,
+  createFeishuLoginKeyCheck,
   FEISHU_LOGIN_RETRY_BODY,
+  FEISHU_LOGIN_UNAVAILABLE_BODY,
   precheckFeishuLoginHttpRequest,
   reserveFeishuLoginIssue,
   scheduleFeishuLoginDelivery,
@@ -129,6 +139,9 @@ export function feishuLogin(options: FeishuLoginPluginOptions): BetterAuthPlugin
   const issue = options.issue;
   const log = options.log ?? defaultLog;
   const verify = options.verify === undefined ? undefined : readFeishuLoginVerifyOptions(options.verify);
+  // FSL-161: one key check per plugin instance, shared by both endpoints (its consistent result
+  // is kept for the life of the instance).
+  const keyCheck = verify === undefined ? undefined : createFeishuLoginKeyCheck(verify);
   return {
     id: FEISHU_LOGIN_PLUGIN_ID,
     version: "1",
@@ -162,6 +175,12 @@ export function feishuLogin(options: FeishuLoginPluginOptions): BetterAuthPlugin
           ctx.setStatus(400);
           return ctx.json(outcome.body);
         }
+        // FSL-161: a key fingerprint that differs from the stored one, or a failed check, answers
+        // 503 unavailable before anything is reserved: no cookie, no reservation, no delivery.
+        if (keyCheck !== undefined && !(await keyCheck(log))) {
+          ctx.setStatus(503);
+          return ctx.json(FEISHU_LOGIN_UNAVAILABLE_BODY);
+        }
         // FSL-154: the reservation of this flow commits before the answer; once it has, every
         // earlier code of the flow is invalid. A failed reservation (usually rolled back; its
         // outcome is unknown only when the connection fails during the commit) answers 503
@@ -184,7 +203,7 @@ export function feishuLogin(options: FeishuLoginPluginOptions): BetterAuthPlugin
         ctx.setStatus(202);
         return ctx.json(outcome.body);
       }),
-      ...(verify === undefined
+      ...(verify === undefined || keyCheck === undefined
         ? {}
         : {
             feishuLoginVerify: createAuthEndpoint(FEISHU_LOGIN_VERIFY_PATH, {
@@ -196,6 +215,7 @@ export function feishuLogin(options: FeishuLoginPluginOptions): BetterAuthPlugin
               const outcome = await verifyFeishuLoginCode(
                 ctx,
                 verify,
+                keyCheck,
                 ctx.body,
                 headers?.get("cookie"),
                 headers?.get("content-type"),

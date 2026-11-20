@@ -301,6 +301,7 @@ FSL-154 起上述用例中断言已授予或正在等待的咨询锁集合的，
 | 情形 | 状态码 | 响应体 | flow Cookie | 签发端口 |
 |---|---|---|---|---|
 | 媒体类型不恰为 `application/json`；请求体超过 4096 字节、为空或不是合法 JSON；请求体不是恰含 `email` 一个字段的对象；或 `email` 不是字符串、规范化后为空、缺少 `@`、超过 254 个字符、含内部空白或其它不符合语法 | 400 | `{ "code": "INVALID_INPUT" }` | 不设置 | 都不调用 |
+| 合法邮箱，密钥指纹与已存值不同或检查失败（FSL-161，仅在传入 `verify` 选项时检查，见「数据」的「密钥一致性检查」） | 503 | `{ "status": "unavailable" }` | 不设置 | 都不调用 |
 | 合法邮箱，`reserve` 拒绝或同步抛错（预约事务失败，含唯一冲突，FSL-154） | 503 | `{ "status": "retry" }` | 不设置 | `reserve` 已调用，`deliver` 不调用 |
 | 合法邮箱，`reserve` 成功（含被冷却或预算拒绝），请求不带有效 flow Cookie | 202 | `{ "status": "accepted" }` | 签发新 flow | `reserve` 在 `auth.handler` 确定响应之前完成，`deliver` 在响应确定之后调用（见下文「签发端口」） |
 | 合法邮箱，`reserve` 成功（含被冷却或预算拒绝），请求带有效 flow Cookie | 202 | `{ "status": "accepted" }` | 以同一值重新设置 | `reserve` 在 `auth.handler` 确定响应之前完成，`deliver` 在响应确定之后调用（见下文「签发端口」） |
@@ -316,7 +317,7 @@ FSL-154 起上述用例中断言已授予或正在等待的咨询锁集合的，
 - **`reserve({ flowHash, email })`**：只访问数据库的预约事务（作废本 flow 最新行、冷却与预算判定、写入预约，见「发码」的「flow 绑定」）。端点在校验输入、确定 flow 之后等待它完成，`auth.handler` 只在它兑现（即预约事务已提交，含被冷却或预算拒绝）之后才返回 202；它的返回值不被端点读取，原样交给 `deliver`。它拒绝或同步抛错时返回 503 `{ "status": "retry" }`、不设置 Cookie、不调用 `deliver`，只输出稳定日志键 `FEISHU_LOGIN_RESERVE_FAILED`（不输出错误对象、邮箱或 flow）；用户重试即可。拒绝通常意味着预约事务已回滚、数据库未改变（含唯一冲突的 `FEISHU_LOGIN_RESERVE_RETRY`）；只有在提交阶段连接中断时提交结果未知，此时作废与预约可能已经提交，503 不保证数据库未改变（重试同样先作废该 flow 的最新行）。engine 的 `reserveFeishuLoginCode` 在事务提交之后不再抛错：被冷却或预算拒绝时输出日志键失败（日志函数抛错）被忽略，结果照常兑现，request 照常返回 202。
 - **`deliver(reservation)`**：飞书查询、激活与私聊。端点在 202 的响应确定之后以 `setImmediate` 把它排到当前同步执行段之后，在同一 Node 进程内异步执行，请求不等待其结果：`auth.handler` 返回的 `Response` 在 `deliver` 被调用之前已经完整确定（状态码、响应体与 Cookie 都不依赖 `deliver`）。本插件的保证止于 `auth.handler` 的边界：响应字节何时写到客户端由宿主服务器（FSL-150 的 Next 路由）决定，`deliver` 调用可能早于字节写出，但不能改变已经确定的响应。`deliver` 的返回值不被读取；它拒绝或同步抛错时只输出稳定日志键 `FEISHU_LOGIN_ISSUE_FAILED`，请求仍为 202。进程在 `deliver` 执行前退出时本次验证码不会发出，用户重新请求即可（ADR-FSL-11）。
 
-两个日志键默认经 `console.warn` 输出；日志函数本身抛错时被吞掉，不产生未处理的 Promise 拒绝。
+两个日志键与密钥检查的 `FEISHU_LOGIN_KEY_MISMATCH` 默认经 `console.warn` 输出；日志函数本身抛错时被吞掉，不产生未处理的 Promise 拒绝。
 
 请求路径不访问飞书、不查询账号或身份，因此已知、未知与多人邮箱的状态码、响应体与 Cookie 属性相同（202 与 503 两种结果各自如此）；带同一 flow Cookie 时 `Set-Cookie` 逐字节相同。响应前只做数据库预约（FSL-154），其工作量与锁序列不依赖前次请求的飞书结果，耗时随数据库负载与锁等待波动，不承诺严格常数时间。
 
@@ -331,6 +332,7 @@ FSL-154 起上述用例中断言已授予或正在等待的咨询锁集合的，
 | 情形 | 状态码 | 响应体 | 会话 Cookie | 验证码行 |
 |---|---|---|---|---|
 | 媒体类型不恰为 `application/json`；请求体超过 4096 字节、为空或不是合法 JSON；请求体不是恰含 `code` 一个字段的对象；或 `code` 不符合上述格式 | 400 | `{ "code": "INVALID_INPUT" }` | 不设置 | 不读取 |
+| 格式合法，密钥指纹与已存值不同或检查失败（FSL-161，见「数据」的「密钥一致性检查」） | 503 | `{ "status": "unavailable" }` | 不设置 | 不读取 |
 | 没有有效 flow Cookie；该 flow 没有任何行；该 flow 中 `flow_seq` 最大的行不是未过期的 `active` 行（已过期、`reserved`、`void`（含因错误次数达到上限而作废）、`consumed`，含已消费后再次提交）；该行 `failed_attempts` 已达 5 | 401 | `{ "status": "invalid" }` | 不设置 | 不改变 |
 | 该行为未过期的 `active` 行且 `failed_attempts` 小于 5，验证码不相等 | 401 | `{ "status": "invalid" }` | 不设置 | `failed_attempts + 1`；加 1 后达到 5 时同一语句置为 `void` 并清空四个敏感字段 |
 | 验证码相等且绑定存在 | 200 | `{ "status": "ok" }` | 设置 better-auth 会话 Cookie | `consumed`，四个敏感字段为空 |
@@ -412,7 +414,7 @@ FSL-169 的用例（同在 `signup.test.ts`，以测试数据库中的触发器�
 
 ## 数据
 
-`feishu_login_codes` 的邮箱、open_id、姓名与验证码 HMAC 只在 `active` 期间保存（FSL-119 的双向 CHECK），消费、作废时在同一语句中清空；未使用而过期的行与超过保留期的行由到期清理处理（FSL-146）。**当前状态：** 调度器尚未接入任何进程，由 FSL-150 在 `apps/web/instrumentation.ts` 的 `register()` 中于飞书模式等待其启动。
+`feishu_login_codes` 的邮箱、open_id、姓名与验证码 HMAC 只在 `active` 期间保存（FSL-119 的双向 CHECK），消费、作废时在同一语句中清空；未使用而过期的行与超过保留期的行由到期清理处理（FSL-146）。`feishu_login_key_check` 保存 HMAC 密钥与应用 ID 的指纹，request 与 verify 以它做密钥一致性检查（FSL-159、FSL-161，见下文）。**当前状态：** 调度器尚未接入任何进程，由 FSL-150 在 `apps/web/instrumentation.ts` 的 `register()` 中于飞书模式等待其启动。
 
 ### 到期清理
 
@@ -443,6 +445,22 @@ FSL-169 的用例（同在 `signup.test.ts`，以测试数据库中的触发器�
 - `key_check`：密钥指纹，约定为 HMAC-SHA256(`ENTERPRISE_OTP_HMAC_KEY`, `"feishu-login-key-check:v1:" + FEISHU_APP_ID`) 的小写十六进制值；表约束只接受 64 位小写十六进制串，按约定只写入 HMAC，不写入密钥本身；
 - `created_at`：写入时间，默认数据库 `now()`。
 
-**当前状态：** 只有表结构，尚无代码读写该表；写入指纹并在密钥或 `FEISHU_APP_ID` 变化时拒绝登录的运行时检查由 FSL-161 实现，在其交付之前该表不影响登录。迁移只前滚：没有回滚迁移，旧版本镜像忽略该表；迁移应用后发现问题时只以新的前向修复迁移恢复。
+该表由下文「密钥一致性检查」（FSL-161）读写。迁移只前滚：没有回滚迁移，旧版本镜像忽略该表；迁移应用后发现问题时只以新的前向修复迁移恢复。
 
 `packages/database/src/schema/auth/feishu-login-key-check.test.ts` 使用一次性 PG 断言列集合恰为上述 3 列、`id` 不等于 1 的插入（及把已有行改为其它 `id`）被拒绝、已有一行时的第二次插入被拒绝、非 64 位小写十六进制的值被拒绝；在本迁移语句之后注入 SQL 故障时表不存在、迁移记录不含本迁移，随后完整迁移集可前滚应用。
+
+### 密钥一致性检查
+
+`feishu_identities` 的绑定键 `(app_id, open_id_hmac)` 依赖 `ENTERPRISE_OTP_HMAC_KEY` 与 `FEISHU_APP_ID`：任一变化后已有绑定都不再匹配，成员若同时更换了邮箱，首次登录建号（见「HTTP 接口」的「建号」）会为同一成员建出第二个账号。FSL-161 在这种情形下拒绝飞书登录：
+
+- **指纹：** `packages/database/src/feishu-login-store.ts` 的 `feishuLoginKeyFingerprint(key, appId)` = HMAC-SHA256(`ENTERPRISE_OTP_HMAC_KEY`, `"feishu-login-key-check:v1:" + FEISHU_APP_ID`)，64 个小写十六进制字符；表中只有该 HMAC，没有密钥。
+- **存储：** 同文件的 `ensureKeyCheck(pool, keyCheck)`（由 `@megaui/database` 导出）以一条语句在表为空时插入 `(1, keyCheck)`（`on conflict (id) do nothing`，从不覆盖已有行）并返回表中已存的值；只有并发的首次插入在该语句执行期间提交（该语句的快照看不到那一行）时语句不返回行，此时再执行一次。第二次仍无行或任何数据库错误时抛出；不是 64 位小写十六进制的输入在查询之前以 `INVALID_FEISHU_LOGIN_KEY_CHECK` 拒绝。
+- **检查：** 插件收到 `verify` 选项时，以其中的连接池、`FEISHU_APP_ID` 与密钥构造一个检查（`request.ts` 的 `createFeishuLoginKeyCheck`），request 与 verify 两个端点共用。request 在输入校验（400）与限流（429）之后、调用 `reserve` 之前检查；verify 在输入校验（400）之后、读取 flow Cookie 与任何验证码行之前检查。表为空时（首次检查）写入当前指纹并通过。已存指纹与当前指纹不同，或检查失败（如数据库错误）时，返回 503 `{ "status": "unavailable" }`（带 `Cache-Control: no-store`，不设置任何 Cookie，对任何邮箱同形），只输出稳定日志键 `FEISHU_LOGIN_KEY_MISMATCH`：request 不调用 `reserve` 与 `deliver`，因此不写预约、不发码；verify 不读取、不计数、不消费验证码，不建号，不签发会话。request 的响应顺序因此为 ADR-FSL-11 的 400 → 429 → 503 `unavailable` → 503 `retry` → 202。
+- **缓存：** 一致的结果在该插件实例内保留（密钥与应用 ID 只随重启变化），之后的请求不再查询；不一致或失败的结果不保留，每个请求重新检查。
+- **未传入 `verify` 选项时：** 插件不持有连接池与密钥，不注册消费验证码或建号的端点，也不做该检查。
+
+**不支持轮换密钥或更换应用：** 本计划不提供轮换 `ENTERPRISE_OTP_HMAC_KEY`、更换 `FEISHU_APP_ID` 或身份迁移的流程。指纹写入之后，二者任一变化（新配置随进程重启加载）时，到达该检查的 request 与 verify 持续返回 503 `unavailable`（输入非法的 400 与限流的 429 照常先于它返回；仍以原配置运行、已缓存一致结果的进程在重启前不受影响）；恢复方式是由运维恢复原密钥与原 `FEISHU_APP_ID`（新配置随进程重启生效）。不得通过清空 `feishu_identities` 或 `feishu_login_key_check` 绕过该检查：清空指纹后下一次检查会写入新指纹并放行，清空绑定则使已有成员重新建号，两者都可能为同一成员建出第二个账号。
+
+**当前状态：** Web 尚未向插件传入 `verify` 选项（由 FSL-150 在飞书模式下接线），在此之前没有部署运行该检查。
+
+`packages/auth/src/feishu-login/key-check.test.ts` 以 `createAuth` 加一次性 PG 构造，断言：`feishuLoginKeyFingerprint` 与独立计算的 HMAC 相同；`ensureKeyCheck` 首次写入、之后返回已存值且不覆盖、拒绝非法输入、8 个并发首次调用都返回唯一写入的值；首次 request（或首次 verify）写入当前指纹，且表中的值不等于、不包含密钥的十六进制或 base64 编码；指纹一致时 request 返回 202 并写入预约；已存指纹来自其它密钥或其它应用 ID 时，已知、未知邮箱与带 flow Cookie 的 request 都返回相同的 503 `unavailable`、不设置 Cookie、不调用 `reserve` 与 `deliver`、不写入任何验证码行，且只输出 `FEISHU_LOGIN_KEY_MISMATCH`；不一致与预约失败同时出现时返回 `unavailable` 而非 `retry`，production 限流配置下超限后返回 429，非法输入仍返回 400；检查失败（连接池不可达）时 request 与 verify 都返回 503 `unavailable`；更换密钥或应用 ID 后，verify 对正确与错误验证码都返回 503 `unavailable`，验证码行的状态、`failed_attempts` 与四个敏感字段不变（仍为 `active`、`failed_attempts` 为 0），没有用户、绑定或会话；一致结果在实例内保留、不一致结果每次重新检查。AC7 分别以「换新密钥」与「换新 `FEISHU_APP_ID`」：先以原配置完成首次建号，再改变配置并以 Mock 通讯录使该成员的邮箱改变，request 返回 503 且不预约，以改变后配置写入的验证码 verify 也返回 503，`user` 与 `feishu_identities` 行数不变；对照用例删除指纹后同一验证码返回 200 且 `user` 增为 2 行，说明该检查拦下的正是重复建号。

@@ -40,6 +40,10 @@
 // under the member's identity lock and without merging a local user that holds the email
 // (FSL-152); and
 // `recordFeishuLoginSession`, which marks a session as issued by the Feishu login (FSL-147).
+//
+// `ensureKeyCheck` (FSL-161) records, or reads back, the single fingerprint of the HMAC key and
+// the app ID in `feishu_login_key_check` (FSL-159); the auth plugin compares it with its own
+// fingerprint before a request is reserved and before a verify reads a code.
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 
@@ -867,6 +871,51 @@ export async function consumeFeishuLoginCode(
 export async function recordFeishuLoginSession(pool: Pool, sessionId: string): Promise<void> {
   assertText(sessionId, "INVALID_FEISHU_LOGIN_SESSION_ID");
   await pool.query("insert into feishu_login_sessions (session_id) values ($1)", [sessionId]);
+}
+
+/** The purpose label of the key fingerprint of `feishu_login_key_check` (FSL-159, FSL-161). */
+export const FEISHU_LOGIN_KEY_CHECK_LABEL = "feishu-login-key-check:v1:";
+
+/**
+ * HMAC-SHA256(key, "feishu-login-key-check:v1:" + appId) as 64 lowercase hex characters: the
+ * fingerprint of `ENTERPRISE_OTP_HMAC_KEY` and `FEISHU_APP_ID` kept in `feishu_login_key_check`
+ * (FSL-159). Either one changing changes it; the key itself never reaches the table.
+ */
+export function feishuLoginKeyFingerprint(key: Uint8Array, appId: string): string {
+  assertKey(key);
+  if (typeof appId !== "string" || appId === "") throw new Error("INVALID_FEISHU_LOGIN_APP_ID");
+  return createHmac("sha256", key).update(FEISHU_LOGIN_KEY_CHECK_LABEL + appId, "utf8").digest("hex");
+}
+
+/**
+ * FSL-161: the fingerprint stored in `feishu_login_key_check`, writing `keyCheck` first when the
+ * table is empty. One statement inserts the row `(1, keyCheck)` unless a row exists (never
+ * overwriting it) and returns the stored value, so the first caller of a deployment records its
+ * fingerprint and every later caller reads it back. The caller compares the result with its own
+ * fingerprint; this function never decides.
+ *
+ * Only when a concurrent first insert commits while this statement runs does the statement return
+ * no row (its snapshot predates that row); the statement then runs once more and reads it. A
+ * second empty result, or any database error, is thrown.
+ */
+export async function ensureKeyCheck(pool: Pool, keyCheck: string): Promise<string> {
+  assertHex(keyCheck, "INVALID_FEISHU_LOGIN_KEY_CHECK");
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const result = await pool.query<{ key_check: string }>(
+      `with inserted as (
+         insert into feishu_login_key_check (id, key_check) values (1, $1)
+         on conflict (id) do nothing
+         returning key_check
+       )
+       select key_check from inserted
+       union all
+       select key_check from feishu_login_key_check where id = 1`,
+      [keyCheck],
+    );
+    const stored = result.rows[0]?.key_check;
+    if (typeof stored === "string") return stored;
+  }
+  throw new Error("FEISHU_LOGIN_KEY_CHECK_UNAVAILABLE");
 }
 
 /** A row created more than this many seconds ago is deleted by the cleanup (FSL-146). */

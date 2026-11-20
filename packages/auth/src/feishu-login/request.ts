@@ -1,13 +1,20 @@
-// megaui:packages/auth/src/enterprise-otp/request.ts@24a8551 (megaui-only FSL-123: the request contract of the Feishu login)
+// megaui:packages/auth/src/enterprise-otp/request.ts@24a8551 (megaui-only FSL-123, FSL-154, FSL-161: the request contract of the Feishu login)
 /**
- * FSL-123, FSL-154: the request contract of `POST /feishu-login/request` (ADR-FSL-11 「请求」
+ * FSL-123, FSL-154, FSL-161: the request contract of `POST /feishu-login/request` (ADR-FSL-11 「请求」
  * 「flow 绑定」).
  *
  * - The request is `application/json` and its body (at most 4096 bytes) is exactly
  *   `{ "email": <string> }`. The email is trimmed and lowercased and must
  *   pass `normalizeFeishuLoginEmail`; anything else answers 400 `{ "code": "INVALID_INPUT" }`
  *   with no cookie, and no port is called.
- * - A valid email first waits for the injected `reserve` port (FSL-154): the reservation
+ * - FSL-161: when the plugin holds the database pool, `FEISHU_APP_ID` and `ENTERPRISE_OTP_HMAC_KEY`
+ *   (its `verify` option), a valid email is first checked against the key fingerprint of
+ *   `feishu_login_key_check` (`createFeishuLoginKeyCheck`). A stored fingerprint that differs
+ *   from the current one, or a check that fails, answers 503 `{ "status": "unavailable" }`
+ *   without a cookie, whatever the email; `reserve` and `deliver` are never called and only the
+ *   stable key `FEISHU_LOGIN_KEY_MISMATCH` is logged (ADR-FSL-11 response order: 400, 429, then
+ *   this 503, before the 503 retry of a failed reservation).
+ * - A valid email then waits for the injected `reserve` port (FSL-154): the reservation
  *   transaction of the flow, database only, which voids the flow's earlier code and commits
  *   before the answer. When it resolves (a reservation refused by the cooldown or the budget
  *   included; its value is never read) the answer is 202 `{ "status": "accepted" }`. A request
@@ -30,6 +37,8 @@
  *   `FEISHU_LOGIN_ISSUE_FAILED` (never the error, the email or the flow), and the request still
  *   answered 202.
  */
+import { ensureKeyCheck, feishuLoginKeyFingerprint, type DatabaseClient } from "@megaui/database";
+
 import { normalizeFeishuLoginEmail } from "./input";
 import {
   createFeishuLoginFlow,
@@ -43,7 +52,15 @@ import {
 export const FEISHU_LOGIN_ISSUE_FAILED = "FEISHU_LOGIN_ISSUE_FAILED";
 /** FSL-154: the stable log key of a failed or thrown `reserve` port (answered 503 retry). */
 export const FEISHU_LOGIN_RESERVE_FAILED = "FEISHU_LOGIN_RESERVE_FAILED";
-export type FeishuLoginRequestLogKey = typeof FEISHU_LOGIN_ISSUE_FAILED | typeof FEISHU_LOGIN_RESERVE_FAILED;
+/**
+ * FSL-161: the stable log key of a key fingerprint that differs from the stored one, or that could
+ * not be checked (answered 503 unavailable by request and verify).
+ */
+export const FEISHU_LOGIN_KEY_MISMATCH = "FEISHU_LOGIN_KEY_MISMATCH";
+export type FeishuLoginRequestLogKey =
+  | typeof FEISHU_LOGIN_ISSUE_FAILED
+  | typeof FEISHU_LOGIN_RESERVE_FAILED
+  | typeof FEISHU_LOGIN_KEY_MISMATCH;
 
 /** What the `reserve` port receives: the flow hash and the normalized email, nothing else. */
 export interface FeishuLoginIssueInput {
@@ -206,6 +223,59 @@ function report(log: (key: FeishuLoginRequestLogKey) => void, key: FeishuLoginRe
   } catch {
     // A failing logger must not turn into an unhandled rejection of the request process.
   }
+}
+
+/** FSL-161: the answer of a request or a verify whose key fingerprint differs or could not be checked. */
+export const FEISHU_LOGIN_UNAVAILABLE_BODY = { status: "unavailable" } as const;
+
+/** FSL-161: what the key check needs; the plugin passes its validated `verify` option. */
+export interface FeishuLoginKeyCheckOptions {
+  /** The pool that holds `feishu_login_key_check`. */
+  readonly pool: DatabaseClient["pool"];
+  /** `FEISHU_APP_ID`. */
+  readonly appId: string;
+  /** The decoded 32-byte `ENTERPRISE_OTP_HMAC_KEY`. Private: never logged. */
+  readonly otpHmacKey: Uint8Array;
+}
+
+/**
+ * FSL-161: resolves `true` when the key fingerprint stored in `feishu_login_key_check` equals the
+ * current one. Otherwise — another fingerprint is stored, or the check fails — it logs only
+ * `FEISHU_LOGIN_KEY_MISMATCH` through `log` and resolves `false`; it never rejects.
+ */
+export type FeishuLoginKeyCheck = (log: (key: typeof FEISHU_LOGIN_KEY_MISMATCH) => void) => Promise<boolean>;
+
+/**
+ * FSL-161: the key check of one plugin instance, shared by its request and verify endpoints. The
+ * current fingerprint is HMAC-SHA256(`ENTERPRISE_OTP_HMAC_KEY`, "feishu-login-key-check:v1:" +
+ * `FEISHU_APP_ID`); `ensureKeyCheck` stores it when the table is empty (the first check of a
+ * deployment) and returns the stored one. Only a consistent result is kept, for the life of
+ * this instance (the key and the app ID only change with a restart): later checks then run no
+ * query. A mismatch or a failure is not kept, so every later call checks again.
+ */
+export function createFeishuLoginKeyCheck(options: FeishuLoginKeyCheckOptions): FeishuLoginKeyCheck {
+  const pool = options.pool;
+  const fingerprint = feishuLoginKeyFingerprint(options.otpHmacKey, options.appId);
+  let consistent = false;
+  return async (log) => {
+    if (consistent) return true;
+    let stored: string | undefined;
+    try {
+      stored = await ensureKeyCheck(pool, fingerprint);
+    } catch {
+      stored = undefined;
+    }
+    if (stored === fingerprint) {
+      consistent = true;
+      return true;
+    }
+    try {
+      log(FEISHU_LOGIN_KEY_MISMATCH);
+    } catch {
+      // A failing logger must not change the answer.
+    }
+    return false;
+  };
 }
 
 /** The answer of a request whose reservation failed (FSL-154). */

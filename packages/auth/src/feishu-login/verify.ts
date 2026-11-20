@@ -1,12 +1,19 @@
-// megaui:packages/auth/src/enterprise-otp/verify.ts@24a8551 (megaui-only FSL-124, FSL-151, FSL-125, FSL-152, FSL-169: the verify endpoint of the Feishu login)
+// megaui:packages/auth/src/enterprise-otp/verify.ts@24a8551 (megaui-only FSL-124, FSL-151, FSL-125, FSL-152, FSL-169, FSL-161: the verify endpoint of the Feishu login)
 /**
  * FSL-124 (success path), FSL-151 (failure path and concurrency), FSL-125 (first-login account
  * creation), FSL-152 (its conflict, rollback and concurrency) and FSL-169 (the compensation of a
- * failed session issue): `POST /feishu-login/verify` (ADR-FSL-11 「校验」).
+ * failed session issue) and FSL-161 (the key check): `POST /feishu-login/verify` (ADR-FSL-11
+ * 「校验」).
  *
  * - The request is `application/json` and its body (at most 4096 bytes) is exactly
  *   `{ "code": <string> }`; the code is trimmed and uppercased and must then be 8 characters of
  *   the code alphabet. Anything else answers 400 `{ "code": "INVALID_INPUT" }` and reads no row.
+ * - FSL-161: a well-formed code is then checked against the key fingerprint of
+ *   `feishu_login_key_check` (the plugin's `createFeishuLoginKeyCheck`), before the flow cookie is
+ *   read and before any code row is read. A stored fingerprint that differs from the current one
+ *   (`ENTERPRISE_OTP_HMAC_KEY` or `FEISHU_APP_ID` changed), or a check that fails, answers 503
+ *   `{ "status": "unavailable" }` and logs only `FEISHU_LOGIN_KEY_MISMATCH`: no code row is read,
+ *   counted or consumed, and no user, binding or session is created.
  * - A well-formed code is checked against the newest row of the flow named by the flow cookie in
  *   one transaction (`consumeFeishuLoginCode`) that locks that row `FOR UPDATE`: only an unexpired
  *   `active` row below the failure limit whose code HMAC matches in constant time is consumed, its
@@ -64,7 +71,12 @@ import {
 
 import { ENTERPRISE_OTP_ALPHABET, ENTERPRISE_OTP_LENGTH } from "../enterprise-otp/code";
 import { feishuLoginFlowHash, readFeishuLoginFlowCookie } from "./cookie";
-import { isFeishuLoginJsonMediaType } from "./request";
+import {
+  FEISHU_LOGIN_KEY_MISMATCH,
+  FEISHU_LOGIN_UNAVAILABLE_BODY,
+  isFeishuLoginJsonMediaType,
+  type FeishuLoginKeyCheck,
+} from "./request";
 
 /** The purpose label of the identity HMAC (ADR-FSL-11, FSL-120). */
 export const FEISHU_LOGIN_IDENTITY_HMAC_LABEL = "feishu-identity:v1:";
@@ -84,6 +96,7 @@ export const FEISHU_LOGIN_SESSION_FAILED = "FEISHU_LOGIN_SESSION_FAILED";
 export const FEISHU_LOGIN_SESSION_REVOKE_FAILED = "FEISHU_LOGIN_SESSION_REVOKE_FAILED";
 
 export type FeishuLoginVerifyLogKey =
+  | typeof FEISHU_LOGIN_KEY_MISMATCH
   | typeof FEISHU_LOGIN_ACCOUNT_CONFLICT
   | typeof FEISHU_LOGIN_SESSION_FAILED
   | typeof FEISHU_LOGIN_SESSION_REVOKE_FAILED;
@@ -95,7 +108,7 @@ export interface FeishuLoginVerifyOptions {
   readonly appId: string;
   /** The decoded 32-byte `ENTERPRISE_OTP_HMAC_KEY`. Private: never logged. */
   readonly otpHmacKey: Uint8Array;
-  /** Receives stable log keys only (FSL-152, FSL-169). Defaults to `console.warn`. */
+  /** Receives stable log keys only (FSL-152, FSL-169, FSL-161). Defaults to `console.warn`. */
   readonly log?: (key: FeishuLoginVerifyLogKey) => void;
 }
 
@@ -227,7 +240,7 @@ export type FeishuLoginVerifyResponse =
   | { readonly status: 400; readonly body: typeof FEISHU_LOGIN_VERIFY_INVALID_INPUT }
   | { readonly status: 401; readonly body: typeof FEISHU_LOGIN_VERIFY_INVALID }
   | { readonly status: 409; readonly body: typeof FEISHU_LOGIN_VERIFY_ACCOUNT_CONFLICT }
-  | { readonly status: 503; readonly body: typeof FEISHU_LOGIN_VERIFY_RETRY }
+  | { readonly status: 503; readonly body: typeof FEISHU_LOGIN_VERIFY_RETRY | typeof FEISHU_LOGIN_UNAVAILABLE_BODY }
   | { readonly status: 200; readonly body: typeof FEISHU_LOGIN_VERIFY_OK };
 
 type InternalAdapter = BetterAuthEndpointContext["context"]["internalAdapter"];
@@ -294,12 +307,13 @@ function newFeishuLoginUserId(ctx: BetterAuthEndpointContext): string {
 
 /**
  * Decides one verify call from its parsed body and its `Cookie` / `Content-Type` headers, and on
- * success issues the session on `ctx`. The body is checked first (400), then the flow and the
- * code (401, 409, 503 or 200).
+ * success issues the session on `ctx`. The body is checked first (400), then the key fingerprint
+ * (503 unavailable, FSL-161), then the flow and the code (401, 409, 503 retry or 200).
  */
 export async function verifyFeishuLoginCode(
   ctx: BetterAuthEndpointContext,
   options: FeishuLoginVerifyOptions,
+  keyCheck: FeishuLoginKeyCheck,
   body: unknown,
   cookieHeader: string | null | undefined,
   contentType: string | null | undefined,
@@ -307,6 +321,9 @@ export async function verifyFeishuLoginCode(
   if (!isFeishuLoginJsonMediaType(contentType)) return { status: 400, body: FEISHU_LOGIN_VERIFY_INVALID_INPUT };
   const code = readFeishuLoginVerifyCode(body);
   if (code === null) return { status: 400, body: FEISHU_LOGIN_VERIFY_INVALID_INPUT };
+  if (!(await keyCheck((key) => reportVerify(options, key)))) {
+    return { status: 503, body: FEISHU_LOGIN_UNAVAILABLE_BODY };
+  }
   const flow = readFeishuLoginFlowCookie(cookieHeader);
   if (flow === undefined) return { status: 401, body: FEISHU_LOGIN_VERIFY_INVALID };
   const result = await consumeFeishuLoginCode(options.pool, {
