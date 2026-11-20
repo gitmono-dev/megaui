@@ -144,3 +144,53 @@ work_info.staff_status
 ### 真实租户复测
 
 `contact.live.q2.test.ts`（Q2）与 `contact.live.q3.test.ts`（Q3）只在 `FEISHU_LIVE_CONTRACT === "1"` 时运行，默认跳过。凭据只来自仓库根目录被忽略的 `.env`，以 `set -a; source .env; set +a` 加载。每个用例都通过包装 `fetchImpl` 记录每次 Directory v1 交换的 `{ path, status, code }`，并与期望列表做严格相等比较。复测结果的脱敏摘要分别追加在 `feishu-live-contract-lookup.md` 与 `feishu-live-contract-member.md` 的「复测（FSL-117）」一节。
+
+## 发码
+
+`packages/engine/src/services/feishu-login/issue.ts` 的 `createFeishuLoginIssuer(options).issueFeishuLoginCode({ flowHash, email })`（FSL-122）实现签发主流程。验证码表 `feishu_login_codes` 的读写集中在 `packages/database/src/feishu-login-store.ts`（`createFeishuLoginCodeStore(pool)`，由 `@megaui/database` 导出）。**当前状态：** 本服务尚未接入任何进程，由 FSL-123 的 request 端点与 FSL-150 的 Web 接线调用。
+
+### 构造
+
+- 服务只用 `FEISHU_APP_ID`、`FEISHU_APP_SECRET`、`ENTERPRISE_OTP_HMAC_KEY`（解码后的 32 字节）与 `BETTER_AUTH_URL` 构造，另传入 FSL-148 选出的冻结 provider 目标与数据库连接池。
+- 现有凭据类型与消息客户端要求的 `tenantKey` 取内部标签 `app:<FEISHU_APP_ID>`（`feishuLoginTenantKey`），只作 token 缓存键，从不发送给飞书，也不写入任何表。
+- 私聊文案中的可信站点取 `BETTER_AUTH_URL`。
+- 验证码生成器以构造参数 `generateCode` 注入：engine 不依赖 `@megaui/auth`，由 FSL-150 注入 `@megaui/auth` 的 8 位 CSPRNG 生成器，测试注入同一生成器。
+
+### 主流程
+
+邮箱先去首尾空白并整体转小写（长度 1–254），再计算邮箱 HMAC。每一步都不在飞书调用期间持有事务或锁。
+
+1. **预约**：一个事务写入本次请求的 `reserved` 行并提交。该行只含邮箱 HMAC、flow 哈希（flow Cookie 值的 SHA-256，64 位小写十六进制）、创建时间与预约到期时间（创建后 2 分钟）。`flow_seq` 取该 flow 现有最大值加 1，`email_seq` 取该邮箱 HMAC 现有最大值加 1。并发的两次预约取到同一序号时，FSL-163 的唯一索引使后提交者失败，服务返回 `{ status: "retry" }`，由 request 端点按预约失败返回 503 重试（FSL-145 引入邮箱锁后改在锁内分配，不再冲突）。
+2. **查询**：在事务外以 `FeishuContactClient`（见「飞书接口」）按邮箱查找唯一成员，再按 open_id 读取在职状态。
+3. **激活**：激活事务先以 `pg_advisory_xact_lock(<类键>, <邮箱 HMAC 派生键>)` 串行化同一邮箱（类键为常量 `0x46534c01`，派生键为邮箱 HMAC 前 32 位的有符号整数），把同一邮箱 HMAC 的全部 `active` 行（不论 flow）置为 `void` 并在同一语句中清空邮箱、open_id、姓名与验证码 HMAC，再把本行由 `reserved` 置为 `active`，写入邮箱、open_id、姓名（`base_info.name.name.default_value`，空字符串照样保存）、验证码 HMAC 与到期时间（激活后 5 分钟）。本行已不是 `reserved` 时整个事务回滚、不发送（`{ status: "not_reserved" }`）；激活前的到期与最新预约校验由 FSL-149 补齐。
+4. **发送**：激活提交后经 `FeishuMessageClient` 私聊发送，`uuid` 取本行 ID（同一请求的稳定 UUID），成功判据见「发送验证码私聊」。每次私聊 HTTP 尝试之前输出 `FEISHU_LOGIN_SEND_ATTEMPT`：服务包装传给传输层的 `fetch`，凡请求私聊地址都先输出该键，因此传输层在一次 `send` 调用内对 5xx、429、超时与连接中断以同一载荷所做的重试（至多 3 次 HTTP 请求）也逐次计入，该键条数恒等于发出的私聊请求数（该键在请求发出之前输出，未能到达飞书的请求同样计入）。本卡对每个请求只发起一次 `send` 调用；发送结果的三分支处理、签发服务的同 UUID 重试与传输层单次尝试（`maxAttempts: 1`）由 FSL-149 实现。
+
+未命中、多人或不在职，以及查询阶段的飞书调用（token、按邮箱搜索、按 open_id 读取）失败时，本行在与激活相同形态的事务中（同一把邮箱锁，条件 `state = 'reserved'`）置为 `void`，不生成验证码、不发送。
+
+### HMAC
+
+两种 HMAC 共用 `ENTERPRISE_OTP_HMAC_KEY`，以用途标签区分，输出小写十六进制：
+
+| 用途 | 输入 | 函数 |
+|---|---|---|
+| 邮箱 | `"feishu-login-email:v1:" + 规范化邮箱` | `feishuLoginEmailHmac(key, email)` |
+| 验证码 | `"feishu-login-code:v1:" + 行 ID + ":" + 验证码` | `feishuLoginCodeHmac(key, rowId, code)` |
+
+验证码 HMAC 绑定行 ID，只能与本行比对。验证码明文不写入数据库与日志。
+
+### 日志键
+
+日志只输出下列稳定键，不含邮箱、open_id、姓名、验证码、token 或 message_id：
+
+| 键 | 时机 | 服务返回 |
+|---|---|---|
+| `FEISHU_LOGIN_SEND_ATTEMPT` | 每次私聊 HTTP 尝试之前 | `{ status: "sent", send: "accepted" \| "rejected" \| "unknown" }` |
+| `FEISHU_LOGIN_NO_TARGET` | 零名、多名匹配或 `has_more=true`，本行置为 `void` | `{ status: "no_target" }` |
+| `FEISHU_LOGIN_INACTIVE` | 唯一成员不在职，本行置为 `void` | `{ status: "inactive" }` |
+| `FEISHU_LOGIN_PROVIDER_FAILED` | token、通讯录请求失败或响应形状无效，本行置为 `void` | `{ status: "provider_failed" }` |
+
+预约冲突（`retry`）与激活时本行已不是 `reserved`（`not_reserved`）不输出日志键。
+
+### 测试
+
+`packages/engine/src/services/feishu-login/issue.integration.test.ts` 使用一次性 PG 与真实的 `apps/feishu-mock` 进程，以 Mock 收件箱断言私聊条数与正文，服务经测试内的记录代理访问 Mock，代理在请求到达时计数并原样转发；测试断言各分支的日志键、`FEISHU_LOGIN_SEND_ATTEMPT` 条数等于接收侧收到的发送请求数（含以 Mock 故障注入 `500`、`disconnect_after_accept` 触发的传输层重试），以及请求中不出现 `app:<FEISHU_APP_ID>` 标签。
