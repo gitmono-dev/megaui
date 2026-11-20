@@ -1,9 +1,11 @@
 // FSL-125: the first Feishu login creates the account; FSL-152: its conflict, rollback and
-// concurrency. Driven through the real `createAuth` handler against a one-shot PostgreSQL that
-// starts without any user or Feishu identity binding; codes are written through the issue store's
-// `reserve` / `activate`, as the issue service does.
+// concurrency; FSL-169: the compensation of a failed session issue. Driven through the real
+// `createAuth` handler against a one-shot PostgreSQL that starts without any user or Feishu
+// identity binding; codes are written through the issue store's `reserve` / `activate`, as the
+// issue service does (directly, or through the request endpoint with mocked Feishu delivery).
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { inspect } from "node:util";
+import { APIError } from "better-auth/api";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -19,7 +21,8 @@ import {
 import { createIsolatedPostgres, isDockerAvailable, type IsolatedPostgres } from "@megaui/database/test-support";
 import { createAuth } from "../create-auth";
 import { FEISHU_LOGIN_FLOW_COOKIE } from "./cookie";
-import { FEISHU_LOGIN_VERIFY_PATH } from "./plugin";
+import { FEISHU_LOGIN_REQUEST_PATH, FEISHU_LOGIN_VERIFY_PATH } from "./plugin";
+import { FEISHU_LOGIN_SESSION_FAILED, FEISHU_LOGIN_SESSION_REVOKE_FAILED } from "./verify";
 
 const dockerAvailable = await isDockerAvailable();
 if (!dockerAvailable) {
@@ -28,6 +31,7 @@ if (!dockerAvailable) {
 
 const ORIGIN = "http://127.0.0.1:3000";
 const URL_VERIFY = `${ORIGIN}/api/auth${FEISHU_LOGIN_VERIFY_PATH}`;
+const URL_REQUEST = `${ORIGIN}/api/auth${FEISHU_LOGIN_REQUEST_PATH}`;
 const URL_SESSION = `${ORIGIN}/api/auth/get-session`;
 const SESSION_COOKIE = "better-auth.session_token";
 
@@ -56,6 +60,39 @@ function expectedOpenIdHmac(openId: string): string {
 /** The verify log of the auth built by `beforeEach`; reset for every case. */
 let verifyLog = vi.fn();
 
+/**
+ * FSL-169: the issue ports of the auth under test. `reserve` is the issue store's reservation;
+ * `deliver` mocks the Feishu side (directory lookup and direct message): it activates the reserved
+ * row for the member (`OPEN_ID`, `NAME`) with `mockDelivery.code`, the code the message would carry.
+ */
+const mockDelivery = { code: SECOND_CODE };
+
+interface MockReservation {
+  readonly email: string;
+  readonly emailHmac: string;
+  readonly result: Awaited<ReturnType<ReturnType<typeof createFeishuLoginCodeStore>["reserve"]>>;
+}
+
+const mockIssue = {
+  async reserve({ flowHash, email }: { readonly flowHash: string; readonly email: string }): Promise<MockReservation> {
+    const emailHmac = feishuLoginEmailHmac(KEY, email);
+    return { email, emailHmac, result: await createFeishuLoginCodeStore(database.pool).reserve({ flowHash, emailHmac }) };
+  },
+  async deliver(reservation: unknown): Promise<void> {
+    const { email, emailHmac, result } = reservation as MockReservation;
+    if (result.kind !== "reserved") throw new Error(`mock deliver: ${result.kind}`);
+    const activated = await createFeishuLoginCodeStore(database.pool).activate({
+      id: result.id,
+      emailHmac,
+      email,
+      openId: OPEN_ID,
+      displayName: NAME,
+      codeHmac: feishuLoginCodeHmac(KEY, result.id, mockDelivery.code),
+    });
+    if (activated.kind !== "active") throw new Error(`mock deliver: ${activated.kind}`);
+  },
+};
+
 /** `null` builds the auth without a `log` option (the default logger). */
 function buildAuth(log: ((key: string) => void) | null = verifyLog) {
   return createAuth({
@@ -66,7 +103,7 @@ function buildAuth(log: ((key: string) => void) | null = verifyLog) {
     email: { sendVerificationEmail: vi.fn(), sendResetPasswordEmail: vi.fn() } as never,
     nodeEnv: "test",
     feishuLogin: {
-      issue: { reserve: async () => undefined, deliver: async () => undefined },
+      issue: mockIssue,
       verify: { pool: database.pool, appId: APP_ID, otpHmacKey: KEY, ...(log === null ? {} : { log }) },
     },
   });
@@ -247,6 +284,66 @@ async function waitFor(condition: () => Promise<boolean>, timeoutMs = 10_000): P
     if (Date.now() > deadline) throw new Error("waitFor: timed out");
     await new Promise(resolve => setTimeout(resolve, 20));
   }
+}
+
+/**
+ * FSL-169: the member requests a new code in `flow` through the request endpoint (the flow cookie
+ * is kept, as the login page does) and waits until the mocked delivery activated it with `code`.
+ * The rows of the email are moved out of the 60-second cooldown first, as waiting would.
+ */
+async function requestNewCode(authUnderTest: Auth, flow: string, code: string): Promise<void> {
+  await database.pool.query("update feishu_login_codes set created_at = created_at - interval '1 hour'");
+  mockDelivery.code = code;
+  const response = await authUnderTest.handler(new Request(URL_REQUEST, {
+    method: "POST",
+    headers: { "content-type": "application/json", origin: ORIGIN, cookie: `${FEISHU_LOGIN_FLOW_COOKIE}=${flow}` },
+    body: JSON.stringify({ email: EMAIL }),
+  }));
+  expect(response.status).toBe(202);
+  await waitFor(async () => (await database.pool.query<{ state: string }>(
+    "select state from feishu_login_codes where flow_hash = $1 order by flow_seq desc limit 1",
+    [sha256Hex(flow)],
+  )).rows[0]?.state === "active");
+}
+
+async function markerCount(): Promise<number> {
+  return (await database.pool.query<{ n: number }>("select count(*)::int as n from feishu_login_sessions")).rows[0]!.n;
+}
+
+/**
+ * FSL-169: a trigger that fails every `event` on `table`; its message names the row (for
+ * `session`, its token). Inserts into `session` are recorded in
+ * `fsl169_session_audit` by `auditSessions`, so a session that was issued and then deleted shows.
+ */
+async function injectSessionFailure(table: "session" | "feishu_login_sessions", event: "insert" | "delete"): Promise<void> {
+  await database.pool.query(`create or replace function fsl169_inject_failure() returns trigger language plpgsql as $$
+    begin raise exception 'FSL-169 injected failure %', row_to_json(coalesce(new, old))::text; end $$`);
+  await database.pool.query(
+    `create trigger fsl169_inject_${event}_failure before ${event} on "${table}" for each row execute function fsl169_inject_failure()`,
+  );
+}
+
+async function removeSessionFailures(): Promise<void> {
+  for (const table of ["session", "feishu_login_sessions"]) {
+    for (const event of ["insert", "delete"]) {
+      await database.pool.query(`drop trigger if exists fsl169_inject_${event}_failure on "${table}"`);
+    }
+  }
+}
+
+/** Records the ID of every session row inserted from now on (FSL-169). */
+async function auditSessions(): Promise<() => Promise<string[]>> {
+  await database.pool.query("create table if not exists fsl169_session_audit (id text not null); delete from fsl169_session_audit");
+  await database.pool.query(`create or replace function fsl169_audit_session() returns trigger language plpgsql as $$
+    begin insert into fsl169_session_audit (id) values (new.id); return new; end $$`);
+  await database.pool.query(
+    "create or replace trigger fsl169_audit_session after insert on session for each row execute function fsl169_audit_session()",
+  );
+  return async () => (await database.pool.query<{ id: string }>("select id from fsl169_session_audit")).rows.map(row => row.id);
+}
+
+async function removeSessionAudit(): Promise<void> {
+  await database.pool.query("drop trigger if exists fsl169_audit_session on session");
 }
 
 /** A first login of the member through its own flow; it must answer 200. */
@@ -613,4 +710,183 @@ describe("feishu login first-login account creation (FSL-125) and its conflict, 
       expect(await identities()).toHaveLength(1);
     }
   }, 30_000);
+
+  describe("FSL-169: the compensation of a failed session issue", () => {
+    afterEach(async () => {
+      await removeSessionFailures();
+      await removeSessionAudit();
+      // The user table is renamed by one case; a failure there must not leak into the next.
+      await database.pool.query(`alter table if exists fsl169_user rename to "user"`);
+    });
+
+    /** Asserts the 503 retry answer: its body, `no-store`, and no session cookie. */
+    async function expectRetry(response: Response): Promise<void> {
+      expect(response.status).toBe(503);
+      expect(await response.json()).toEqual({ status: "retry" });
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      expect(sessionCookie(response)).toBeUndefined();
+    }
+
+    /**
+     * After the failed login in `flow`: the consumed code no longer logs in (401), and a new code
+     * requested in the same flow does, signing into the user created before, without a new user
+     * or binding. Returns the successful response. `residualSessions` counts unmarked session rows a
+     * failed compensation left behind.
+     */
+    async function expectNextLoginWithoutNewAccount(flow: string, residualSessions = 0): Promise<Response> {
+      const usersBefore = await fullUsers();
+      const identitiesBefore = await identities();
+      expect(usersBefore).toHaveLength(1);
+      expect(identitiesBefore).toHaveLength(1);
+      expect((await verify(auth, CODE, flow)).status).toBe(401);
+      await requestNewCode(auth, flow, SECOND_CODE);
+      const response = await verify(auth, SECOND_CODE, flow);
+      expect(response.status).toBe(200);
+      expect(await response.clone().json()).toEqual({ status: "ok" });
+      expect(await fullUsers()).toEqual(usersBefore);
+      expect(await identities()).toEqual(identitiesBefore);
+      expect((await sessionUser(auth, response))?.id).toBe(usersBefore[0]!.id);
+      expect(await sessionCount()).toBe(1 + residualSessions);
+      expect(await markerCount()).toBe(1);
+      return response;
+    }
+
+    it("AC1, AC5, AC6: a failing createSession answers 503 retry; a new code then logs in without a new user", async () => {
+      const flow = newFlow();
+      const id = await activeCode(flow);
+      const output = captureConsole();
+      await injectSessionFailure("session", "insert");
+      const response = await verify(auth, CODE, flow);
+      await removeSessionFailures();
+      expect(await response.clone().text()).not.toContain("injected failure");
+      expect(output()).not.toContain("injected failure");
+      await expectRetry(response);
+      expect(verifyLog.mock.calls).toEqual([[FEISHU_LOGIN_SESSION_FAILED]]);
+      expect(await sessionCount()).toBe(0);
+      expect(await markerCount()).toBe(0);
+      // The first login committed before the session: the code is consumed, the user and the
+      // binding exist.
+      expect((await codeRow(id)).state).toBe("consumed");
+      expect(await users()).toHaveLength(1);
+      expect(await identities()).toHaveLength(1);
+      await expectNextLoginWithoutNewAccount(flow);
+    });
+
+    it("AC2, AC3, AC4, AC5, AC6: a failing marker insert deletes the issued session and answers 503 retry; a new code then logs in without a new user", async () => {
+      const flow = newFlow();
+      const id = await activeCode(flow);
+      const issued = await auditSessions();
+      const output = captureConsole();
+      await injectSessionFailure("feishu_login_sessions", "insert");
+      const response = await verify(auth, CODE, flow);
+      await removeSessionFailures();
+      expect(await response.clone().text()).not.toContain("injected failure");
+      expect(output()).not.toContain("injected failure");
+      await expectRetry(response);
+      expect(verifyLog.mock.calls).toEqual([[FEISHU_LOGIN_SESSION_FAILED]]);
+      // The session was issued (its insert was recorded), then deleted again.
+      const ids = await issued();
+      expect(ids).toHaveLength(1);
+      expect((await database.pool.query("select id from session where id = $1", [ids[0]])).rows).toEqual([]);
+      expect(await sessionCount()).toBe(0);
+      expect((await database.pool.query("select session_id from feishu_login_sessions where session_id = $1", [ids[0]])).rows).toEqual([]);
+      expect(await markerCount()).toBe(0);
+      expect((await codeRow(id)).state).toBe("consumed");
+      expect(await users()).toHaveLength(1);
+      await removeSessionAudit();
+      await expectNextLoginWithoutNewAccount(flow);
+    });
+
+    it("AC1, AC5, AC6: a failing read of the user on a later login answers 503 retry; a new code then logs in", async () => {
+      await firstLogin(auth);
+      await database.pool.query("delete from feishu_login_sessions; delete from session");
+      const flow = newFlow();
+      await activeCode(flow);
+      await database.pool.query(`alter table "user" rename to fsl169_user`);
+      let response: Response;
+      try {
+        response = await verify(auth, CODE, flow);
+      } finally {
+        await database.pool.query(`alter table fsl169_user rename to "user"`);
+      }
+      await expectRetry(response);
+      expect(verifyLog.mock.calls).toEqual([[FEISHU_LOGIN_SESSION_FAILED]]);
+      expect(await sessionCount()).toBe(0);
+      expect(await markerCount()).toBe(0);
+      await expectNextLoginWithoutNewAccount(flow);
+    });
+
+    it.each([
+      ["finds no user", () => Promise.resolve(null)],
+      ["throws a Better Auth APIError", () => Promise.reject(APIError.from("FORBIDDEN", { message: "refused", code: "FSL169_REFUSED" }))],
+    ] as const)("AC1, AC5, AC6: a read of the user that %s answers 503 retry, not the error; a new code then logs in", async (_case, read) => {
+      await firstLogin(auth);
+      await database.pool.query("delete from feishu_login_sessions; delete from session");
+      const flow = newFlow();
+      await activeCode(flow);
+      const context = await auth.$context;
+      const findUserById = vi.spyOn(context.internalAdapter, "findUserById").mockImplementationOnce(read);
+      const response = await verify(auth, CODE, flow);
+      expect(findUserById).toHaveBeenCalledTimes(1);
+      findUserById.mockRestore();
+      await expectRetry(response);
+      expect(verifyLog.mock.calls).toEqual([[FEISHU_LOGIN_SESSION_FAILED]]);
+      expect(await sessionCount()).toBe(0);
+      expect(await markerCount()).toBe(0);
+      await expectNextLoginWithoutNewAccount(flow);
+    });
+
+    it("when the compensating deletion fails as well, logs FEISHU_LOGIN_SESSION_REVOKE_FAILED and still answers 503 retry without a cookie", async () => {
+      const flow = newFlow();
+      await activeCode(flow);
+      await injectSessionFailure("feishu_login_sessions", "insert");
+      await injectSessionFailure("session", "delete");
+      const response = await verify(auth, CODE, flow);
+      await removeSessionFailures();
+      await expectRetry(response);
+      expect(verifyLog.mock.calls).toEqual([[FEISHU_LOGIN_SESSION_REVOKE_FAILED], [FEISHU_LOGIN_SESSION_FAILED]]);
+      // The unmarked session stays; its token was never sent.
+      expect(await sessionCount()).toBe(1);
+      expect(await markerCount()).toBe(0);
+      expect(await users()).toHaveLength(1);
+      await expectNextLoginWithoutNewAccount(flow, 1);
+    });
+
+    it("the default logger receives only the stable key, and a throwing logger does not change the 503", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      const defaultAuth = buildAuth(null);
+      await defaultAuth.$context;
+      const flow = newFlow();
+      await activeCode(flow);
+      await injectSessionFailure("session", "insert");
+      try {
+        await expectRetry(await verify(defaultAuth, CODE, flow));
+        expect(warn.mock.calls).toEqual([[FEISHU_LOGIN_SESSION_FAILED]]);
+
+        const throwingAuth = buildAuth(() => { throw new Error("logger down"); });
+        await throwingAuth.$context;
+        const second = newFlow();
+        await activeCode(second, { code: SECOND_CODE });
+        await expectRetry(await verify(throwingAuth, SECOND_CODE, second));
+      } finally {
+        await removeSessionFailures();
+      }
+      expect(await sessionCount()).toBe(0);
+    });
+
+    it("a deliberate refusal of Better Auth is not compensated: a banned user gets its 403 BANNED_USER, no session", async () => {
+      await firstLogin(auth);
+      await database.pool.query(`update "user" set banned = true`);
+      const sessionsBefore = await sessionCount();
+      const flow = newFlow();
+      await activeCode(flow, { code: SECOND_CODE });
+      const response = await verify(auth, SECOND_CODE, flow);
+      expect(response.status).toBe(403);
+      expect(await response.json()).toMatchObject({ code: "BANNED_USER" });
+      expect(sessionCookie(response)).toBeUndefined();
+      expect(await sessionCount()).toBe(sessionsBefore);
+      expect(await markerCount()).toBe(sessionsBefore);
+      expect(verifyLog).not.toHaveBeenCalled();
+    });
+  });
 });

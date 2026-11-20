@@ -1,8 +1,8 @@
-// megaui:packages/auth/src/enterprise-otp/verify.ts@24a8551 (megaui-only FSL-124, FSL-151, FSL-125, FSL-152: the verify endpoint of the Feishu login)
+// megaui:packages/auth/src/enterprise-otp/verify.ts@24a8551 (megaui-only FSL-124, FSL-151, FSL-125, FSL-152, FSL-169: the verify endpoint of the Feishu login)
 /**
  * FSL-124 (success path), FSL-151 (failure path and concurrency), FSL-125 (first-login account
- * creation) and FSL-152 (its conflict, rollback and concurrency): `POST /feishu-login/verify`
- * (ADR-FSL-11 「校验」).
+ * creation), FSL-152 (its conflict, rollback and concurrency) and FSL-169 (the compensation of a
+ * failed session issue): `POST /feishu-login/verify` (ADR-FSL-11 「校验」).
  *
  * - The request is `application/json` and its body (at most 4096 bytes) is exactly
  *   `{ "code": <string> }`; the code is trimmed and uppercased and must then be 8 characters of
@@ -28,6 +28,19 @@
  * - After that commit a plain Better Auth session (8 hours, no enterprise field) is issued with
  *   `internalAdapter.createSession`, marked in `feishu_login_sessions`, and its cookie set: 200
  *   `{ "status": "ok" }`.
+ * - FSL-169: when reading the user throws (or finds no user) or `createSession` throws, no
+ *   session object is held and nothing is deleted; when the marker insert throws, the session
+ *   just issued is deleted with `internalAdapter.deleteSession` (a marker row, if one was written,
+ *   goes with it by its `on delete cascade`). Either way no session cookie is set, the stable log
+ *   key `FEISHU_LOGIN_SESSION_FAILED` is logged and the answer is 503 `{ "status": "retry" }`.
+ *   When that deletion throws as well, `FEISHU_LOGIN_SESSION_REVOKE_FAILED` is logged first; the
+ *   state of the two tables is then unknown (a write may have committed with its acknowledgement
+ *   lost), but the session token was never sent. The code is already consumed and the user and
+ *   binding are committed, so the member requests a new code and logs in without a new account.
+ *   A deliberate refusal of `createSession` (a Better Auth `APIError`, such as the admin plugin's
+ *   403 `BANNED_USER` for a banned user) is not a failure: it is rethrown unchanged. Setting the
+ *   cookie (signing in memory, no database access) is not compensated: if it throws, the
+ *   endpoint throws.
  * - FSL-152: when a local user already holds the login email of a member without a binding, nothing
  *   is merged: no user is created or changed and no binding is written, the consumption of the
  *   code commits, the stable log key `FEISHU_LOGIN_ACCOUNT_CONFLICT` (nothing else) is logged, and
@@ -38,10 +51,10 @@
  * - Every other outcome — no flow cookie, no row, a newest row that is not an unexpired `active`
  *   one (expired, `reserved`, `void` — including voided by the failure limit — or `consumed`), or
  *   a wrong code — answers the same 401 `{ "status": "invalid" }` (so would an `unbound` result,
- *   which this endpoint never gets: it always passes `newUserId`). The compensation of a failed
- *   session issue is FSL-169.
+ *   which this endpoint never gets: it always passes `newUserId`).
  */
 import { createHmac } from "node:crypto";
+import { APIError } from "better-auth/api";
 import { setSessionCookie } from "better-auth/cookies";
 import {
   consumeFeishuLoginCode,
@@ -65,7 +78,15 @@ const HMAC_KEY_BYTES = 32;
 /** Logged when a local user already holds the login email of a member without a binding (FSL-152). */
 export const FEISHU_LOGIN_ACCOUNT_CONFLICT = "FEISHU_LOGIN_ACCOUNT_CONFLICT";
 
-export type FeishuLoginVerifyLogKey = typeof FEISHU_LOGIN_ACCOUNT_CONFLICT;
+/** FSL-169: logged when the session could not be issued or marked; the answer is 503 retry. */
+export const FEISHU_LOGIN_SESSION_FAILED = "FEISHU_LOGIN_SESSION_FAILED";
+/** FSL-169: logged when the session issued before a failed marker insert could not be deleted. */
+export const FEISHU_LOGIN_SESSION_REVOKE_FAILED = "FEISHU_LOGIN_SESSION_REVOKE_FAILED";
+
+export type FeishuLoginVerifyLogKey =
+  | typeof FEISHU_LOGIN_ACCOUNT_CONFLICT
+  | typeof FEISHU_LOGIN_SESSION_FAILED
+  | typeof FEISHU_LOGIN_SESSION_REVOKE_FAILED;
 
 export interface FeishuLoginVerifyOptions {
   /** The pool that holds `feishu_login_codes`, `feishu_identities` and `feishu_login_sessions`. */
@@ -74,7 +95,7 @@ export interface FeishuLoginVerifyOptions {
   readonly appId: string;
   /** The decoded 32-byte `ENTERPRISE_OTP_HMAC_KEY`. Private: never logged. */
   readonly otpHmacKey: Uint8Array;
-  /** Receives stable log keys only (FSL-152). Defaults to `console.warn`. */
+  /** Receives stable log keys only (FSL-152, FSL-169). Defaults to `console.warn`. */
   readonly log?: (key: FeishuLoginVerifyLogKey) => void;
 }
 
@@ -198,6 +219,7 @@ export const FEISHU_LOGIN_VERIFY_INVALID_INPUT = { code: "INVALID_INPUT" } as co
 export const FEISHU_LOGIN_VERIFY_INVALID = { status: "invalid" } as const;
 export const FEISHU_LOGIN_VERIFY_OK = { status: "ok" } as const;
 export const FEISHU_LOGIN_VERIFY_ACCOUNT_CONFLICT = { status: "account_conflict" } as const;
+export const FEISHU_LOGIN_VERIFY_RETRY = { status: "retry" } as const;
 
 type BetterAuthEndpointContext = Parameters<typeof setSessionCookie>[0];
 
@@ -205,25 +227,59 @@ export type FeishuLoginVerifyResponse =
   | { readonly status: 400; readonly body: typeof FEISHU_LOGIN_VERIFY_INVALID_INPUT }
   | { readonly status: 401; readonly body: typeof FEISHU_LOGIN_VERIFY_INVALID }
   | { readonly status: 409; readonly body: typeof FEISHU_LOGIN_VERIFY_ACCOUNT_CONFLICT }
+  | { readonly status: 503; readonly body: typeof FEISHU_LOGIN_VERIFY_RETRY }
   | { readonly status: 200; readonly body: typeof FEISHU_LOGIN_VERIFY_OK };
+
+type InternalAdapter = BetterAuthEndpointContext["context"]["internalAdapter"];
+type IssuedUser = NonNullable<Awaited<ReturnType<InternalAdapter["findUserById"]>>>;
+type IssuedSession = Awaited<ReturnType<InternalAdapter["createSession"]>>;
 
 /**
  * Issues the Feishu login session of `userId` after the consuming transaction committed: a plain
  * Better Auth session of 8 hours (only `expiresAt` is overridden, no enterprise field is set),
- * then its `feishu_login_sessions` row, then the session cookie. A failure of any step throws;
- * its compensation (503 `retry`) is FSL-169.
+ * then its `feishu_login_sessions` row, then the session cookie. FSL-169: `"retry"` (no cookie
+ * set) when the user cannot be read, the session cannot be created or the marker cannot be
+ * written; in the last case the session just created is deleted first. A Better Auth `APIError`
+ * of `createSession` (a deliberate refusal) and a failure of setting the cookie are thrown
+ * unchanged.
  */
 async function issueFeishuLoginSession(
   ctx: BetterAuthEndpointContext,
   options: FeishuLoginVerifyOptions,
   userId: string,
-): Promise<void> {
-  const user = await ctx.context.internalAdapter.findUserById(userId);
-  if (!user) throw new Error("FEISHU_LOGIN_VERIFY_UNAVAILABLE");
-  const expiresAt = new Date(Date.now() + FEISHU_LOGIN_SESSION_TTL_SECONDS * 1000);
-  const session = await ctx.context.internalAdapter.createSession(userId, false, { expiresAt }, true);
-  await recordFeishuLoginSession(options.pool, session.id);
+): Promise<"issued" | "retry"> {
+  const adapter = ctx.context.internalAdapter;
+  let user: IssuedUser;
+  let session: IssuedSession;
+  try {
+    const found = await adapter.findUserById(userId);
+    if (!found) return "retry";
+    user = found;
+  } catch {
+    return "retry";
+  }
+  try {
+    const expiresAt = new Date(Date.now() + FEISHU_LOGIN_SESSION_TTL_SECONDS * 1000);
+    session = await adapter.createSession(userId, false, { expiresAt }, true);
+  } catch (error) {
+    // A deliberate refusal (a hook's APIError, such as BANNED_USER) keeps its own answer.
+    if (error instanceof APIError) throw error;
+    return "retry";
+  }
+  try {
+    await recordFeishuLoginSession(options.pool, session.id);
+  } catch {
+    // An unmarked session must not stay usable: delete it (a marker row written despite the
+    // error goes with it by its cascade). Its token has not been sent: the cookie comes later.
+    try {
+      await adapter.deleteSession(session.token);
+    } catch {
+      reportVerify(options, FEISHU_LOGIN_SESSION_REVOKE_FAILED);
+    }
+    return "retry";
+  }
   await setSessionCookie(ctx, { session, user }, false, { maxAge: FEISHU_LOGIN_SESSION_TTL_SECONDS });
+  return "issued";
 }
 
 /**
@@ -239,7 +295,7 @@ function newFeishuLoginUserId(ctx: BetterAuthEndpointContext): string {
 /**
  * Decides one verify call from its parsed body and its `Cookie` / `Content-Type` headers, and on
  * success issues the session on `ctx`. The body is checked first (400), then the flow and the
- * code (401, 409 or 200).
+ * code (401, 409, 503 or 200).
  */
 export async function verifyFeishuLoginCode(
   ctx: BetterAuthEndpointContext,
@@ -266,6 +322,9 @@ export async function verifyFeishuLoginCode(
     return { status: 409, body: FEISHU_LOGIN_VERIFY_ACCOUNT_CONFLICT };
   }
   if (result.kind !== "consumed") return { status: 401, body: FEISHU_LOGIN_VERIFY_INVALID };
-  await issueFeishuLoginSession(ctx, options, result.userId);
+  if ((await issueFeishuLoginSession(ctx, options, result.userId)) === "retry") {
+    reportVerify(options, FEISHU_LOGIN_SESSION_FAILED);
+    return { status: 503, body: FEISHU_LOGIN_VERIFY_RETRY };
+  }
   return { status: 200, body: FEISHU_LOGIN_VERIFY_OK };
 }
