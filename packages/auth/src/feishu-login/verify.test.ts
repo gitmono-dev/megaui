@@ -350,13 +350,13 @@ describe("feishu login verify (FSL-124 success path, FSL-151 failure path and co
     expect(await sessionRows()).toHaveLength(0);
   });
 
-  it("answers the same 401 for a member without a binding and keeps the code active (until FSL-125)", async () => {
+  it("answers 409 account_conflict for a member without a binding whose email the preset user holds, consuming the code (FSL-152)", async () => {
     const flow = newFlow();
     const id = await activeCode(flow, CODE, "ou_fsl124_unbound");
     const response = await verify(auth, { code: CODE }, flow);
-    expect(response.status).toBe(401);
-    expect(await response.json()).toEqual({ status: "invalid" });
-    expect((await codeRow(id)).state).toBe("active");
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ status: "account_conflict" });
+    expect((await codeRow(id)).state).toBe("consumed");
     expect(await sessionRows()).toHaveLength(0);
     expect((await database.pool.query("select count(*)::int as n from \"user\"")).rows[0]!.n).toBe(1);
   });

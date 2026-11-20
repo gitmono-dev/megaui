@@ -32,11 +32,13 @@
 // and `active` rows, clearing their sensitive fields, and deletes the rows created more than 24
 // hours ago.
 //
-// The verify side (FSL-124, FSL-151, FSL-125) is `consumeFeishuLoginCode`: one transaction that
-// locks the newest row of a flow `FOR UPDATE`, compares the code HMAC in constant time, counts a
-// wrong code (the fifth one voids the row clearing its sensitive fields) or consumes the row
-// clearing its sensitive fields and looks up the identity binding before it commits, creating the
-// user and its binding in the same transaction when the member has none (FSL-125); and
+// The verify side (FSL-124, FSL-151, FSL-125, FSL-152) is `consumeFeishuLoginCode`: one
+// transaction that locks the newest row of a flow `FOR UPDATE`, compares the code HMAC in constant
+// time, counts a wrong code (the fifth one voids the row clearing its sensitive fields) or consumes
+// the row clearing its sensitive fields and looks up the identity binding before it commits,
+// creating the user and its binding in the same transaction when the member has none (FSL-125),
+// under the member's identity lock and without merging a local user that holds the email
+// (FSL-152); and
 // `recordFeishuLoginSession`, which marks a session as issued by the Feishu login (FSL-147).
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
@@ -72,6 +74,15 @@ export const FEISHU_LOGIN_GLOBAL_LOCK_KEY = 0;
  * the first lock of every transaction that takes it: flow, then email, then global.
  */
 export const FEISHU_LOGIN_FLOW_LOCK_CLASS = 0x46534c03;
+
+/**
+ * The fixed first key of every per-identity advisory lock ("FSL" + 0x04, FSL-152). The second key
+ * is derived from the `open_id_hmac` of a member; a collision of two members only serializes more,
+ * never less. Only the verify transaction takes it, after its single row lock of
+ * `feishu_login_codes` and only when that member has no binding yet; it serializes the first
+ * logins of one member, so only one of them creates the account.
+ */
+export const FEISHU_LOGIN_IDENTITY_LOCK_CLASS = 0x46534c04;
 
 /** A second reservation of one email HMAC within this many seconds is refused (FSL-145). */
 export const FEISHU_LOGIN_COOLDOWN_SECONDS = 60;
@@ -127,6 +138,12 @@ export function feishuLoginEmailLockKey(emailHmac: string): number {
 export function feishuLoginFlowLockKey(flowHash: string): number {
   assertHex(flowHash, "INVALID_FEISHU_LOGIN_FLOW_HASH");
   return Buffer.from(flowHash.slice(0, 8), "hex").readInt32BE(0);
+}
+
+/** The second advisory-lock key of an `open_id_hmac`: its first 32 bits as a signed integer (FSL-152). */
+export function feishuLoginIdentityLockKey(openIdHmac: string): number {
+  assertHex(openIdHmac, "INVALID_FEISHU_LOGIN_OPEN_ID_HMAC");
+  return Buffer.from(openIdHmac.slice(0, 8), "hex").readInt32BE(0);
 }
 
 function assertHex(value: unknown, code: string): asserts value is string {
@@ -305,8 +322,9 @@ export function createFeishuLoginCodeStore(pool: Pool): FeishuLoginCodeStore {
           // and the later committer fails instead of sharing an order number.
           await lockEmail(client, input.emailHmac);
           // FSL-145: the global lock, always last (flow, then email, then global; every other
-          // transaction takes a prefix of that order or no advisory lock, so it never
-          // deadlocks). Every reservation of every email and instance decides the budget under
+          // transaction takes a prefix of that order or none of these three locks, so it never
+          // deadlocks; the identity lock of a first login (FSL-152) is another class, taken only
+          // by verify, which takes none of these three). Every reservation of every email and instance decides the budget under
           // it, so two of them never both see the last free slot. The locks are released by the
           // commit, before any Feishu call.
           await client.query("select pg_advisory_xact_lock($1::int4, $2::int4)", [
@@ -582,28 +600,31 @@ export type FeishuLoginConsumeResult =
    */
   | { readonly kind: "unbound" }
   /**
-   * The code matched, the member has no binding, and the account could not be created because a
-   * local user already holds the email (`user_email_unique`) or a concurrent transaction committed
-   * the binding of the same member first (`feishu_identities_app_open_id_hmac_unique`). Nothing is
-   * merged: the transaction was rolled back, so no user or binding was written and the row is still
-   * `active`. Its HTTP answer is decided by the verify endpoint (FSL-152 refines it).
+   * The code matched and the member has no binding, but a local user already holds the login email
+   * (the insert of the user violated `user_email_unique`), FSL-152. Nothing is merged: the account
+   * creation was rolled back to its savepoint, so no user was created or changed and no binding was
+   * written, while the consumption committed: the row is `consumed` with its sensitive fields
+   * cleared, so the same code can not be submitted again.
    */
   | { readonly kind: "conflict" };
 
+/**
+ * Thrown (and the whole consume transaction rolled back, the row staying `active`) when the
+ * account creation of a first login fails for any reason other than a `conflict` (FSL-152). The
+ * database error is not attached: its detail may name the email.
+ */
+export const FEISHU_LOGIN_ACCOUNT_CREATE_FAILED = "FEISHU_LOGIN_ACCOUNT_CREATE_FAILED";
+
 /** Thrown inside the consume transaction to roll it back when no binding exists. */
 const UNBOUND = Symbol("FEISHU_LOGIN_UNBOUND");
-/** Thrown inside the consume transaction to roll it back when the account cannot be created. */
-const CONFLICT = Symbol("FEISHU_LOGIN_CONFLICT");
-/** The unique constraints whose violation by the account creation is a `conflict`. */
-const ACCOUNT_CONFLICT_CONSTRAINTS: ReadonlySet<string> = new Set([
-  "user_email_unique",
-  "feishu_identities_app_open_id_hmac_unique",
-]);
+/** The savepoint the account creation of a first login rolls back to on a `conflict`. */
+const ACCOUNT_SAVEPOINT = "feishu_login_account";
 
-function isAccountConflict(error: unknown): boolean {
+/** A local user already holds the email: the only unique violation that is a `conflict`. */
+function isEmailConflict(error: unknown): boolean {
   if (typeof error !== "object" || error === null) return false;
   const { code, constraint } = error as { code?: unknown; constraint?: unknown };
-  return code === UNIQUE_VIOLATION && typeof constraint === "string" && ACCOUNT_CONFLICT_CONSTRAINTS.has(constraint);
+  return code === UNIQUE_VIOLATION && constraint === "user_email_unique";
 }
 
 function codeHmacMatches(expectedHex: string, storedHex: unknown): boolean {
@@ -615,7 +636,8 @@ function codeHmacMatches(expectedHex: string, storedHex: unknown): boolean {
 
 /**
  * Verify (FSL-124 success path, FSL-151 failure path and concurrency, FSL-125 first-login account
- * creation; ADR-FSL-11 「校验」), one transaction:
+ * creation, FSL-152 its conflict, rollback and concurrency; ADR-FSL-11 「校验」), one transaction,
+ * set to READ COMMITTED by its first statement whatever the default isolation level is:
  * 1. locks the row of the largest `flow_seq` of the flow (whatever its state) with
  *    `SELECT … FOR UPDATE`, in a statement of its own. It is the only row of `feishu_login_codes`
  *    the transaction locks (the cleanup, the activation and the void write-back of a delivery,
@@ -641,18 +663,37 @@ function codeHmacMatches(expectedHex: string, storedHex: unknown): boolean {
  *    expiry conditions: a row that expires between the two statements is not consumed);
  * 5. derives `open_id_hmac` with `input.openIdHmac` and reads the binding of
  *    `(app_id, open_id_hmac)` in `feishu_identities`. Found: the transaction commits and the
- *    result names the bound user. Not found, with `input.newUserId` (FSL-125
- *    first login): the same transaction inserts the Better Auth user `newUserId` with the held
- *    email and name, `email_verified = true` and `role = 'user'` (what the `admin` plugin writes
- *    for a new user), then the binding `(app_id, open_id_hmac, newUserId)` (no open_id), and
- *    commits, naming the new user; when either insert violates `user_email_unique` or
- *    `feishu_identities_app_open_id_hmac_unique` the transaction is rolled back (`conflict`: no
- *    existing account is merged, the row stays `active`). Not found, without `input.newUserId`:
- *    the transaction is rolled back (`unbound`).
- * Because of the lock, two transactions that lock the same row run one after the other: when the
- * first one consumed the row and committed, the second one reads it as `consumed` and is `invalid`
- * (if the first one rolled back, the second one goes on). The open_id leaves the row only as its HMAC; nothing
- * else of the hold is returned.
+ *    result names the bound user. Not found, without `input.newUserId`: the transaction is rolled
+ *    back (`unbound`). Not found, with `input.newUserId` (first login, FSL-125 and FSL-152):
+ *    a. the transaction takes the member's identity advisory lock
+ *       (`FEISHU_LOGIN_IDENTITY_LOCK_CLASS`, `feishuLoginIdentityLockKey(open_id_hmac)`; held to
+ *       its end) and reads the binding again in a new statement, so after any wait for that lock
+ *       it sees a binding that a concurrent first login of the same member committed meanwhile;
+ *       found, the transaction commits naming that user, as in a later login;
+ *    b. still not found, it sets a savepoint and inserts the Better Auth user `newUserId` with the
+ *       held email and name, `email_verified = true` and `role = 'user'` (what the `admin` plugin
+ *       writes for a new user), then the binding `(app_id, open_id_hmac, newUserId)` (no
+ *       open_id), and commits, naming the new user;
+ *    c. when the insert of the user violates `user_email_unique` (a local user already holds the
+ *       email), it rolls back to the savepoint and commits only the consumption (`conflict`:
+ *       nothing is merged, no user is created or changed, no binding is written);
+ *    d. any other failure of the two inserts (including a violation of
+ *       `feishu_identities_app_open_id_hmac_unique`, which only a writer bypassing the identity
+ *       lock could cause) rolls the whole transaction back — the user, the binding and the
+ *       consumption, so the row stays `active` — and throws `FEISHU_LOGIN_ACCOUNT_CREATE_FAILED`
+ *       without the database error (its detail may name the email).
+ * Because of the row lock, two transactions that lock the same row run one after the other: when
+ * the first one consumed the row and committed, the second one reads it as `consumed` and is
+ * `invalid` (if the first one rolled back, the second one goes on). Two first logins of the same
+ * member through different rows (two flows) meet at the identity lock: the one that takes it
+ * second waits until the first one has committed or rolled back, then finds the binding the first
+ * one committed (or, after a rollback, creates the account itself), so they create at most one
+ * user and one binding for that member. The identity lock is the only advisory lock of this
+ * transaction and is taken after its only row lock of `feishu_login_codes`; a holder of it waits
+ * for no lock of `feishu_login_codes` and for no flow, email or global lock (it can only wait for
+ * a concurrent insert of the same email into `user` by a transaction that does not wait for it),
+ * so it adds no deadlock. The open_id leaves the row only as its HMAC; nothing else of the hold is
+ * returned.
  */
 export async function consumeFeishuLoginCode(
   pool: Pool,
@@ -667,6 +708,10 @@ export async function consumeFeishuLoginCode(
   if (newUserId !== undefined) assertText(newUserId, "INVALID_FEISHU_LOGIN_NEW_USER_ID");
   try {
     return await inTransaction(pool, async (client) => {
+      // FSL-152: fixed to READ COMMITTED whatever the database or session default is, so every
+      // statement below reads with a fresh snapshot: the binding read again after the identity
+      // lock sees a binding a concurrent first login committed while this transaction waited.
+      await client.query("set transaction isolation level read committed");
       // The row lock comes first, in a statement of its own, so everything below is read after any
       // wait for it. It names no column but the id.
       const locked = await client.query<{ id: string }>(
@@ -767,9 +812,26 @@ export async function consumeFeishuLoginCode(
       const userId = binding.rows[0]?.user_id;
       if (userId !== undefined) return { kind: "consumed", userId } as const;
       if (newUserId === undefined) throw UNBOUND;
-      // First login (FSL-125): the account and its binding, in this transaction, so they commit
-      // with the consumption or not at all. A unique violation aborts the transaction; it is
-      // rolled back as a `conflict` without reporting the error (its detail names the email).
+      // First login (FSL-152): the first logins of one member are serialized by its identity lock,
+      // and the binding is read again after it, so a concurrent first login that committed the
+      // binding meanwhile is found here instead of creating a second user.
+      await client.query("select pg_advisory_xact_lock($1::int4, $2::int4)", [
+        FEISHU_LOGIN_IDENTITY_LOCK_CLASS,
+        feishuLoginIdentityLockKey(openIdHmac),
+      ]);
+      const rebound = await client.query<{ user_id: string }>(
+        "select user_id from feishu_identities where app_id = $1 and open_id_hmac = $2",
+        [input.appId, openIdHmac],
+      );
+      const lockedUserId = rebound.rows[0]?.user_id;
+      if (lockedUserId !== undefined) return { kind: "consumed", userId: lockedUserId } as const;
+      // FSL-125: the account and its binding, in this transaction, so they commit with the
+      // consumption or not at all. FSL-152: a local user that already holds the email is not
+      // merged; only the account creation is rolled back (to the savepoint) and the consumption
+      // commits. Any other failure rolls everything back. No database error of these inserts is
+      // reported (its detail may name the email).
+      await client.query(`savepoint ${ACCOUNT_SAVEPOINT}`);
+      let creation: "created" | "conflict" | "failed" = "created";
       try {
         await client.query(
           `insert into "user" (id, name, email, email_verified, role) values ($1, $2, $3, true, 'user')`,
@@ -780,14 +842,20 @@ export async function consumeFeishuLoginCode(
           [input.appId, openIdHmac, newUserId],
         );
       } catch (error) {
-        if (isAccountConflict(error)) throw CONFLICT;
-        throw error;
+        creation = isEmailConflict(error) ? "conflict" : "failed";
       }
+      // The database error is dropped on purpose (not even as a cause): its detail may name the
+      // email. Throwing rolls the whole transaction back.
+      if (creation === "failed") throw new Error(FEISHU_LOGIN_ACCOUNT_CREATE_FAILED);
+      if (creation === "conflict") {
+        await client.query(`rollback to savepoint ${ACCOUNT_SAVEPOINT}`);
+        return { kind: "conflict" } as const;
+      }
+      await client.query(`release savepoint ${ACCOUNT_SAVEPOINT}`);
       return { kind: "consumed", userId: newUserId } as const;
     });
   } catch (error) {
     if (error === UNBOUND) return { kind: "unbound" };
-    if (error === CONFLICT) return { kind: "conflict" };
     throw error;
   }
 }

@@ -1,7 +1,8 @@
-// megaui:packages/auth/src/enterprise-otp/verify.ts@24a8551 (megaui-only FSL-124, FSL-151, FSL-125: the verify endpoint of the Feishu login)
+// megaui:packages/auth/src/enterprise-otp/verify.ts@24a8551 (megaui-only FSL-124, FSL-151, FSL-125, FSL-152: the verify endpoint of the Feishu login)
 /**
- * FSL-124 (success path), FSL-151 (failure path and concurrency) and FSL-125 (first-login account
- * creation): `POST /feishu-login/verify` (ADR-FSL-11 「校验」).
+ * FSL-124 (success path), FSL-151 (failure path and concurrency), FSL-125 (first-login account
+ * creation) and FSL-152 (its conflict, rollback and concurrency): `POST /feishu-login/verify`
+ * (ADR-FSL-11 「校验」).
  *
  * - The request is `application/json` and its body (at most 4096 bytes) is exactly
  *   `{ "code": <string> }`; the code is trimmed and uppercased and must then be 8 characters of
@@ -12,11 +13,13 @@
  *   email, open_id, name and code HMAC cleared, and the binding of `(app_id, open_id_hmac)` read,
  *   where `open_id_hmac` is
  *   HMAC-SHA256(`ENTERPRISE_OTP_HMAC_KEY`, "feishu-identity:v1:" + app_id + ":" + open_id).
- *   When the member has no binding (first login, FSL-125), the same transaction creates a Better
- *   Auth user (a fresh ID from the Better Auth ID generator, the login email held by the row,
- *   `emailVerified = true`, the name read when the code was issued) and inserts the binding
- *   `(app_id, open_id_hmac, user_id)`; the open_id itself is never stored. A later login of the
- *   same member finds that binding and creates neither a user nor a binding.
+ *   When the member has no binding (first login, FSL-125), the same transaction takes the
+ *   member's identity lock, reads the binding again (a concurrent first login of the same member
+ *   that committed it meanwhile is found, so only one user is created, FSL-152), and otherwise
+ *   creates a Better Auth user (a fresh ID from the Better Auth ID generator, the login email held
+ *   by the row, `emailVerified = true`, the name read when the code was issued) and inserts the
+ *   binding `(app_id, open_id_hmac, user_id)`; the open_id itself is never stored. A later login of
+ *   the same member finds that binding and creates neither a user nor a binding.
  *   A wrong code compared against such a row adds one to its `failed_attempts`; the wrong code that
  *   brings it to 5 (`FEISHU_LOGIN_MAX_FAILED_ATTEMPTS`) also turns it `void` with those four fields
  *   cleared, so the correct code no longer succeeds. Concurrent submissions that lock the same row
@@ -25,12 +28,17 @@
  * - After that commit a plain Better Auth session (8 hours, no enterprise field) is issued with
  *   `internalAdapter.createSession`, marked in `feishu_login_sessions`, and its cookie set: 200
  *   `{ "status": "ok" }`.
+ * - FSL-152: when a local user already holds the login email of a member without a binding, nothing
+ *   is merged: no user is created or changed and no binding is written, the consumption of the
+ *   code commits, the stable log key `FEISHU_LOGIN_ACCOUNT_CONFLICT` (nothing else) is logged, and
+ *   the answer is 409 `{ "status": "account_conflict" }` without a session cookie.
+ * - FSL-152: any other failure of the account creation rolls the whole transaction back (no user,
+ *   no binding, and the row stays `active`, so the same code can be submitted again) and the
+ *   endpoint throws `FEISHU_LOGIN_ACCOUNT_CREATE_FAILED` without the database error.
  * - Every other outcome — no flow cookie, no row, a newest row that is not an unexpired `active`
- *   one (expired, `reserved`, `void` — including voided by the failure limit — or `consumed`), a
- *   wrong code, or (until FSL-152 defines its answers) a member without a binding whose account
- *   cannot be created because a local user already holds the email or a concurrent first login of
- *   the same member committed its binding first (rolled back: nothing merged, the row stays
- *   `active`) — answers the same 401 `{ "status": "invalid" }`. The compensation of a failed
+ *   one (expired, `reserved`, `void` — including voided by the failure limit — or `consumed`), or
+ *   a wrong code — answers the same 401 `{ "status": "invalid" }` (so would an `unbound` result,
+ *   which this endpoint never gets: it always passes `newUserId`). The compensation of a failed
  *   session issue is FSL-169.
  */
 import { createHmac } from "node:crypto";
@@ -54,6 +62,11 @@ export const FEISHU_LOGIN_VERIFY_MAX_BODY_BYTES = 4096;
 
 const HMAC_KEY_BYTES = 32;
 
+/** Logged when a local user already holds the login email of a member without a binding (FSL-152). */
+export const FEISHU_LOGIN_ACCOUNT_CONFLICT = "FEISHU_LOGIN_ACCOUNT_CONFLICT";
+
+export type FeishuLoginVerifyLogKey = typeof FEISHU_LOGIN_ACCOUNT_CONFLICT;
+
 export interface FeishuLoginVerifyOptions {
   /** The pool that holds `feishu_login_codes`, `feishu_identities` and `feishu_login_sessions`. */
   readonly pool: DatabaseClient["pool"];
@@ -61,6 +74,8 @@ export interface FeishuLoginVerifyOptions {
   readonly appId: string;
   /** The decoded 32-byte `ENTERPRISE_OTP_HMAC_KEY`. Private: never logged. */
   readonly otpHmacKey: Uint8Array;
+  /** Receives stable log keys only (FSL-152). Defaults to `console.warn`. */
+  readonly log?: (key: FeishuLoginVerifyLogKey) => void;
 }
 
 /** Validated verify options; the key is copied so later changes of the caller's buffer do not apply. */
@@ -73,11 +88,25 @@ export function readFeishuLoginVerifyOptions(options: FeishuLoginVerifyOptions):
     typeof options.appId !== "string" ||
     options.appId.trim() === "" ||
     !(options.otpHmacKey instanceof Uint8Array) ||
-    options.otpHmacKey.length !== HMAC_KEY_BYTES
+    options.otpHmacKey.length !== HMAC_KEY_BYTES ||
+    (options.log !== undefined && typeof options.log !== "function")
   ) {
     throw new Error("INVALID_FEISHU_LOGIN_PLUGIN_CONFIG");
   }
-  return { pool: options.pool, appId: options.appId, otpHmacKey: Uint8Array.from(options.otpHmacKey) };
+  return {
+    pool: options.pool,
+    appId: options.appId,
+    otpHmacKey: Uint8Array.from(options.otpHmacKey),
+    ...(options.log === undefined ? {} : { log: options.log }),
+  };
+}
+
+function reportVerify(options: FeishuLoginVerifyOptions, key: FeishuLoginVerifyLogKey): void {
+  try {
+    (options.log ?? console.warn)(key);
+  } catch {
+    // A failing logger must not change the answer.
+  }
 }
 
 /**
@@ -168,12 +197,14 @@ export async function precheckFeishuLoginVerifyHttpRequest(request: Request): Pr
 export const FEISHU_LOGIN_VERIFY_INVALID_INPUT = { code: "INVALID_INPUT" } as const;
 export const FEISHU_LOGIN_VERIFY_INVALID = { status: "invalid" } as const;
 export const FEISHU_LOGIN_VERIFY_OK = { status: "ok" } as const;
+export const FEISHU_LOGIN_VERIFY_ACCOUNT_CONFLICT = { status: "account_conflict" } as const;
 
 type BetterAuthEndpointContext = Parameters<typeof setSessionCookie>[0];
 
 export type FeishuLoginVerifyResponse =
   | { readonly status: 400; readonly body: typeof FEISHU_LOGIN_VERIFY_INVALID_INPUT }
   | { readonly status: 401; readonly body: typeof FEISHU_LOGIN_VERIFY_INVALID }
+  | { readonly status: 409; readonly body: typeof FEISHU_LOGIN_VERIFY_ACCOUNT_CONFLICT }
   | { readonly status: 200; readonly body: typeof FEISHU_LOGIN_VERIFY_OK };
 
 /**
@@ -208,7 +239,7 @@ function newFeishuLoginUserId(ctx: BetterAuthEndpointContext): string {
 /**
  * Decides one verify call from its parsed body and its `Cookie` / `Content-Type` headers, and on
  * success issues the session on `ctx`. The body is checked first (400), then the flow and the
- * code (401 or 200).
+ * code (401, 409 or 200).
  */
 export async function verifyFeishuLoginCode(
   ctx: BetterAuthEndpointContext,
@@ -230,6 +261,10 @@ export async function verifyFeishuLoginCode(
     openIdHmac: (openId) => feishuLoginOpenIdHmac(options.otpHmacKey, options.appId, openId),
     newUserId: newFeishuLoginUserId(ctx),
   });
+  if (result.kind === "conflict") {
+    reportVerify(options, FEISHU_LOGIN_ACCOUNT_CONFLICT);
+    return { status: 409, body: FEISHU_LOGIN_VERIFY_ACCOUNT_CONFLICT };
+  }
   if (result.kind !== "consumed") return { status: 401, body: FEISHU_LOGIN_VERIFY_INVALID };
   await issueFeishuLoginSession(ctx, options, result.userId);
   return { status: 200, body: FEISHU_LOGIN_VERIFY_OK };

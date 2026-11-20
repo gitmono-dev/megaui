@@ -1,15 +1,19 @@
-// FSL-125: the first Feishu login creates the account. Driven through the real `createAuth`
-// handler against a one-shot PostgreSQL that starts without any user or Feishu identity binding;
-// codes are written through the issue store's `reserve` / `activate`, as the issue service does.
+// FSL-125: the first Feishu login creates the account; FSL-152: its conflict, rollback and
+// concurrency. Driven through the real `createAuth` handler against a one-shot PostgreSQL that
+// starts without any user or Feishu identity binding; codes are written through the issue store's
+// `reserve` / `activate`, as the issue service does.
 import { createHash, createHmac, randomBytes } from "node:crypto";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { inspect } from "node:util";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   cleanupFeishuLoginCodes,
   createDatabaseClient,
   createFeishuLoginCodeStore,
+  FEISHU_LOGIN_IDENTITY_LOCK_CLASS,
   feishuLoginCodeHmac,
   feishuLoginEmailHmac,
+  feishuLoginIdentityLockKey,
   type DatabaseClient,
 } from "@megaui/database";
 import { createIsolatedPostgres, isDockerAvailable, type IsolatedPostgres } from "@megaui/database/test-support";
@@ -49,7 +53,11 @@ function expectedOpenIdHmac(openId: string): string {
   return createHmac("sha256", KEY).update(`feishu-identity:v1:${APP_ID}:${openId}`, "utf8").digest("hex");
 }
 
-function buildAuth() {
+/** The verify log of the auth built by `beforeEach`; reset for every case. */
+let verifyLog = vi.fn();
+
+/** `null` builds the auth without a `log` option (the default logger). */
+function buildAuth(log: ((key: string) => void) | null = verifyLog) {
   return createAuth({
     appName: "megaui-test",
     secret: "test-secret-at-least-32-characters-long",
@@ -59,7 +67,7 @@ function buildAuth() {
     nodeEnv: "test",
     feishuLogin: {
       issue: { reserve: async () => undefined, deliver: async () => undefined },
-      verify: { pool: database.pool, appId: APP_ID, otpHmacKey: KEY },
+      verify: { pool: database.pool, appId: APP_ID, otpHmacKey: KEY, ...(log === null ? {} : { log }) },
     },
   });
 }
@@ -83,13 +91,19 @@ interface Member {
   readonly openId?: string;
   readonly name?: string;
   readonly code?: string;
+  /**
+   * Computes the row's email HMAC from this string instead of the email. Only the FSL-152
+   * concurrency case uses it, to hold two `active` rows of one email at once (an activation voids
+   * every other `active` row of the same email HMAC).
+   */
+  readonly emailHmacOf?: string;
 }
 
 /** Reserves and activates a code for `flow`, holding the member's email, open_id and name. */
 async function activeCode(flow: string, member: Member = {}): Promise<string> {
   const email = member.email ?? EMAIL;
   const store = createFeishuLoginCodeStore(database.pool);
-  const emailHmac = feishuLoginEmailHmac(KEY, email);
+  const emailHmac = feishuLoginEmailHmac(KEY, member.emailHmacOf ?? email);
   // The cooldown counts every row of the email; earlier rows are moved out of it.
   await database.pool.query("update feishu_login_codes set created_at = created_at - interval '1 hour'");
   const reserved = await store.reserve({ flowHash: sha256Hex(flow), emailHmac });
@@ -175,6 +189,66 @@ async function sessionUser(auth: Auth, response: Response): Promise<{ id?: strin
   return body?.user;
 }
 
+/** Every column of every user, to show that nothing of them changed. */
+async function fullUsers(): Promise<Array<Record<string, unknown>>> {
+  return (await database.pool.query(`select * from "user" order by id`)).rows;
+}
+
+/** A local user holding `email`, with no Feishu identity binding. */
+async function insertLocalUser(id: string, email: string): Promise<void> {
+  await database.pool.query(
+    `insert into "user" (id, name, email, email_verified) values ($1, 'Local', $2, false)`,
+    [id, email],
+  );
+}
+
+/** FSL-152 AC3: a trigger that fails every insert into `table`; its message names the new row. */
+async function injectFailure(table: "user" | "feishu_identities"): Promise<void> {
+  await database.pool.query(`create or replace function fsl152_inject_failure() returns trigger language plpgsql as $$
+    begin raise exception 'FSL-152 injected failure %', row_to_json(new)::text; end $$`);
+  await database.pool.query(
+    `create trigger fsl152_inject_failure before insert on "${table}" for each row execute function fsl152_inject_failure()`,
+  );
+}
+
+async function removeFailure(table: "user" | "feishu_identities"): Promise<void> {
+  await database.pool.query(`drop trigger if exists fsl152_inject_failure on "${table}"`);
+}
+
+/** Everything written to the console from now on, as one string (the console is silenced). */
+function captureConsole(): () => string {
+  const lines: string[] = [];
+  for (const method of ["log", "info", "warn", "error", "debug"] as const) {
+    vi.spyOn(console, method).mockImplementation((...args: unknown[]) => {
+      lines.push(args.map(arg => (typeof arg === "string" ? arg : inspect(arg, { depth: 10 }))).join(" "));
+    });
+  }
+  return () => lines.join("\n");
+}
+
+/** The second key of the member's identity advisory lock (FSL-152). */
+function identityLockKey(): number {
+  return feishuLoginIdentityLockKey(expectedOpenIdHmac(OPEN_ID));
+}
+
+/** Requests for the member's identity lock that are waiting (not granted). */
+async function identityLockWaiters(): Promise<number> {
+  return (await database.pool.query<{ n: number }>(
+    `select count(*)::int as n from pg_locks
+      where locktype = 'advisory' and database = (select oid from pg_database where datname = current_database())
+        and classid = $1::bigint::oid and objid = $2::bigint::oid and objsubid = 2 and not granted`,
+    [FEISHU_LOGIN_IDENTITY_LOCK_CLASS, identityLockKey() >>> 0],
+  )).rows[0]!.n;
+}
+
+async function waitFor(condition: () => Promise<boolean>, timeoutMs = 10_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!(await condition())) {
+    if (Date.now() > deadline) throw new Error("waitFor: timed out");
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+}
+
 /** A first login of the member through its own flow; it must answer 200. */
 async function firstLogin(auth: Auth, member: Member = {}): Promise<Response> {
   const flow = newFlow();
@@ -185,7 +259,7 @@ async function firstLogin(auth: Auth, member: Member = {}): Promise<Response> {
   return response;
 }
 
-describe("feishu login first-login account creation (FSL-125)", () => {
+describe("feishu login first-login account creation (FSL-125) and its conflict, rollback and concurrency (FSL-152)", () => {
   let auth: Auth;
 
   beforeAll(async () => {
@@ -197,8 +271,13 @@ describe("feishu login first-login account creation (FSL-125)", () => {
   beforeEach(async () => {
     await database.pool.query(`delete from feishu_login_sessions; delete from session; delete from feishu_identities;
       delete from feishu_login_codes; delete from "user"`);
+    verifyLog = vi.fn();
     auth = buildAuth();
     await auth.$context;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   afterAll(async () => {
@@ -344,21 +423,194 @@ describe("feishu login first-login account creation (FSL-125)", () => {
     expect(await sessionCount()).toBe(0);
   });
 
-  it("does not merge a local user that already holds the email: the transaction is rolled back (401 until FSL-152)", async () => {
-    await database.pool.query(
-      `insert into "user" (id, name, email, email_verified) values ('fsl125-local', 'Local', $1, false)`,
-      [EMAIL],
-    );
-    const before = await users();
+  it("FSL-152 AC1: a local user that already holds the email answers 409 account_conflict and logs FEISHU_LOGIN_ACCOUNT_CONFLICT", async () => {
+    await insertLocalUser("fsl152-local", EMAIL);
     const flow = newFlow();
     const id = await activeCode(flow);
     const response = await verify(auth, CODE, flow);
-    expect(response.status).toBe(401);
-    expect(await response.json()).toEqual({ status: "invalid" });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ status: "account_conflict" });
+    expect(response.headers.get("cache-control")).toBe("no-store");
     expect(sessionCookie(response)).toBeUndefined();
-    expect(await users()).toEqual(before);
-    expect(await identities()).toHaveLength(0);
-    expect((await codeRow(id)).state).toBe("active");
     expect(await sessionCount()).toBe(0);
+    // Only the stable key is logged, once.
+    expect(verifyLog.mock.calls).toEqual([["FEISHU_LOGIN_ACCOUNT_CONFLICT"]]);
+    // The consumption committed: the row is consumed with its hold cleared, so the same code is
+    // not accepted again.
+    expect(await codeRow(id)).toMatchObject({ state: "consumed", email: null, open_id: null, display_name: null, code_hmac: null });
+    const again = await verify(auth, CODE, flow);
+    expect(again.status).toBe(401);
+    expect(await again.json()).toEqual({ status: "invalid" });
+    expect(verifyLog).toHaveBeenCalledTimes(1);
   });
+
+  it("FSL-152 AC2: the conflict creates or changes no user and writes no binding", async () => {
+    await insertLocalUser("fsl152-local", EMAIL);
+    await insertLocalUser("fsl152-other", "someone.else@example.com");
+    const before = await fullUsers();
+    const flow = newFlow();
+    await activeCode(flow);
+    expect((await verify(auth, CODE, flow)).status).toBe(409);
+    expect(await fullUsers()).toEqual(before);
+    expect(await identities()).toHaveLength(0);
+  });
+
+  it("FSL-152 AC2: a user of another member that holds the email is neither merged nor changed, and its binding is kept", async () => {
+    // Another member signed up first with this email (it was reassigned since).
+    await firstLogin(auth, { openId: "ou_fsl152_previous_holder" });
+    const usersBefore = await fullUsers();
+    const identitiesBefore = await identities();
+    const flow = newFlow();
+    await activeCode(flow, { code: SECOND_CODE });
+    const response = await verify(auth, SECOND_CODE, flow);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ status: "account_conflict" });
+    expect(await fullUsers()).toEqual(usersBefore);
+    expect(await identities()).toEqual(identitiesBefore);
+    expect(await sessionCount()).toBe(1);
+  });
+
+  it("FSL-152: the default logger receives only the stable key, and a throwing logger does not change the answer", async () => {
+    await insertLocalUser("fsl152-local", EMAIL);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const defaultAuth = buildAuth(null);
+    await defaultAuth.$context;
+    const flow = newFlow();
+    await activeCode(flow);
+    expect((await verify(defaultAuth, CODE, flow)).status).toBe(409);
+    expect(warn.mock.calls).toEqual([["FEISHU_LOGIN_ACCOUNT_CONFLICT"]]);
+
+    const throwingAuth = buildAuth(() => { throw new Error("logger down"); });
+    await throwingAuth.$context;
+    const second = newFlow();
+    await activeCode(second, { code: SECOND_CODE });
+    const response = await verify(throwingAuth, SECOND_CODE, second);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ status: "account_conflict" });
+  });
+
+  it.each([
+    ["the user insert", "user"],
+    ["the binding insert, after the user insert", "feishu_identities"],
+  ] as const)("FSL-152 AC3: a failure injected into %s rolls back the user, the binding and the consumption", async (_step, table) => {
+    const flow = newFlow();
+    const id = await activeCode(flow);
+    const rowBefore = await fullCodeRow(id);
+    const output = captureConsole();
+    await injectFailure(table);
+    let response: Response;
+    try {
+      response = await verify(auth, CODE, flow);
+    } finally {
+      await removeFailure(table);
+    }
+    expect(response.status).toBe(500);
+    expect(sessionCookie(response)).toBeUndefined();
+    // The database error (whose message here names the email) is not reported.
+    const body = await response.text();
+    expect(body).not.toContain(EMAIL);
+    expect(body).not.toContain("injected failure");
+    expect(output()).not.toContain(EMAIL);
+    expect(output()).not.toContain("injected failure");
+    expect(await users()).toHaveLength(0);
+    expect(await identities()).toHaveLength(0);
+    expect(await fullCodeRow(id)).toEqual(rowBefore);
+    expect(await sessionCount()).toBe(0);
+    expect(verifyLog).not.toHaveBeenCalled();
+    // The code is still active, so the same code can be submitted again once the failure is gone.
+    const retry = await verify(auth, CODE, flow);
+    expect(retry.status).toBe(200);
+    const created = await users();
+    expect(created).toHaveLength(1);
+    expect((await sessionUser(auth, retry))?.id).toBe(created[0]!.id);
+  });
+
+  /**
+   * Two first logins of the member through two flows, interleaved at the identity lock: a third
+   * connection holds the member's identity lock, so both verify transactions consume their own
+   * row, find no binding and then wait for the lock on their own connections; once both wait, the
+   * lock is released. Asserts that both answer 200 with one user and one binding.
+   */
+  async function interleavedFirstLogins(authUnderTest: Auth, second: Member): Promise<void> {
+    const flowA = newFlow();
+    const flowB = newFlow();
+    const idA = await activeCode(flowA);
+    const idB = await activeCode(flowB, { ...second, code: SECOND_CODE });
+    expect((await codeRow(idA)).state).toBe("active");
+    expect((await codeRow(idB)).state).toBe("active");
+    const holder = await database.pool.connect();
+    let responses: Response[];
+    try {
+      await holder.query("select pg_advisory_lock($1::int4, $2::int4)", [FEISHU_LOGIN_IDENTITY_LOCK_CLASS, identityLockKey()]);
+      const pending = Promise.all([verify(authUnderTest, CODE, flowA), verify(authUnderTest, SECOND_CODE, flowB)]);
+      await waitFor(async () => (await identityLockWaiters()) === 2);
+      expect(await users()).toHaveLength(0);
+      await holder.query("select pg_advisory_unlock($1::int4, $2::int4)", [FEISHU_LOGIN_IDENTITY_LOCK_CLASS, identityLockKey()]);
+      responses = await pending;
+    } finally {
+      await holder.query("select pg_advisory_unlock_all()").catch(() => undefined);
+      holder.release();
+    }
+    expect(responses.map(response => response.status)).toEqual([200, 200]);
+    const created = await users();
+    expect(created).toHaveLength(1);
+    expect((await identities()).map(row => row.user_id)).toEqual([created[0]!.id]);
+    for (const response of responses) expect((await sessionUser(auth, response))?.id).toBe(created[0]!.id);
+    expect((await codeRow(idA)).state).toBe("consumed");
+    expect((await codeRow(idB)).state).toBe("consumed");
+    expect(verifyLog).not.toHaveBeenCalled();
+  }
+
+  it.each([
+    ["with two emails of the member", { email: SECOND_EMAIL }],
+    ["with the same email", { emailHmacOf: SECOND_EMAIL }],
+  ] as const)("FSL-152 AC4: two first logins of one member interleaved at the identity lock %s create one user", async (_case, second) => {
+    await interleavedFirstLogins(auth, second);
+  }, 30_000);
+
+  it.each([
+    ["with two emails of the member", { email: SECOND_EMAIL }],
+    ["with the same email", { emailHmacOf: SECOND_EMAIL }],
+  ] as const)("FSL-152 AC4: the interleaved first logins %s create one user when the default isolation level is REPEATABLE READ", async (_case, second) => {
+    // Every connection of this pool starts with REPEATABLE READ as its default isolation level;
+    // the verify transaction must not depend on that default.
+    const url = new URL(isolated.databaseUrl);
+    url.searchParams.set("options", "-c default_transaction_isolation=repeatable\\ read");
+    const repeatable = createDatabaseClient({ connectionString: url.toString(), max: 4, onPoolError: () => {} });
+    try {
+      expect((await repeatable.pool.query<{ level: string }>("select current_setting('default_transaction_isolation') as level")).rows[0]!.level)
+        .toBe("repeatable read");
+      const repeatableAuth = createAuth({
+        appName: "megaui-test",
+        secret: "test-secret-at-least-32-characters-long",
+        baseURL: ORIGIN,
+        db: repeatable.db,
+        email: { sendVerificationEmail: vi.fn(), sendResetPasswordEmail: vi.fn() } as never,
+        nodeEnv: "test",
+        feishuLogin: {
+          issue: { reserve: async () => undefined, deliver: async () => undefined },
+          verify: { pool: repeatable.pool, appId: APP_ID, otpHmacKey: KEY, log: verifyLog },
+        },
+      });
+      await repeatableAuth.$context;
+      await interleavedFirstLogins(repeatableAuth, second);
+    } finally {
+      await repeatable.close();
+    }
+  }, 30_000);
+
+  it("FSL-152 AC4: two uncontrolled concurrent first logins of one member create one user", async () => {
+    for (let round = 0; round < 5; round += 1) {
+      await database.pool.query(`delete from feishu_login_sessions; delete from session; delete from feishu_identities;
+        delete from feishu_login_codes; delete from "user"`);
+      const flowA = newFlow();
+      const flowB = newFlow();
+      await activeCode(flowA);
+      await activeCode(flowB, { email: SECOND_EMAIL, code: SECOND_CODE });
+      const responses = await Promise.all([verify(auth, CODE, flowA), verify(auth, SECOND_CODE, flowB)]);
+      expect(responses.map(response => response.status)).toEqual([200, 200]);
+      expect(await users()).toHaveLength(1);
+      expect(await identities()).toHaveLength(1);
+    }
+  }, 30_000);
 });
