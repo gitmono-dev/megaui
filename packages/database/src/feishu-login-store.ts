@@ -5,8 +5,12 @@
 // decide what is stored. The email and the code only ever reach the table as keyed HMACs,
 // except for the short-lived hold of an `active` row (ADR-FSL-11, FSL-119 two-way CHECK).
 //
-// Four transactions, none of which spans a Feishu call:
-// - `reserve` takes the email lock, writes the `reserved` row of one request and commits;
+// Five transactions, none of which spans a Feishu call:
+// - `reserve` takes the email lock, then the global lock (FSL-145), decides the cooldown and
+//   the global budget while holding both, and only when both pass writes the `reserved` row
+//   of one request and commits; a refused request writes nothing;
+// - `beginDelivery` runs before the first Feishu call of a reservation: an expired one is
+//   voided and nothing may be called (FSL-145);
 // - `activate` serializes one email with a transaction-scoped advisory lock and locks this
 //   row `FOR UPDATE`; only an unexpired `reserved` row with no reservation of a larger
 //   `email_seq` for the same email HMAC is activated (FSL-149): every `active` row of that
@@ -16,7 +20,6 @@
 // - `voidReservation` has the same shape and turns this row `void`;
 // - `voidRejectedSend` writes back a send that Feishu rejected on every attempt: a
 //   conditional update that only voids the row while it is still `active` and unexpired.
-// The cooldown and the global budget of the reservation belong to FSL-145.
 import { createHmac, randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 
@@ -36,6 +39,21 @@ export const FEISHU_LOGIN_CODE_HMAC_LABEL = "feishu-login-code:v1:";
  * serializes more, never less.
  */
 export const FEISHU_LOGIN_EMAIL_LOCK_CLASS = 0x46534c01;
+
+/**
+ * The global advisory lock of every reservation ("FSL" + 0x02, key 0), taken after the email
+ * lock (FSL-145): reservations of all emails, on all instances, decide the global budget one
+ * after another.
+ */
+export const FEISHU_LOGIN_GLOBAL_LOCK_CLASS = 0x46534c02;
+export const FEISHU_LOGIN_GLOBAL_LOCK_KEY = 0;
+
+/** A second reservation of one email HMAC within this many seconds is refused (FSL-145). */
+export const FEISHU_LOGIN_COOLDOWN_SECONDS = 60;
+/** The sliding window of the global budget, in seconds (FSL-145). */
+export const FEISHU_LOGIN_GLOBAL_BUDGET_WINDOW_SECONDS = 60;
+/** At most this many reservations, of all emails and instances, per window (FSL-145). */
+export const FEISHU_LOGIN_GLOBAL_BUDGET = 120;
 
 const HMAC_KEY_BYTES = 32;
 const HEX_64 = /^[0-9a-f]{64}$/;
@@ -98,7 +116,20 @@ export interface FeishuLoginReserveInput {
 export type FeishuLoginReserveResult =
   | { readonly kind: "reserved"; readonly id: string }
   /** A concurrent reservation took the same order number; the request is retried. */
-  | { readonly kind: "retry" };
+  | { readonly kind: "retry" }
+  /** The email HMAC already has a reservation of the last 60 seconds; nothing was written. */
+  | { readonly kind: "cooldown" }
+  /** 120 reservations of the last 60 seconds exist (all emails); nothing was written. */
+  | { readonly kind: "budget" };
+
+export type FeishuLoginDeliveryResult =
+  /** The reservation is still an unexpired `reserved` row: the Feishu calls may start. */
+  | { readonly kind: "live" }
+  /**
+   * Nothing may be called: the row is no longer `reserved` (`not_reserved`, left as it is) or
+   * has passed its `expires_at` (`expired`, now voided).
+   */
+  | { readonly kind: "not_reserved"; readonly reason: "not_reserved" | "expired" };
 
 export interface FeishuLoginActivateInput {
   readonly id: string;
@@ -133,6 +164,8 @@ export interface FeishuLoginVoidInput {
 
 export interface FeishuLoginCodeStore {
   readonly reserve: (input: FeishuLoginReserveInput) => Promise<FeishuLoginReserveResult>;
+  /** Checks a reservation before its first Feishu call; an expired one is voided (FSL-145). */
+  readonly beginDelivery: (input: FeishuLoginVoidInput) => Promise<FeishuLoginDeliveryResult>;
   readonly activate: (input: FeishuLoginActivateInput) => Promise<FeishuLoginActivateResult>;
   readonly voidReservation: (input: FeishuLoginVoidInput) => Promise<void>;
   /**
@@ -174,6 +207,7 @@ export function createFeishuLoginCodeStore(pool: Pool): FeishuLoginCodeStore {
       assertHex(input?.flowHash, "INVALID_FEISHU_LOGIN_FLOW_HASH");
       assertHex(input.emailHmac, "INVALID_FEISHU_LOGIN_EMAIL_HMAC");
       const id = randomUUID();
+      let refused: "cooldown" | "budget" | undefined;
       try {
         await inTransaction(pool, async (client) => {
           // The email lock serializes this reservation with every activation of the email:
@@ -182,10 +216,50 @@ export function createFeishuLoginCodeStore(pool: Pool): FeishuLoginCodeStore {
           // plus one under that lock. The unique indexes of FSL-163 remain as a defence in
           // depth: a writer that would bypass the lock and read the same maximum collides,
           // and the later committer fails instead of sharing an order number.
-          // The creation time is read once after the lock (`clock_timestamp()`, not the
-          // transaction start `now()`), so waiting for the lock never shortens the two-minute
-          // reservation and creation times follow the commit order.
           await lockEmail(client, input.emailHmac);
+          // FSL-145: the global lock, always after the email lock (activations only take the
+          // email lock, so the order never deadlocks). Every reservation of every email and
+          // instance decides the budget under it, so two of them never both see the last
+          // free slot. Both locks are released by the commit, before any Feishu call.
+          await client.query("select pg_advisory_xact_lock($1::int4, $2::int4)", [
+            FEISHU_LOGIN_GLOBAL_LOCK_CLASS,
+            FEISHU_LOGIN_GLOBAL_LOCK_KEY,
+          ]);
+          // The creation time is read once after both locks (`clock_timestamp()`, not the
+          // transaction start `now()`), so waiting for a lock never shortens the two-minute
+          // reservation and creation times follow the commit order. The cooldown (index
+          // `(email_hmac, created_at)`) and the budget (index `(created_at)`, counted up to
+          // the budget only) are decided against that same instant; every row counts, whatever
+          // its state, because every row was once a reservation.
+          const decision = await client.query<{ at: string; cooldown: boolean; recent: number }>(
+            `select t.at::text as at,
+                    exists (select 1 from feishu_login_codes
+                             where email_hmac = $1::text
+                               and created_at > t.at - make_interval(secs => $2::int)) as cooldown,
+                    (select count(*) from (select 1 from feishu_login_codes
+                                            where created_at > t.at - make_interval(secs => $3::int)
+                                            limit $4::int) w)::int as recent
+               from (select clock_timestamp() as at) t`,
+            [
+              input.emailHmac,
+              FEISHU_LOGIN_COOLDOWN_SECONDS,
+              FEISHU_LOGIN_GLOBAL_BUDGET_WINDOW_SECONDS,
+              FEISHU_LOGIN_GLOBAL_BUDGET,
+            ],
+          );
+          const { at, cooldown, recent } = decision.rows[0]!;
+          // A refused request writes nothing: it never extends the cooldown and never takes a
+          // slot of the budget, so retrying does not delay the recovery of either.
+          if (cooldown) {
+            refused = "cooldown";
+            return;
+          }
+          if (recent >= FEISHU_LOGIN_GLOBAL_BUDGET) {
+            refused = "budget";
+            return;
+          }
+          // `at` is the text form of the sampled instant, read back in the same session, so
+          // the stored creation time is exactly that instant (microseconds included).
           await client.query(
             `insert into feishu_login_codes
                (id, flow_hash, flow_seq, email_hmac, email_seq, state, expires_at, created_at)
@@ -193,16 +267,48 @@ export function createFeishuLoginCodeStore(pool: Pool): FeishuLoginCodeStore {
                coalesce((select max(flow_seq) from feishu_login_codes where flow_hash = $2::text), 0) + 1,
                $3::text,
                coalesce((select max(email_seq) from feishu_login_codes where email_hmac = $3::text), 0) + 1,
-               'reserved', t.at + make_interval(secs => $4::int), t.at
-             from (select clock_timestamp() as at) t`,
-            [id, input.flowHash, input.emailHmac, FEISHU_LOGIN_RESERVATION_TTL_SECONDS],
+               'reserved', $5::timestamptz + make_interval(secs => $4::int), $5::timestamptz`,
+            [id, input.flowHash, input.emailHmac, FEISHU_LOGIN_RESERVATION_TTL_SECONDS, at],
           );
         });
       } catch (error) {
         if ((error as { code?: unknown }).code === UNIQUE_VIOLATION) return { kind: "retry" };
         throw error;
       }
+      if (refused) return { kind: refused };
       return { kind: "reserved", id };
+    },
+
+    async beginDelivery(input) {
+      assertText(input?.id, "INVALID_FEISHU_LOGIN_ROW_ID");
+      assertHex(input.emailHmac, "INVALID_FEISHU_LOGIN_EMAIL_HMAC");
+      return inTransaction(pool, async (client) => {
+        await lockEmail(client, input.emailHmac);
+        // The row lock is taken by a statement of its own, so the expiry below is read after
+        // every lock wait (`clock_timestamp()`, never the transaction start `now()`).
+        await client.query("select 1 from feishu_login_codes where id = $1 and email_hmac = $2 for update", [
+          input.id,
+          input.emailHmac,
+        ]);
+        const current = await client.query<{ state: string; live: boolean }>(
+          `select state, expires_at > clock_timestamp() as live
+             from feishu_login_codes
+            where id = $1 and email_hmac = $2`,
+          [input.id, input.emailHmac],
+        );
+        const row = current.rows[0];
+        if (!row || row.state !== "reserved") return { kind: "not_reserved", reason: "not_reserved" } as const;
+        if (row.live) return { kind: "live" } as const;
+        // An expired reservation calls nothing; it is voided (a reserved row holds no sensitive
+        // field, the clearing keeps the statement uniform).
+        await client.query(
+          `update feishu_login_codes
+              set state = 'void', email = null, open_id = null, display_name = null, code_hmac = null
+            where id = $1 and state = 'reserved'`,
+          [input.id],
+        );
+        return { kind: "not_reserved", reason: "expired" } as const;
+      });
     },
 
     async activate(input) {

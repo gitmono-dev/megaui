@@ -4,10 +4,16 @@
  *
  * `issueFeishuLoginCode({ flowHash, email })` runs four steps:
  *
- * 1. the reservation transaction takes the email lock (the one activation takes), writes the
- *    `reserved` row of this request and commits;
- * 2. outside any transaction, Directory v1 finds the single member of the email and reads
- *    whether the member is in office (`FeishuContactClient`, FSL-117);
+ * 1. the reservation transaction takes the email lock (the one activation takes), then the
+ *    global lock (FSL-145), and while holding both decides the cooldown (a reservation of the
+ *    email HMAC in the last 60 seconds: `FEISHU_LOGIN_COOLDOWN`) and the global budget (120
+ *    reservations of all emails in the last 60 seconds: `FEISHU_LOGIN_GLOBAL_BUDGET`). A
+ *    refused request writes no row and calls nothing. Otherwise it writes the `reserved` row
+ *    of this request and commits, which releases both locks before any Feishu call;
+ * 2. the delivery starts (FSL-154 later splits it into its own `deliver` port): a reservation
+ *    already expired (two minutes after its creation) is voided and Feishu is never called
+ *    (FSL-145). Then, outside any transaction, Directory v1 finds the single member of the
+ *    email and reads whether the member is in office (`FeishuContactClient`, FSL-117);
  * 3. the activation transaction serializes the email with an advisory lock and locks this
  *    row; only a still unexpired `reserved` row with no later reservation (`email_seq`) of
  *    the email activates (FSL-149): every `active` row of the email HMAC (in any flow,
@@ -40,8 +46,8 @@
  * `unknown` (transient), so the service reads the HTTP status of the message request from the
  * wrapped fetch and turns a 429 into `rejected`.
  *
- * Out of this service: the cooldown, the global budget and its global lock (FSL-145),
- * the HTTP entry (FSL-123) and the cleanup (FSL-146).
+ * Out of this service: the absolute deadline of the Feishu requests (FSL-160), the HTTP entry
+ * (FSL-123) and the cleanup (FSL-146).
  */
 import { AsyncLocalStorage } from "node:async_hooks";
 
@@ -76,6 +82,10 @@ export const FEISHU_LOGIN_INACTIVE = "FEISHU_LOGIN_INACTIVE";
 export const FEISHU_LOGIN_PROVIDER_FAILED = "FEISHU_LOGIN_PROVIDER_FAILED";
 export const FEISHU_LOGIN_SEND_UNKNOWN = "FEISHU_LOGIN_SEND_UNKNOWN";
 export const FEISHU_LOGIN_SEND_REJECTED = "FEISHU_LOGIN_SEND_REJECTED";
+/** FSL-145: the email HMAC has a reservation of the last 60 seconds; no row, no Feishu call. */
+export const FEISHU_LOGIN_COOLDOWN = "FEISHU_LOGIN_COOLDOWN";
+/** FSL-145: the global budget of the last 60 seconds is spent; no row, no Feishu call. */
+export const FEISHU_LOGIN_GLOBAL_BUDGET = "FEISHU_LOGIN_GLOBAL_BUDGET";
 
 export type FeishuLoginIssueLogKey =
   | typeof FEISHU_LOGIN_SEND_ATTEMPT
@@ -83,7 +93,9 @@ export type FeishuLoginIssueLogKey =
   | typeof FEISHU_LOGIN_INACTIVE
   | typeof FEISHU_LOGIN_PROVIDER_FAILED
   | typeof FEISHU_LOGIN_SEND_UNKNOWN
-  | typeof FEISHU_LOGIN_SEND_REJECTED;
+  | typeof FEISHU_LOGIN_SEND_REJECTED
+  | typeof FEISHU_LOGIN_COOLDOWN
+  | typeof FEISHU_LOGIN_GLOBAL_BUDGET;
 
 /** How many times an `unknown` send is retried with the same UUID (three attempts at most). */
 export const FEISHU_LOGIN_SEND_MAX_RETRIES = 2;
@@ -132,6 +144,13 @@ export interface FeishuLoginIssueInput {
 export type FeishuLoginIssueResult =
   /** The reservation collided with a concurrent one; the caller answers 503 retry. */
   | { readonly status: "retry" }
+  /**
+   * FSL-145: refused before any row or Feishu call, because the email has a reservation of the
+   * last 60 seconds (`cooldown`) or the global budget is spent (`budget`). The request path
+   * answers these like any accepted request; they never depend on whether the account exists.
+   */
+  | { readonly status: "cooldown" }
+  | { readonly status: "budget" }
   /** Zero or several members, or no unique match on the first page. */
   | { readonly status: "no_target" }
   /** The single member is not in office. */
@@ -139,8 +158,10 @@ export type FeishuLoginIssueResult =
   /** A Feishu lookup failed or answered a shape the client cannot accept. */
   | { readonly status: "provider_failed" }
   /**
-   * The row was no longer an unexpired, newest reservation when activation ran (voided,
-   * consumed, expired or superseded by a later reservation of the email); nothing was sent.
+   * The row was no longer an unexpired reservation when the delivery started (FSL-145: no
+   * Feishu call at all), or no longer an unexpired, newest reservation when activation ran
+   * (voided, consumed, expired or superseded by a later reservation of the email); nothing
+   * was sent.
    */
   | { readonly status: "not_reserved" }
   /**
@@ -295,12 +316,26 @@ export function createFeishuLoginIssuer(options: FeishuLoginIssuerOptions): Feis
       const email = normalizeEmail(input?.email);
       const emailHmac = feishuLoginEmailHmac(otpHmacKey, email);
 
-      // ① Reserve and commit before any Feishu call.
+      // ① Reserve and commit before any Feishu call; the cooldown and the global budget are
+      // decided under the email lock and the global lock, and a refusal writes nothing.
       const reservation = await store.reserve({ flowHash: input.flowHash, emailHmac });
       if (reservation.kind === "retry") return { status: "retry" };
+      if (reservation.kind === "cooldown") {
+        log(FEISHU_LOGIN_COOLDOWN);
+        return { status: "cooldown" };
+      }
+      if (reservation.kind === "budget") {
+        log(FEISHU_LOGIN_GLOBAL_BUDGET);
+        return { status: "budget" };
+      }
       const id = reservation.id;
 
-      // ② Look the member up outside every transaction.
+      // ② The delivery starts: an expired reservation is voided and Feishu is never called
+      // (the budget counts reservations, each one triggers at most one delivery).
+      const delivery = await store.beginDelivery({ id, emailHmac });
+      if (delivery.kind !== "live") return { status: "not_reserved" };
+
+      // Look the member up outside every transaction.
       let openId: string;
       let displayName: string;
       try {

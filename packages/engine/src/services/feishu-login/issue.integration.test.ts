@@ -1,5 +1,5 @@
-// megaui-only (FSL-122, FSL-149): the issue main flow, its state checks and its send outcomes against a
-// one-shot PostgreSQL and a real Feishu Mock process.
+// megaui-only (FSL-122, FSL-149, FSL-145): the issue main flow, its state checks, its send outcomes, the
+// cooldown and the global budget against a one-shot PostgreSQL and a real Feishu Mock process.
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
@@ -12,6 +12,9 @@ import { admitProvider, type ProviderTarget } from "@megaui/core";
 import {
   createFeishuLoginCodeStore,
   FEISHU_LOGIN_EMAIL_LOCK_CLASS,
+  FEISHU_LOGIN_GLOBAL_BUDGET as GLOBAL_BUDGET,
+  FEISHU_LOGIN_GLOBAL_LOCK_CLASS,
+  FEISHU_LOGIN_GLOBAL_LOCK_KEY,
   feishuLoginCodeHmac,
   feishuLoginEmailHmac,
   feishuLoginEmailLockKey,
@@ -21,6 +24,8 @@ import { FEISHU_MESSAGE_PATH } from "../enterprise/feishu/message";
 import {
   createFeishuLoginIssuer,
   feishuLoginTenantKey,
+  FEISHU_LOGIN_COOLDOWN,
+  FEISHU_LOGIN_GLOBAL_BUDGET,
   FEISHU_LOGIN_INACTIVE,
   FEISHU_LOGIN_NO_TARGET,
   FEISHU_LOGIN_PROVIDER_FAILED,
@@ -35,6 +40,7 @@ const ROOT = fileURLToPath(new URL("../../../../../", import.meta.url));
 
 const ALICE = { email: "alice@example.com", openId: "ou_mock_alice", name: "Mock Alice" };
 const DAVE = { email: "dave@corp.example.com", openId: "ou_mock_dave" };
+const BOB = { email: "bob@example.com", openId: "ou_mock_bob" };
 const SHARED = "shared@corp.example.com";
 const UNKNOWN = "nobody@example.com";
 const SITE = "https://megaui.example.test";
@@ -141,6 +147,10 @@ describe("Feishu login code issue main flow with real Mock HTTP and PostgreSQL (
   let script: Map<string, ProxyAction[]>;
   /** Token requests received by the proxy. */
   let tokenRequests: number;
+  /** Every request the proxy received (any path): the Feishu calls of the service (FSL-145). */
+  let feishuRequests: number;
+  /** Requests received by the proxy, by pathname. */
+  let requestsByPath: Map<string, number>;
   /**
    * When set, a forwarded token answer carries this `expire` (seconds). 60 equals the refresh
    * margin of the token manager, so every `getToken` call starts a refresh.
@@ -188,9 +198,9 @@ describe("Feishu login code issue main flow with real Mock HTTP and PostgreSQL (
     return (JSON.parse(entry.content) as { text: string }).text;
   }
 
-  function buildIssuer(): FeishuLoginIssuer {
+  function buildIssuer(over: Pool = pool): FeishuLoginIssuer {
     return createFeishuLoginIssuer({
-      pool,
+      pool: over,
       appId: env.FEISHU_APP_ID,
       appSecret: env.FEISHU_APP_SECRET,
       otpHmacKey: hmacKey,
@@ -289,6 +299,8 @@ describe("Feishu login code issue main flow with real Mock HTTP and PostgreSQL (
         if (body.length > 0) sentBodies.push(body.toString("utf8"));
         const pathname = (incoming.url ?? "").split("?")[0]!;
         if (pathname === TOKEN_PATHNAME) tokenRequests += 1;
+        feishuRequests += 1;
+        requestsByPath.set(pathname, (requestsByPath.get(pathname) ?? 0) + 1);
         const action: ProxyAction = script.get(pathname)?.shift() ?? { kind: "forward" };
         const forward = (hang: boolean, replace?: { status: number; body: unknown }) => {
           const forwarded = httpRequest(
@@ -374,6 +386,8 @@ describe("Feishu login code issue main flow with real Mock HTTP and PostgreSQL (
     sentBodies = [];
     script = new Map();
     tokenRequests = 0;
+    feishuRequests = 0;
+    requestsByPath = new Map();
     tokenExpireOverride = undefined;
     issuer = buildIssuer();
   });
@@ -432,7 +446,18 @@ describe("Feishu login code issue main flow with real Mock HTTP and PostgreSQL (
       if (row.state === "active") continue;
       expect(row).toMatchObject({ email: null, open_id: null, display_name: null, code_hmac: null });
     }
-    const sensitive = [ALICE.email, DAVE.email, SHARED, UNKNOWN, ALICE.openId, DAVE.openId, ALICE.name, ...codes];
+    const sensitive = [
+      ALICE.email,
+      DAVE.email,
+      BOB.email,
+      SHARED,
+      UNKNOWN,
+      ALICE.openId,
+      DAVE.openId,
+      BOB.openId,
+      ALICE.name,
+      ...codes,
+    ];
     for (const entry of logs) {
       for (const value of sensitive) expect(entry.includes(value)).toBe(false);
     }
@@ -440,6 +465,104 @@ describe("Feishu login code issue main flow with real Mock HTTP and PostgreSQL (
     expect(attempts).toBe(sendRequests);
     // `app:<FEISHU_APP_ID>` is only a token cache key; no request ever carries it.
     for (const body of sentBodies) expect(body.includes(feishuLoginTenantKey(env.FEISHU_APP_ID))).toBe(false);
+  }
+
+  /**
+   * FSL-145: moves the creation time of rows 61 seconds back, out of the 60-second cooldown
+   * and budget windows. `expires_at` is left as it is, so a reservation stays unexpired.
+   */
+  async function outOfCooldown(id?: string): Promise<void> {
+    await pool.query(
+      "update feishu_login_codes set created_at = created_at - interval '61 seconds' where $1::uuid is null or id = $1::uuid",
+      [id ?? null],
+    );
+  }
+
+  /** Wraps every client of the pool so that `onQuery` sees each statement before it runs. */
+  function wrapPool(onQuery: (text: string) => Promise<string> | string): Pool {
+    return {
+      async connect() {
+        const client = await pool.connect();
+        return new Proxy(client, {
+          get(target, property, receiver) {
+            if (property === "query") {
+              return async (text: string, values?: unknown[]) =>
+                target.query(typeof text === "string" ? await onQuery(text) : text, values);
+            }
+            const value = Reflect.get(target, property, receiver) as unknown;
+            return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+          },
+        });
+      },
+    } as unknown as Pool;
+  }
+
+  /**
+   * A pool whose first statement matching `match` waits, before it runs, until `release` is
+   * called; `arrived` resolves when it got there. Later statements are never held.
+   */
+  function pauseFirst(match: (text: string) => boolean): { pool: Pool; arrived: Promise<void>; release: () => void } {
+    const arrived = deferred();
+    const release = deferred();
+    let used = false;
+    return {
+      pool: wrapPool(async (text) => {
+        if (!used && match(text)) {
+          used = true;
+          arrived.resolve();
+          await release.promise;
+        }
+        return text;
+      }),
+      arrived: arrived.promise,
+      release: () => release.resolve(),
+    };
+  }
+
+  /** Waits until exactly `n` statements wait for an advisory lock. */
+  async function waitForAdvisoryWaiters(n: number): Promise<void> {
+    await waitFor(
+      async () =>
+        (
+          await pool.query<{ n: number }>(
+            "select count(*)::int as n from pg_stat_activity where datname = current_database() " +
+              "and wait_event_type = 'Lock' and query like 'select pg_advisory_xact_lock%'",
+          )
+        ).rows[0]!.n === n,
+      `${n} transaction(s) waiting for an advisory lock`,
+    );
+  }
+
+  /** The advisory locks granted in this database, as `class:key` of the two-key form. */
+  async function grantedAdvisoryLocks(): Promise<string[]> {
+    return (
+      await pool.query<{ lock: string }>(
+        "select classid::int8 || ':' || objid::int8 as lock from pg_locks " +
+          "where locktype = 'advisory' and granted " +
+          "and database = (select oid from pg_database where datname = current_database()) order by 1",
+      )
+    ).rows.map((row) => row.lock);
+  }
+
+  /**
+   * Seeds `count` rows of other emails (or of `emailHmac`), created `ageSeconds` ago by the
+   * database clock. They are `void`, so they hold no sensitive field; the cooldown and the
+   * budget count every row whatever its state.
+   */
+  async function seedRows(count: number, ageSeconds: number, emailHmac?: string): Promise<void> {
+    await pool.query(
+      `insert into feishu_login_codes (id, flow_hash, flow_seq, email_hmac, email_seq, state, expires_at, created_at)
+       select gen_random_uuid(), encode(sha256(gen_random_uuid()::text::bytea), 'hex'), 1,
+              coalesce($3::text, encode(sha256(gen_random_uuid()::text::bytea), 'hex')), g,
+              'void', clock_timestamp() - make_interval(secs => $2::float8) + interval '2 minutes',
+              clock_timestamp() - make_interval(secs => $2::float8)
+         from generate_series(1, $1::int) g`,
+      [count, ageSeconds, emailHmac ?? null],
+    );
+  }
+
+  async function rowCount(): Promise<number> {
+    return (await pool.query<{ n: number }>("select count(*)::int as n from feishu_login_codes")).rows[0]!.n;
   }
 
   scenario("AC1-AC3: a single in-office member gets an active row and exactly one message with the code", async () => {
@@ -529,6 +652,8 @@ describe("Feishu login code issue main flow with real Mock HTTP and PostgreSQL (
       send: "accepted",
     });
     expect((await rows()).map((row) => row.state)).toEqual(["active"]);
+    // FSL-145: the second request comes after the 60-second cooldown of the first one.
+    await outOfCooldown();
     expect(await issuer.issueFeishuLoginCode({ flowHash: second, email: ALICE.email })).toEqual({
       status: "sent",
       send: "accepted",
@@ -653,6 +778,8 @@ describe("Feishu login code issue main flow with real Mock HTTP and PostgreSQL (
     const earlierFlow = flowHash();
     const earlier = issuer.issueFeishuLoginCode({ flowHash: earlierFlow, email: ALICE.email });
     await arrived.promise;
+    // FSL-145: the earlier reservation leaves the cooldown window but stays unexpired.
+    await outOfCooldown();
     const laterFlow = flowHash();
     expect(await issuer.issueFeishuLoginCode({ flowHash: laterFlow, email: ALICE.email })).toEqual({
       status: "sent",
@@ -680,6 +807,8 @@ describe("Feishu login code issue main flow with real Mock HTTP and PostgreSQL (
       const store = createFeishuLoginCodeStore(pool);
       const emailHmac = feishuLoginEmailHmac(hmacKey, ALICE.email);
       const first = await store.reserve({ flowHash: flowHash(), emailHmac });
+      // FSL-145: the second reservation comes after the cooldown of the first one.
+      await outOfCooldown();
       const second = await store.reserve({ flowHash: flowHash(), emailHmac });
       expect(first.kind).toBe("reserved");
       expect(second.kind).toBe("reserved");
@@ -718,39 +847,18 @@ describe("Feishu login code issue main flow with real Mock HTTP and PostgreSQL (
     });
   }
 
-  scenario("FSL-149 AC1: two connections reserving one email concurrently serialize on the email lock", async () => {
+  scenario("FSL-149/FSL-145: of two connections reserving one email concurrently, the later one is refused by the cooldown", async () => {
     const emailHmac = feishuLoginEmailHmac(hmacKey, ALICE.email);
     // The first reservation stops right before its commit, still holding the email lock.
-    const atCommit = deferred();
-    const commit = deferred();
-    const gatedPool = {
-      async connect() {
-        const client = await pool.connect();
-        return new Proxy(client, {
-          get(target, property, receiver) {
-            if (property === "query") {
-              return async (text: string, values?: unknown[]) => {
-                if (text === "commit") {
-                  atCommit.resolve();
-                  await commit.promise;
-                }
-                return target.query(text, values);
-              };
-            }
-            const value = Reflect.get(target, property, receiver) as unknown;
-            return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
-          },
-        });
-      },
-    } as unknown as Pool;
+    const gate = pauseFirst((text) => text === "commit");
     const order: string[] = [];
-    const first = createFeishuLoginCodeStore(gatedPool)
+    const first = createFeishuLoginCodeStore(gate.pool)
       .reserve({ flowHash: flowHash(), emailHmac })
       .then((result) => {
         order.push("first");
         return result;
       });
-    await atCommit.promise;
+    await gate.arrived;
     const second = createFeishuLoginCodeStore(pool)
       .reserve({ flowHash: flowHash(), emailHmac })
       .then((result) => {
@@ -759,67 +867,74 @@ describe("Feishu login code issue main flow with real Mock HTTP and PostgreSQL (
       });
     try {
       // The second reservation blocks on the email lock until the first one commits.
-      await waitFor(
-        async () =>
-          (
-            await pool.query<{ n: number }>(
-              "select count(*)::int as n from pg_stat_activity where datname = current_database() " +
-                "and wait_event_type = 'Lock' and query like 'select pg_advisory_xact_lock%'",
-            )
-          ).rows[0]!.n === 1,
-        "the second reservation to wait for the email lock",
-      );
+      await waitForAdvisoryWaiters(1);
       expect(order).toEqual([]);
     } finally {
-      commit.resolve();
+      gate.release();
     }
     const [firstResult, secondResult] = (await Promise.all([first, second])) as Array<{ kind: string; id: string }>;
+    // The holder of the email lock commits; the other one, after the lock was released, sees
+    // that reservation within 60 seconds and writes nothing (FSL-145; in the interim version
+    // of FSL-149 both committed with email_seq 1 and 2).
     expect(firstResult!.kind).toBe("reserved");
-    expect(secondResult!.kind).toBe("reserved");
+    expect(secondResult).toEqual({ kind: "cooldown" });
     expect(order).toEqual(["first", "second"]);
     expect(
       (await pool.query<{ id: string; email_seq: number }>("select id, email_seq from feishu_login_codes order by email_seq")).rows,
-    ).toEqual([
-      { id: firstResult!.id, email_seq: 1 },
-      { id: secondResult!.id, email_seq: 2 },
-    ]);
+    ).toEqual([{ id: firstResult!.id, email_seq: 1 }]);
   });
 
   scenario("FSL-149 AC1: a connection bypassing the email lock with the same email_seq makes reserve retry (unique index)", async () => {
+    const store = createFeishuLoginCodeStore(pool);
     const emailHmac = feishuLoginEmailHmac(hmacKey, ALICE.email);
-    // Defence in depth: the first connection bypasses the email lock and inserts email_seq 1
-    // without committing, so `reserve` (under the lock) reads the same maximum and must
-    // collide on the unique index of FSL-163.
+    // An earlier reservation of the email, outside the cooldown window (FSL-145), so the
+    // reservation below passes the cooldown and the budget and goes on to its insert.
+    const earlier = (await store.reserve({ flowHash: flowHash(), emailHmac })) as { id: string };
+    await outOfCooldown();
+    // Defence in depth: the reservation stops after its cooldown and budget decision passed,
+    // right before its insert. Only then a connection bypassing the email lock inserts
+    // email_seq 2 without committing, so `reserve` (under the lock) reads the same maximum and
+    // must collide on the unique index of FSL-163.
+    const gate = pauseFirst((text) => text.trimStart().startsWith("insert into feishu_login_codes"));
+    const second = createFeishuLoginCodeStore(gate.pool).reserve({ flowHash: flowHash(), emailHmac });
+    await gate.arrived;
     const writer = await pool.connect();
-    let firstId: string;
-    let second: Promise<unknown>;
+    let bypassId: string;
     try {
       await writer.query("begin");
-      firstId = (
+      bypassId = (
         await writer.query<{ id: string }>(
           `insert into feishu_login_codes (id, flow_hash, flow_seq, email_hmac, email_seq, state, expires_at, created_at)
-           values (gen_random_uuid(), $1, 1, $2, 1, 'reserved', now() + interval '2 minutes', now()) returning id`,
+           values (gen_random_uuid(), $1, 1, $2, 2, 'reserved', now() + interval '2 minutes', now() - interval '61 seconds')
+           returning id`,
           [flowHash(), emailHmac],
         )
       ).rows[0]!.id;
-      second = createFeishuLoginCodeStore(pool).reserve({ flowHash: flowHash(), emailHmac });
+      gate.release();
       await waitFor(
         async () =>
           (
             await pool.query<{ n: number }>(
               "select count(*)::int as n from pg_stat_activity " +
-                "where datname = current_database() and wait_event_type = 'Lock' and query like 'insert into feishu_login_codes%'",
+                "where datname = current_database() and wait_event_type = 'Lock' and query like '%insert into feishu_login_codes%'",
             )
           ).rows[0]!.n === 1,
         "the reservation to wait on the unique index",
       );
       await writer.query("commit");
     } finally {
+      gate.release();
       writer.release();
     }
+    // The unique index, not the cooldown, refused it: `retry`, never `cooldown`.
     expect(await second).toEqual({ kind: "retry" });
-    const stored = (await pool.query<{ id: string; email_seq: number }>("select id, email_seq from feishu_login_codes")).rows;
-    expect(stored).toEqual([{ id: firstId, email_seq: 1 }]);
+    const stored = (
+      await pool.query<{ id: string; email_seq: number }>("select id, email_seq from feishu_login_codes order by email_seq")
+    ).rows;
+    expect(stored).toEqual([
+      { id: earlier.id, email_seq: 1 },
+      { id: bypassId, email_seq: 2 },
+    ]);
   });
 
   scenario("FSL-149 AC1: a reservation waits for an activation that checked the newest reservation", async () => {
@@ -835,6 +950,8 @@ describe("Feishu login code issue main flow with real Mock HTTP and PostgreSQL (
         codeHmac: feishuLoginCodeHmac(hmacKey, id, "ABCD2345"),
       });
     const a = (await store.reserve({ flowHash: flowHash(), emailHmac })) as { id: string };
+    // FSL-145: A leaves the 60-second cooldown window but stays unexpired, so B is not refused.
+    await outOfCooldown(a.id);
     // A's activation pauses after its superseded check, right before its activating write,
     // while it holds the email lock.
     const atWrite = deferred();
@@ -1090,6 +1207,8 @@ describe("Feishu login code issue main flow with real Mock HTTP and PostgreSQL (
       name: "a new request of the same flow voided it",
       refusal: RATE_LIMITED,
       async during(id: string, flow: string) {
+        // FSL-145: the new request comes after the cooldown of the first one.
+        await outOfCooldown(id);
         expect(await issuer.issueFeishuLoginCode({ flowHash: flow, email: ALICE.email })).toEqual({
           status: "sent",
           send: "accepted",
@@ -1158,7 +1277,6 @@ describe("Feishu login code issue main flow with real Mock HTTP and PostgreSQL (
   }
 
   scenario("FSL-149 AC4: a shared token refresh answering HTTP 429 rejects every waiting send", async () => {
-    const BOB = { email: "bob@example.com", openId: "ou_mock_bob" };
     // Every getToken call refreshes, and both requests stop before their activation.
     tokenExpireOverride = 60;
     const arrivedA = deferred();
@@ -1233,6 +1351,9 @@ describe("Feishu login code issue main flow with real Mock HTTP and PostgreSQL (
   scenario("FSL-149: a reservation that waits for the email lock gets its full two minutes from when it got the lock", async () => {
     const store = createFeishuLoginCodeStore(pool);
     const emailHmac = feishuLoginEmailHmac(hmacKey, ALICE.email);
+    // FSL-145: an earlier reservation of the email lies outside the cooldown window.
+    expect((await store.reserve({ flowHash: flowHash(), emailHmac })).kind).toBe("reserved");
+    await outOfCooldown();
     // The holder takes the email lock and, as the last statement before releasing it,
     // samples the clock inside its own transaction: the lock is released by the commit
     // right after, so a reservation made under the lock can not be older than that sample.
@@ -1370,6 +1491,7 @@ describe("Feishu login code issue main flow with real Mock HTTP and PostgreSQL (
       });
     const older = (await store.reserve({ flowHash: flowHash(), emailHmac })) as { id: string };
     expect(await activateRow(older.id)).toEqual({ kind: "active" });
+    await outOfCooldown(older.id);
     const newer = (await store.reserve({ flowHash: flowHash(), emailHmac })) as { id: string };
     await pool.query("update feishu_login_codes set expires_at = clock_timestamp() + interval '500 milliseconds' where id = $1", [
       newer.id,
@@ -1401,6 +1523,7 @@ describe("Feishu login code issue main flow with real Mock HTTP and PostgreSQL (
       });
     const older = (await store.reserve({ flowHash: flowHash(), emailHmac })) as { id: string };
     expect(await activateWith(store, older.id)).toEqual({ kind: "active" });
+    await outOfCooldown(older.id);
     const newer = (await store.reserve({ flowHash: flowHash(), emailHmac })) as { id: string };
     await pool.query("update feishu_login_codes set expires_at = clock_timestamp() + interval '400 milliseconds' where id = $1", [
       newer.id,
@@ -1487,5 +1610,341 @@ describe("Feishu login code issue main flow with real Mock HTTP and PostgreSQL (
     await lock.release();
     expect(await writeBack).toEqual({ voided: false });
     expect(await rowById(id)).toMatchObject({ state: "active", open_id: ALICE.openId, expired: true });
+  });
+
+  // ---------------------------------------------------------------------------------------
+  // FSL-145: the cooldown, the global budget and the serialization of reservations.
+  // ---------------------------------------------------------------------------------------
+
+  scenario("FSL-145 AC1/AC4: a second request of one email within 60 seconds calls no Feishu and writes no row", async () => {
+    expect(await issuer.issueFeishuLoginCode({ flowHash: flowHash(), email: ALICE.email })).toEqual({
+      status: "sent",
+      send: "accepted",
+    });
+    const before = await rows();
+    const callsBefore = feishuRequests;
+    expect(callsBefore).toBeGreaterThan(0);
+    // Another flow, the same email in another spelling: one email HMAC.
+    expect(await issuer.issueFeishuLoginCode({ flowHash: flowHash(), email: " ALICE@example.com" })).toEqual({
+      status: "cooldown",
+    });
+    // AC1: no Feishu request at all (no token, no lookup, no message).
+    expect(feishuRequests).toBe(callsBefore);
+    expect(await inbox(ALICE.openId)).toHaveLength(1);
+    // AC4: the refused request wrote nothing and changed nothing.
+    expect(await rows()).toEqual(before);
+    expect(logs).toEqual([FEISHU_LOGIN_SEND_ATTEMPT, FEISHU_LOGIN_COOLDOWN]);
+    await expectHygiene();
+  });
+
+  scenario("FSL-145 AC1: an email without a member is not looked up again within 60 seconds", async () => {
+    expect(await issuer.issueFeishuLoginCode({ flowHash: flowHash(), email: UNKNOWN })).toEqual({ status: "no_target" });
+    expect(requestsByPath.get(SEARCH_PATHNAME)).toBe(1);
+    const callsBefore = feishuRequests;
+    // The earlier row is void; the cooldown counts it all the same.
+    expect(await issuer.issueFeishuLoginCode({ flowHash: flowHash(), email: UNKNOWN })).toEqual({ status: "cooldown" });
+    expect(feishuRequests).toBe(callsBefore);
+    expect(requestsByPath.get(SEARCH_PATHNAME)).toBe(1);
+    expect(await rowCount()).toBe(1);
+    expect(logs).toEqual([FEISHU_LOGIN_NO_TARGET, FEISHU_LOGIN_COOLDOWN]);
+    await expectHygiene();
+  });
+
+  scenario("FSL-145 AC1: the cooldown covers 60 seconds after the earlier reservation, not longer", async () => {
+    const store = createFeishuLoginCodeStore(pool);
+    const emailHmac = feishuLoginEmailHmac(hmacKey, ALICE.email);
+    await seedRows(1, 58, emailHmac);
+    expect(await store.reserve({ flowHash: flowHash(), emailHmac })).toEqual({ kind: "cooldown" });
+    await pool.query("truncate feishu_login_codes");
+    await seedRows(1, 61, emailHmac);
+    expect((await store.reserve({ flowHash: flowHash(), emailHmac })).kind).toBe("reserved");
+    // Another email is never refused by this email's cooldown.
+    expect((await store.reserve({ flowHash: flowHash(), emailHmac: feishuLoginEmailHmac(hmacKey, BOB.email) })).kind).toBe(
+      "reserved",
+    );
+  });
+
+  scenario("FSL-145 AC1/AC3: a row created exactly 60 seconds before the decision is outside both windows", async () => {
+    // A fixed database clock: every `clock_timestamp()` of the store reads this instant.
+    const fixed = "2030-01-01 00:00:00+00";
+    const store = createFeishuLoginCodeStore(wrapPool((text) => text.replaceAll("clock_timestamp()", `'${fixed}'::timestamptz`)));
+    const emailHmac = feishuLoginEmailHmac(hmacKey, ALICE.email);
+    const seed = async (created: string, count: number, hmac?: string) =>
+      pool.query(
+        `insert into feishu_login_codes (id, flow_hash, flow_seq, email_hmac, email_seq, state, expires_at, created_at)
+         select gen_random_uuid(), encode(sha256(gen_random_uuid()::text::bytea), 'hex'), 1,
+                coalesce($3::text, encode(sha256(gen_random_uuid()::text::bytea), 'hex')), g,
+                'void', $1::timestamptz + interval '2 minutes', $1::timestamptz
+           from generate_series(1, $2::int) g`,
+        [created, count, hmac ?? null],
+      );
+    // One microsecond inside the window: refused.
+    await seed("2029-12-31 23:59:00.000001+00", 1, emailHmac);
+    expect(await store.reserve({ flowHash: flowHash(), emailHmac })).toEqual({ kind: "cooldown" });
+    await pool.query("truncate feishu_login_codes");
+    await seed("2029-12-31 23:59:00.000001+00", GLOBAL_BUDGET);
+    expect(await store.reserve({ flowHash: flowHash(), emailHmac })).toEqual({ kind: "budget" });
+    // Exactly 60 seconds old: outside the window, admitted.
+    await pool.query("truncate feishu_login_codes");
+    await seed("2029-12-31 23:59:00+00", 1, emailHmac);
+    expect((await store.reserve({ flowHash: flowHash(), emailHmac })).kind).toBe("reserved");
+    await pool.query("truncate feishu_login_codes");
+    await seed("2029-12-31 23:59:00+00", GLOBAL_BUDGET);
+    expect((await store.reserve({ flowHash: flowHash(), emailHmac })).kind).toBe("reserved");
+  });
+
+  scenario("FSL-145 AC2: a reservation already expired when the delivery starts calls no Feishu and is voided", async () => {
+    // The injected clock: once the reservation committed, the database clock every later
+    // statement reads is two minutes and one second later (the reservation lifetime passed).
+    let committed = false;
+    const clockPool = wrapPool((text) => {
+      const shifted = committed
+        ? text.replaceAll("clock_timestamp()", "(clock_timestamp() + interval '121 seconds')")
+        : text;
+      if (text === "commit") committed = true;
+      return shifted;
+    });
+    const result = await buildIssuer(clockPool).issueFeishuLoginCode({ flowHash: flowHash(), email: ALICE.email });
+    expect(committed).toBe(true);
+    expect(result).toEqual({ status: "not_reserved" });
+    // No token, no lookup, no message: nothing reached Feishu.
+    expect(feishuRequests).toBe(0);
+    expect(await allInboxCount()).toBe(0);
+    const id = await onlyRowId();
+    expect(await rowById(id)).toMatchObject(VOID_CLEARED);
+    expect(codes).toHaveLength(0);
+    expect(logs).toEqual([]);
+    await expectHygiene();
+  });
+
+  scenario("FSL-145 AC2: the delivery start leaves a row that is no longer reserved as it is", async () => {
+    const store = createFeishuLoginCodeStore(pool);
+    const emailHmac = feishuLoginEmailHmac(hmacKey, ALICE.email);
+    const reserved = (await store.reserve({ flowHash: flowHash(), emailHmac })) as { id: string };
+    expect(await store.beginDelivery({ id: reserved.id, emailHmac })).toEqual({ kind: "live" });
+    expect(await rowById(reserved.id)).toMatchObject({ state: "reserved" });
+    await pool.query("update feishu_login_codes set state = 'consumed' where id = $1", [reserved.id]);
+    expect(await store.beginDelivery({ id: reserved.id, emailHmac })).toEqual({
+      kind: "not_reserved",
+      reason: "not_reserved",
+    });
+    expect(await rowById(reserved.id)).toMatchObject({ state: "consumed" });
+  });
+
+  scenario("FSL-145 AC3/AC4: with 120 reservations in the last 60 seconds a new request calls no Feishu and writes no row", async () => {
+    await seedRows(GLOBAL_BUDGET, 30);
+    const result = await issuer.issueFeishuLoginCode({ flowHash: flowHash(), email: ALICE.email });
+    expect(result).toEqual({ status: "budget" });
+    expect(feishuRequests).toBe(0);
+    expect(await allInboxCount()).toBe(0);
+    // AC4: still exactly the seeded rows, none of this email.
+    expect(await rowCount()).toBe(GLOBAL_BUDGET);
+    expect(
+      (await pool.query("select 1 from feishu_login_codes where email_hmac = $1", [feishuLoginEmailHmac(hmacKey, ALICE.email)]))
+        .rowCount,
+    ).toBe(0);
+    // The budget does not depend on whether the account exists: an unknown email alike.
+    expect(await issuer.issueFeishuLoginCode({ flowHash: flowHash(), email: UNKNOWN })).toEqual({ status: "budget" });
+    expect(feishuRequests).toBe(0);
+    expect(await rowCount()).toBe(GLOBAL_BUDGET);
+    expect(logs).toEqual([FEISHU_LOGIN_GLOBAL_BUDGET, FEISHU_LOGIN_GLOBAL_BUDGET]);
+    await expectHygiene();
+  });
+
+  scenario("FSL-145 AC3: 119 reservations in the window, or 120 older than 60 seconds, leave room for one more", async () => {
+    await seedRows(GLOBAL_BUDGET - 1, 30);
+    await seedRows(5, 61);
+    expect(await issuer.issueFeishuLoginCode({ flowHash: flowHash(), email: ALICE.email })).toEqual({
+      status: "sent",
+      send: "accepted",
+    });
+    // That reservation was the 120th of the window: the next one is refused.
+    expect(await issuer.issueFeishuLoginCode({ flowHash: flowHash(), email: BOB.email })).toEqual({ status: "budget" });
+    await pool.query("truncate feishu_login_codes");
+    await seedRows(GLOBAL_BUDGET, 61);
+    expect(await issuer.issueFeishuLoginCode({ flowHash: flowHash(), email: BOB.email })).toMatchObject({ status: "sent" });
+    expect(logs).toEqual([FEISHU_LOGIN_SEND_ATTEMPT, FEISHU_LOGIN_GLOBAL_BUDGET, FEISHU_LOGIN_SEND_ATTEMPT]);
+    await expectHygiene();
+  });
+
+  for (const refusal of ["budget", "cooldown"] as const) {
+    scenario(`FSL-145 AC5: retries refused by the ${refusal} without pause do not delay its recovery after 60 seconds`, async () => {
+      // The window is about to end: the rows were created 58.5 seconds ago.
+      const age = 58.5;
+      if (refusal === "budget") await seedRows(GLOBAL_BUDGET, age);
+      else await seedRows(1, age, feishuLoginEmailHmac(hmacKey, ALICE.email));
+      // The window ends when the oldest seeded row is 60 seconds old.
+      const seeded = (await pool.query<{ ends: Date }>("select min(created_at) + interval '60 seconds' as ends from feishu_login_codes"))
+        .rows[0]!.ends;
+      const started = Date.now();
+      let refused = 0;
+      let result: Awaited<ReturnType<FeishuLoginIssuer["issueFeishuLoginCode"]>>;
+      // The same request is retried every 50 ms until it passes.
+      for (;;) {
+        result = await issuer.issueFeishuLoginCode({ flowHash: flowHash(), email: ALICE.email });
+        if (result.status !== refusal) break;
+        refused += 1;
+        expect(await rowCount()).toBe(refusal === "budget" ? GLOBAL_BUDGET : 1);
+        expect(Date.now() - started).toBeLessThan(10_000);
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      expect(result).toEqual({ status: "sent", send: "accepted" });
+      // Refused many times right up to the end of the window, and passed right after it:
+      // the refusals wrote nothing, so they did not move the window.
+      expect(refused).toBeGreaterThan(5);
+      const reservedAt = (
+        await pool.query<{ created_at: Date }>(
+          "select created_at from feishu_login_codes where email_hmac = $1 and state = 'active'",
+          [feishuLoginEmailHmac(hmacKey, ALICE.email)],
+        )
+      ).rows[0]!.created_at;
+      expect(reservedAt.getTime()).toBeGreaterThanOrEqual(seeded.getTime());
+      expect(reservedAt.getTime() - seeded.getTime()).toBeLessThan(1_500);
+      expect(Date.now() - started).toBeLessThan(5_000);
+      expect(logs.filter((key) => key === (refusal === "budget" ? FEISHU_LOGIN_GLOBAL_BUDGET : FEISHU_LOGIN_COOLDOWN))).toHaveLength(
+        refused,
+      );
+      await expectHygiene();
+    });
+  }
+
+  scenario("FSL-145: a reservation takes the email lock first, then the global lock, and holds neither during Feishu calls", async () => {
+    const emailHmac = feishuLoginEmailHmac(hmacKey, ALICE.email);
+    const emailLock = `${FEISHU_LOGIN_EMAIL_LOCK_CLASS}:${feishuLoginEmailLockKey(emailHmac) >>> 0}`;
+    const globalLock = `${FEISHU_LOGIN_GLOBAL_LOCK_CLASS}:${FEISHU_LOGIN_GLOBAL_LOCK_KEY}`;
+    // Another connection holds the global lock: the reservation gets the email lock, then waits.
+    const holder = await pool.connect();
+    let pending: Promise<unknown>;
+    try {
+      await holder.query("begin");
+      await holder.query("select pg_advisory_xact_lock($1::int4, $2::int4)", [
+        FEISHU_LOGIN_GLOBAL_LOCK_CLASS,
+        FEISHU_LOGIN_GLOBAL_LOCK_KEY,
+      ]);
+      const arrived = deferred();
+      const release = deferred();
+      plan(SEARCH_PATHNAME, { kind: "forward", arrived: arrived.resolve, release: release.promise });
+      pending = issuer.issueFeishuLoginCode({ flowHash: flowHash(), email: ALICE.email });
+      await waitForAdvisoryWaiters(1);
+      const waiting = (
+        await pool.query<{ granted: boolean; lock: string }>(
+          "select l.granted, l.classid::int8 || ':' || l.objid::int8 as lock from pg_locks l " +
+            "join pg_stat_activity a on a.pid = l.pid " +
+            "where l.locktype = 'advisory' and a.wait_event_type = 'Lock' and a.datname = current_database() order by 2",
+        )
+      ).rows;
+      expect(waiting).toEqual(
+        [
+          { granted: true, lock: emailLock },
+          { granted: false, lock: globalLock },
+        ].sort((x, y) => x.lock.localeCompare(y.lock)),
+      );
+      await holder.query("commit");
+      // The reservation committed and the lookup is held at Feishu: no advisory lock is held.
+      await arrived.promise;
+      expect(await grantedAdvisoryLocks()).toEqual([]);
+      release.resolve();
+    } finally {
+      holder.release();
+    }
+    expect(await pending).toEqual({ status: "sent", send: "accepted" });
+  });
+
+  for (const interleaving of ["gated", "free"] as const) {
+    scenario(`FSL-145 AC6: two concurrent requests of one email trigger exactly one Feishu lookup (${interleaving})`, async () => {
+      const arrived = deferred();
+      const release = deferred();
+      plan(SEARCH_PATHNAME, { kind: "forward", arrived: arrived.resolve, release: release.promise });
+      let results: Array<Awaited<ReturnType<FeishuLoginIssuer["issueFeishuLoginCode"]>>>;
+      if (interleaving === "gated") {
+        // The first reservation stops before its commit, holding both locks; the second one
+        // (its own connection) waits for the email lock meanwhile.
+        const gate = pauseFirst((text) => text === "commit");
+        const gated = buildIssuer(gate.pool);
+        const first = gated.issueFeishuLoginCode({ flowHash: flowHash(), email: ALICE.email });
+        await gate.arrived;
+        expect(await grantedAdvisoryLocks()).toEqual(
+          [
+            `${FEISHU_LOGIN_EMAIL_LOCK_CLASS}:${feishuLoginEmailLockKey(feishuLoginEmailHmac(hmacKey, ALICE.email)) >>> 0}`,
+            `${FEISHU_LOGIN_GLOBAL_LOCK_CLASS}:${FEISHU_LOGIN_GLOBAL_LOCK_KEY}`,
+          ].sort(),
+        );
+        const second = gated.issueFeishuLoginCode({ flowHash: flowHash(), email: ALICE.email });
+        try {
+          await waitForAdvisoryWaiters(1);
+        } finally {
+          gate.release();
+        }
+        // The second one is refused before the first one's lookup is answered.
+        expect(await second).toEqual({ status: "cooldown" });
+        await arrived.promise;
+        expect(await grantedAdvisoryLocks()).toEqual([]);
+        release.resolve();
+        results = [await first, await second];
+      } else {
+        const both = Promise.all([
+          issuer.issueFeishuLoginCode({ flowHash: flowHash(), email: ALICE.email }),
+          issuer.issueFeishuLoginCode({ flowHash: flowHash(), email: ALICE.email }),
+        ]);
+        await arrived.promise;
+        // While Feishu is called, the service holds no advisory lock.
+        expect(await grantedAdvisoryLocks()).toEqual([]);
+        release.resolve();
+        results = await both;
+      }
+      expect(results).toEqual(expect.arrayContaining([{ status: "sent", send: "accepted" }, { status: "cooldown" }]));
+      expect(requestsByPath.get(SEARCH_PATHNAME)).toBe(1);
+      expect(requestsByPath.get(MGET_PATHNAME)).toBe(1);
+      expect(sendRequests).toBe(1);
+      expect(await inbox(ALICE.openId)).toHaveLength(1);
+      expect(await rowCount()).toBe(1);
+      expect(logs.filter((key) => key === FEISHU_LOGIN_COOLDOWN)).toHaveLength(1);
+      await expectHygiene();
+    });
+  }
+
+  scenario("FSL-145 AC7: with one slot left, concurrent requests of different emails on several connections trigger one lookup", async () => {
+    await seedRows(GLOBAL_BUDGET - 1, 30);
+    const emails = [ALICE.email, BOB.email, UNKNOWN, "nobody-else@example.com"];
+    const arrived = deferred();
+    const release = deferred();
+    plan(SEARCH_PATHNAME, { kind: "forward", arrived: arrived.resolve, release: release.promise });
+    // The first reservation to get the global lock stops before its commit; each of the others
+    // holds its own email lock on its own connection and waits for the global lock.
+    const gate = pauseFirst((text) => text === "commit");
+    const gated = buildIssuer(gate.pool);
+    const first = gated.issueFeishuLoginCode({ flowHash: flowHash(), email: emails[0]! });
+    await gate.arrived;
+    const others = emails.slice(1).map((email) => gated.issueFeishuLoginCode({ flowHash: flowHash(), email }));
+    try {
+      await waitForAdvisoryWaiters(others.length);
+      expect((await grantedAdvisoryLocks()).filter((lock) => lock.startsWith(`${FEISHU_LOGIN_EMAIL_LOCK_CLASS}:`))).toHaveLength(
+        emails.length,
+      );
+    } finally {
+      gate.release();
+    }
+    // Every other request sees the budget spent once the first one committed.
+    expect(await Promise.all(others)).toEqual(others.map(() => ({ status: "budget" })));
+    await arrived.promise;
+    // The single lookup runs without any advisory lock held.
+    expect(await grantedAdvisoryLocks()).toEqual([]);
+    release.resolve();
+    expect(await first).toEqual({ status: "sent", send: "accepted" });
+    expect(requestsByPath.get(SEARCH_PATHNAME)).toBe(1);
+    expect(await rowCount()).toBe(GLOBAL_BUDGET);
+    expect(logs.filter((key) => key === FEISHU_LOGIN_GLOBAL_BUDGET)).toHaveLength(others.length);
+    await expectHygiene();
+  });
+
+  scenario("FSL-145 AC7: with one slot left, ungated concurrent requests of different emails trigger one lookup in total", async () => {
+    await seedRows(GLOBAL_BUDGET - 1, 30);
+    const emails = [ALICE.email, BOB.email, UNKNOWN, "nobody-else@example.com", DAVE.email];
+    const results = await Promise.all(emails.map((email) => issuer.issueFeishuLoginCode({ flowHash: flowHash(), email })));
+    expect(results.filter((result) => result.status === "budget")).toHaveLength(emails.length - 1);
+    expect(requestsByPath.get(SEARCH_PATHNAME)).toBe(1);
+    expect(await rowCount()).toBe(GLOBAL_BUDGET);
+    expect(logs.filter((key) => key === FEISHU_LOGIN_GLOBAL_BUDGET)).toHaveLength(emails.length - 1);
+    await expectHygiene();
   });
 });
