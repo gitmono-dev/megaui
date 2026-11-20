@@ -133,3 +133,8 @@ export {
   type FeishuLoginCodeState,
   type NewFeishuLoginCode,
 } from "./feishu-login";
+export {
+  feishuLoginKeyCheck,
+  type FeishuLoginKeyCheck,
+  type NewFeishuLoginKeyCheck,
+} from "./feishu-login-key-check";

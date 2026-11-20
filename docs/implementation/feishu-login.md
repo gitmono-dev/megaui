@@ -434,3 +434,15 @@ FSL-169 的用例（同在 `signup.test.ts`，以测试数据库中的触发器�
 ### 清理测试
 
 `packages/database/src/feishu-login-store.integration.test.ts` 使用一次性 PG 与注入时钟，断言已过期（含恰好到期）的 `reserved`、`active` 行置为 `void` 且敏感字段为空、其余各列与插入时整行一致；创建超过 24 小时的行（各状态）被删除，恰好 24 小时与更晚的行保留；未过期的 `active`、`reserved` 行与 `consumed`、`void` 行不变；默认按数据库时钟判定。并发用例：另一连接（模拟登录事务）持有到期行的行锁时，清理等待并在锁释放后于同一次清理内处理该行，持锁者期间将其消费时清理保持不变；持锁超过锁等待上限时清理失败且不改变任何行，下一次清理处理全部到期行；两个连接同时清理时（以第三个连接持有 `id` 最大的到期行，使第一个清理按 `id` 顺序锁住其余到期行后等待、第二个清理排在其后，以及不加控制的并发）每行恰好处理一次，再次清理不再改变任何行。`packages/engine/src/services/feishu-login/cleanup.test.ts` 以假定时器与脚本化连接池断言启动即执行、每 5 分钟执行、停止函数清除定时器、定时器 `unref()`、失败（含首次）后输出日志键、释放连接且下一周期重试成功、默认日志不含错误内容，执行期间到达的周期在本次结束后立即合并补做一次，以及首次执行变慢时周期仍自启动起计时。
+
+### 密钥指纹表
+
+迁移 `packages/database/drizzle/0020_stiff_patriot.sql` 建表 `feishu_login_key_check`（FSL-159；schema 在 `packages/database/src/schema/auth/feishu-login-key-check.ts`，由 `@megaui/database` 导出为 `feishuLoginKeyCheck`），共 3 列：
+
+- `id`：整数主键，默认 1，`CHECK (id = 1)`，因此表中至多一行；
+- `key_check`：密钥指纹，约定为 HMAC-SHA256(`ENTERPRISE_OTP_HMAC_KEY`, `"feishu-login-key-check:v1:" + FEISHU_APP_ID`) 的小写十六进制值；表约束只接受 64 位小写十六进制串，按约定只写入 HMAC，不写入密钥本身；
+- `created_at`：写入时间，默认数据库 `now()`。
+
+**当前状态：** 只有表结构，尚无代码读写该表；写入指纹并在密钥或 `FEISHU_APP_ID` 变化时拒绝登录的运行时检查由 FSL-161 实现，在其交付之前该表不影响登录。迁移只前滚：没有回滚迁移，旧版本镜像忽略该表；迁移应用后发现问题时只以新的前向修复迁移恢复。
+
+`packages/database/src/schema/auth/feishu-login-key-check.test.ts` 使用一次性 PG 断言列集合恰为上述 3 列、`id` 不等于 1 的插入（及把已有行改为其它 `id`）被拒绝、已有一行时的第二次插入被拒绝、非 64 位小写十六进制的值被拒绝；在本迁移语句之后注入 SQL 故障时表不存在、迁移记录不含本迁移，随后完整迁移集可前滚应用。

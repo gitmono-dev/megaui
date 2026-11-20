@@ -52,6 +52,7 @@ const EXPECTED_PUBLIC_TABLES = [
   "enterprise_revocations",
   "feishu_identities",
   "feishu_login_codes",
+  "feishu_login_key_check",
   "feishu_login_sessions",
   "mega_agent_threads",
   "mega_channel_members",
@@ -238,6 +239,18 @@ describe.skipIf(!dockerAvailable)(
       expect(constraints.rows).toEqual([
         { conname: "feishu_login_sessions_pkey", definition: "PRIMARY KEY (session_id)" },
         { conname: "feishu_login_sessions_session_id_session_id_fk", definition: "FOREIGN KEY (session_id) REFERENCES session(id) ON DELETE CASCADE" },
+      ]);
+    });
+
+    it("creates the Feishu login key fingerprint table constraints (FSL-159)", async () => {
+      const constraints = await pool.query<{ conname: string; definition: string }>(
+        `select conname, pg_get_constraintdef(oid) as definition from pg_constraint
+          where conrelid = 'public.feishu_login_key_check'::regclass order by conname`,
+      );
+      expect(constraints.rows).toEqual([
+        { conname: "feishu_login_key_check_key_check_check", definition: "CHECK ((key_check ~ '^[0-9a-f]{64}$'::text))" },
+        { conname: "feishu_login_key_check_pkey", definition: "PRIMARY KEY (id)" },
+        { conname: "feishu_login_key_check_single_row_check", definition: "CHECK ((id = 1))" },
       ]);
     });
 
