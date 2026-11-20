@@ -49,3 +49,17 @@ open_id 由 FSL-115 Q2 的 Directory v1 `employees/search` 精确匹配得到，
 来源：2026-11-19 真实测试租户只读调用（Contact v3 `users/:open_id`；Directory v1 `employees/mget`）；官方文档 <https://open.feishu.cn/document/directory-v1/employee/mget>（核对日期 2026-11-19）；`packages/engine/src/services/enterprise/feishu/directory.ts:103-117`。
 
 结论：no-go（差异已登记）
+
+## 复测（FSL-117）
+
+2026-11-20 07:10 UTC，以 `FeishuContactClient`（`packages/engine/src/services/feishu/contact.ts`）在真实测试租户上复测 Q3。凭据只从仓库根目录 `.env` 以 `source` 加载；本节只记录日期、用例名、退出码与结论，不含邮箱、open_id、token、姓名或响应正文。
+
+- 运行：`FEISHU_LIVE_CONTRACT=1 vitest run packages/engine/src/services/feishu/contact.live.q3.test.ts --reporter=json`，退出码 0（G13）。
+- 报告门（G14）通过：`FSL-117 Q3 success` 与 `FSL-117 Q3 forged` 各恰好出现一次，状态均为 `passed`；该文件内没有 skipped、pending 或 failed 的用例。
+- `FSL-117 Q3 success`：记录的 Directory v1 交换严格等于 `[{ path: "/open-apis/directory/v1/employees/search", status: 200, code: 0 }, { path: "/open-apis/directory/v1/employees/mget", status: 200, code: 0 }]`；`readMember` 对搜索得到的 open_id 返回在职，姓名为非空白字符串（不记录姓名）。
+- `FSL-117 Q3 forged`：记录的交换严格等于 `[{ path: "/open-apis/directory/v1/employees/mget", status: 400, code: 99991663 }]`；`readMember` 以 `FeishuTransportError`（`transport_permanent`，`status=400`）失败。
+- 未实测、按文档加替身验证的分支（`active_status` 为 1、3、4、5，以及 `is_resigned=true`）不计入本节结论。
+
+结论（改判）：go（差异已承接）
+
+来源：2026-11-20 真实测试租户复测（FSL-117，G13、G14）。

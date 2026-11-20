@@ -55,3 +55,17 @@
 来源：2026-11-19 真实测试租户只读调用（Contact v3 `batch_get_id`；Directory v1 `employees/filter`、`employees/search`），以及上列官方文档。
 
 结论：no-go（差异已登记）
+
+## 复测（FSL-117）
+
+2026-11-20 07:10 UTC，以 `FeishuContactClient`（`packages/engine/src/services/feishu/contact.ts`）在真实测试租户上复测 Q2。凭据只从仓库根目录 `.env` 以 `source` 加载；本节只记录日期、用例名、退出码与结论，不含邮箱、open_id、token 或响应正文。
+
+- 运行：`FEISHU_LIVE_CONTRACT=1 vitest run packages/engine/src/services/feishu/contact.live.q2.test.ts --reporter=json`，退出码 0（G11）。
+- 报告门（G12）通过：`FSL-117 Q2 success` 与 `FSL-117 Q2 forged` 各恰好出现一次，状态均为 `passed`；该文件内没有 skipped、pending 或 failed 的用例。
+- `FSL-117 Q2 success`：记录的 Directory v1 交换严格等于 `[{ path: "/open-apis/directory/v1/employees/search", status: 200, code: 0 }]`；`findByEmail` 对用户本人邮箱返回以 `ou_` 开头的唯一 open_id。
+- `FSL-117 Q2 forged`：记录的交换严格等于 `[{ path: "/open-apis/directory/v1/employees/search", status: 400, code: 99991663 }]`；`findByEmail` 以 `FeishuTransportError`（`transport_permanent`，`status=400`）失败。
+- 未实测、按文档加替身验证的分支（多人精确匹配、`has_more=true`）不计入本节结论。
+
+结论（改判）：go（差异已承接）
+
+来源：2026-11-20 真实测试租户复测（FSL-117，G11、G12）。
