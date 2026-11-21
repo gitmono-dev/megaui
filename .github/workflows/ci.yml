@@ -210,17 +210,25 @@ jobs:
       - name: Lint (CMD-03)
         run: pnpm turbo run lint
 
+      # Owned source copies (owned-web, isolated-server) are written under
+      # os.tmpdir(). Copies left by killed or cancelled jobs used to pile up
+      # in the runner's /tmp until ENOSPC, so the tests get a dedicated
+      # directory that every job empties before the tests and removes after.
+      - name: Prepare test temp dir
+        run: |
+          rm -rf /tmp/megaui-ci-tmp
+          mkdir -p /tmp/megaui-ci-tmp
+          df -h /tmp || true
+
       - name: Unit tests (CMD-05)
         env:
           VITEST_MAX_WORKERS: '3'
-          # Owned source copies (owned-web, isolated-server) go to the
-          # disk-backed runner temp dir, which the runner empties at the
-          # start of every job, instead of the host /tmp (tmpfs on the
-          # self-hosted runner) where copies from killed jobs accumulate.
-          TMPDIR: ${{ runner.temp }}
-        run: |
-          df -h "$TMPDIR" /tmp || true
-          pnpm vitest run
+          TMPDIR: /tmp/megaui-ci-tmp
+        run: pnpm vitest run
+
+      - name: Remove test temp dir
+        if: always()
+        run: rm -rf /tmp/megaui-ci-tmp
 
       - name: Live provider status (FS-26)
         run: >
