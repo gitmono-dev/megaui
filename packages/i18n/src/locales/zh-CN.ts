@@ -163,6 +163,22 @@ export const zhCN = {
           UNAVAILABLE: "企业登录暂时不可用。",
           UNKNOWN_ERROR: "企业登录未完成，请重试。"
         }
+      },
+      feishu: {
+        title: "使用飞书登录",
+        description: "输入工作邮箱，我们会通过飞书向你发送登录验证码。",
+        email: "工作邮箱",
+        emailPlaceholder: "name@company.com",
+        request: "发送验证码",
+        requesting: "发送中…",
+        invalidEmail: "请输入有效的邮箱地址。",
+        requestFailed: "验证码未能发送，请重试。",
+        codeSent: "如果 {email} 属于本组织成员，登录验证码已通过飞书发送。",
+        code: "验证码",
+        codePlaceholder: "8 位验证码",
+        verify: "登录",
+        verifying: "登录中…",
+        verifyFailed: "登录未完成，请重试。"
       }
     },
     signup: {

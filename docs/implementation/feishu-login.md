@@ -4,7 +4,7 @@
 
 ## 配置
 
-`@megaui/core` 的 `resolveAuthMode({ AUTH_MODE, AUTH_PROVIDER })`（`packages/core/src/auth/mode.ts`，FSL-116）是认证模式与提供方的单一解析规则。它是不读取环境的纯函数，按下表返回结果或拒绝。**当前状态：** 本函数接入了 Web 的会话入口与中间件（FSL-126，见「会话」）、Web 的认证实例构造与启动钩子（FSL-150，见「HTTP 接口」的「启用条件」），这些 Web 路径都只在 `AUTH_PROVIDER` 已设置时调用它；另接入了 collab-server（FSL-128，见「协作服务」）。其它 Web 路径与 engine 仍按各自现有路径解析 `AUTH_MODE`。`AUTH_MODE=enterprise`、`AUTH_PROVIDER=feishu` 时 Web 注册飞书登录端点（FSL-150）；登录页与入口切换由后续卡（FSL-129、FSL-131）完成。`resolveAuthMode` 拒绝的组合不启用飞书登录：会话入口按「会话」视为未登录，认证实例构造与启动钩子沿用现有路径，Web 不因此拒绝启动。
+`@megaui/core` 的 `resolveAuthMode({ AUTH_MODE, AUTH_PROVIDER })`（`packages/core/src/auth/mode.ts`，FSL-116）是认证模式与提供方的单一解析规则。它是不读取环境的纯函数，按下表返回结果或拒绝。**当前状态：** 本函数接入了 Web 的会话入口与中间件（FSL-126，见「会话」）、Web 的认证实例构造与启动钩子（FSL-150，见「HTTP 接口」的「启用条件」），这些 Web 路径都只在 `AUTH_PROVIDER` 已设置时调用它；另接入了 collab-server（FSL-128，见「协作服务」）。其它 Web 路径与 engine 仍按各自现有路径解析 `AUTH_MODE`。`AUTH_MODE=enterprise`、`AUTH_PROVIDER=feishu` 时 Web 注册飞书登录端点（FSL-150）；登录页 `/[lang]/signin/feishu` 由 FSL-129 提供（见「页面」），入口切换由后续卡 FSL-131 完成。`resolveAuthMode` 拒绝的组合不启用飞书登录：会话入口按「会话」视为未登录，认证实例构造与启动钩子沿用现有路径，Web 不因此拒绝启动。
 
 | `AUTH_MODE` | `AUTH_PROVIDER` | 结果 |
 |---|---|---|
@@ -407,6 +407,21 @@ FSL-152 的用例：同邮箱本地用户已存在而无绑定时返回 409 `{ "
 
 FSL-169 的用例（同在 `signup.test.ts`，以测试数据库中的触发器注入故障）：首次登录时 `session` 的插入失败，与首次登录时 `feishu_login_sessions` 的插入失败（另以 `session` 上的插入审计触发器证明会话曾经签发），各自断言 503 `{ "status": "retry" }`、带 `Cache-Control: no-store`、不设置会话 Cookie、响应与控制台输出都不含注入的数据库错误（其消息含该行内容，`session` 行含 token）、`session` 与 `feishu_login_sessions` 都没有行、注入的 `log` 恰好收到一次 `FEISHU_LOGIN_SESSION_FAILED`、验证码行为 `consumed`、用户与绑定各一行；已有绑定的再次登录时把 `user` 表临时改名使读取用户抛错，或以替身使 `findUserById` 返回空、抛出 better-auth `APIError`，同样断言 503 与两表无行。这些情形随后都断言原验证码再次提交返回 401，再经 request 端点在同一 flow 重新请求验证码（其 `reserve` 为签发存储的预约，`deliver` 以 Mock 代替飞书查询与私聊、激活预约行），以新验证码登录返回 200，`user` 全部行的全部列与 `feishu_identities` 不变，会话属于原用户且恰有一行来源标记。另断言：来源标记写入与会话删除同时失败时依次输出 `FEISHU_LOGIN_SESSION_REVOKE_FAILED`、`FEISHU_LOGIN_SESSION_FAILED`，仍返回 503 且不设置会话 Cookie，`session` 留一行、`feishu_login_sessions` 无行，随后同样重新取码登录成功且不新建用户（残留的未标记会话行仍在）；未传入 `log` 时 `console.warn` 恰好收到 `FEISHU_LOGIN_SESSION_FAILED`，`log` 抛错时仍返回 503；已封禁用户登录时返回 better-auth 的 403 `BANNED_USER`，不新增会话或来源标记、不输出日志键。
 
+## 页面
+
+飞书模式下的登录页为 `/[lang]/signin/feishu`（`apps/web/app/[lang]/(auth)/signin/feishu/page.tsx`，FSL-129）。页面是请求时渲染的服务端组件：只在 `resolveWebSessionEntry()` 为 `feishu`（与中间件同一判定，即 `AUTH_MODE=enterprise`、`AUTH_PROVIDER=feishu`）且语言有效时渲染，其它模式下为 404。中间件只在飞书模式下把该路径（可带一个结尾斜杠）作为认证页放行：访客可直接访问，已登录用户与 `/[lang]/signin` 一样被重定向到 `/[lang]/workspace`；其它模式下它不在公开路由内，访客被重定向到 `/[lang]/signin`。登录入口切换到本页由 FSL-131 完成。
+
+同一页面内两步，均在一个客户端组件树中完成，文案取自词典的 `auth.signin.feishu`（`zh-CN` 与 `en`）：
+
+- **输入邮箱**（`components/feishu-login/email-form.tsx`）：邮箱输入框与提交按钮。表单关闭浏览器原生校验，邮箱语法只由服务端的 `normalizeFeishuLoginEmail` 判定；提交时去掉首尾空白，以 `{ "email": "<邮箱>" }` 调用 request。202（服务端同时设置 flow Cookie）后切换到验证码步骤；400 显示格式错误（`invalidEmail`）并停留在本步骤；其它结果（429、503 或网络失败）显示通用提示 `requestFailed` 并停留在本步骤。已知与未知邮箱的 request 结果相同，验证码步骤也相同：提示文案「如果该邮箱属于本组织成员，验证码已通过飞书发送」对两者一致，页面不显示账号是否存在。
+- **验证码**（`components/feishu-login/code-form.tsx`）：验证码输入框与提交按钮。输入或粘贴时去掉全部空白、转为大写并至多保留 8 个字符（输入框不设 `maxLength`，带空格粘贴的验证码不会在去掉空格前被截断；服务端另行去掉首尾空白并转为大写，格式仍只由服务端判定），以 `{ "code": "<验证码>" }` 调用 verify；flow 取自浏览器自动携带的 HttpOnly flow Cookie，页面不读取它。200（服务端同时设置会话 Cookie）后进入首页 `/[lang]`（已登录时首页的入口指向工作区）；其它结果显示通用提示 `verifyFailed` 并停留在本步骤。按状态码区分的错误提示由 FSL-130、重新发送与更换邮箱由 FSL-155 加入。
+
+登录邮箱只保存在页面组件的状态中，不写入 localStorage、sessionStorage 或可读的 Cookie；刷新页面回到空的输入邮箱步骤，flow Cookie 仍有效（同一 flow 再次请求时沿用，见「request」）。
+
+**测试：** `apps/web/tests/unit/i18n-feishu-login.test.ts` 从页面与两个步骤组件的源码收集所用的 `auth.signin.feishu` 键，断言每个键在 `zh-CN` 与 `en` 中都是非空字符串、两份词典在该命名空间下的键集合相同且都被使用、文案已翻译且验证码提示在两种语言中都保留 `{email}` 占位符。`apps/web/tests/e2e/feishu-login-page.spec.ts`（配置 `playwright.feishu-login.config.ts`）在真实浏览器中断言：访客可直接打开两种语言的页面，邮箱步骤显示邮箱输入框与提交按钮；已知成员与未知邮箱提交后都切换到验证码步骤，request 结果、替换邮箱后的验证码步骤 DOM 与 Cookie 名称集合相同，只有成员的 Mock 收件箱收到私聊；相邻路径（`/en/signin/feishu/extra`、`/en/signin/feishux`、`/en/signin-feishu`）对访客仍 302 到 `/en/signin`；非法邮箱显示格式错误、停留在邮箱步骤且不设置 flow Cookie；验证码步骤时浏览器存储不含邮箱，刷新后回到空的邮箱步骤且 flow Cookie 不变；以 Mock 收件箱中的验证码（以小写、中间带空格的形式粘贴）登录后进入首页、设置会话 Cookie，首页入口指向工作区，此后再访问本页被 302 到 `/[lang]/workspace`。
+
+**E2E 基座：** `apps/web/tests/e2e/helpers/feishu-login-harness.ts` 的 `startFeishuLoginHarness` 每次运行自建 `OwnedWeb` 的源码副本（不复制、不加载真实 `.env`）与一次性 PostgreSQL（已迁移）、真实 Feishu Mock CLI 进程，再在该副本上以飞书模式（`AUTH_MODE=enterprise`、`AUTH_PROVIDER=feishu`、`FEISHU_PROVIDER=simulator` 指向 Mock，Mock 的应用 ID 与密钥，新生成的合成 `ENTERPRISE_OTP_HMAC_KEY`）启动独立的 `next dev` 进程组；验证码从 Mock 的 `/__mock/state` 收件箱读取并只留在内存中。启动中途（含数据库观察连接的创建）失败时释放已经启动的部分并抛出带资源清单的 `FeishuLoginHarnessSetupError`，`close()` 依次释放 Web（及其 PG 与源码副本）与 Mock，`withFeishuLoginHarness` 在工作函数成功或抛错时都关闭。`next dev` 的进程组由监听进程读取并登记：启动未完成时每 250 毫秒轮询一次，观察到监听即登记，启动完成后仍未登记则报错；两次轮询之间出现又消失的监听不会被登记，该情形只由 `OwnedWeb.start` 自身的失败清理覆盖。spec 以 `listFeishuLoginHarnessLeftovers` 从外部（文件系统、docker、进程表与端口）断言：在 Mock 启动后与 Web 就绪后注入的两种启动失败、抛错的工作函数与成功关闭四条路径之后，源码副本、PG 容器与端口、Mock 进程与端口、Web 端口与 Web 进程组的存活成员都不再存在（ER-14）。`OwnedWeb.start` 自身失败时由它在拒绝前停止并确认进程组退出，本 spec 不另行注入该故障。
+
 ## 操作白名单
 
 `createAuth` 收到 `feishuLogin` 选项时，在全部插件之前注册飞书模式的 better-auth 操作策略（`packages/auth/src/feishu-login/policy.ts`，插件 ID `megaui-feishu-login-operation-policy`，FSL-127），并且不注册现有企业操作策略（`packages/auth/src/enterprise-otp/policy.ts`）：同时传入 `enterpriseOperationPolicy` 时它同样不注册，其 `resolveMode` 不被调用。未传入 `feishuLogin` 时不注册本策略，行为与本卡之前相同。
@@ -428,7 +443,7 @@ FSL-169 的用例（同在 `signup.test.ts`，以测试数据库中的触发器�
 - **判定：** 飞书模式下会话入口自身不读取企业配置（`readEnterpriseWebConfig`）、不构造资格判定服务、不读取企业会话字段、不做资格判定。它以 `getAuth()` 返回的认证实例调用 better-auth `getSession`（关闭 Cookie 缓存与刷新）读取当前会话（飞书模式的认证实例，见「HTTP 接口」的「启用条件」），再查询 `feishu_login_sessions` 中该会话 ID 的行（同时要求 `session.user_id` 等于会话用户）。该行的年龄只在数据库时钟上计量：`created_at` 由列默认值 `now()` 写入，年龄为同一数据库在读取时的 `clock_timestamp()` 减去 `created_at`，不使用 Web 进程时钟，因此 Web 与数据库之间的时钟偏差不影响该时限。没有该行、任一读取失败、年龄超过 8 小时或为负（该行时间晚于数据库当前时间）时视为未登录；否则得到 `kind: "feishu"` 的 actor（用户 ID、邮箱、会话 ID）。时限从标记行的写入时间起算，没有请求改写该行，因此持续使用（包括 better-auth 刷新会话而推后其 `expiresAt`）不延长这 8 小时；better-auth 自身判定会话无效（已过期或已删除）时同样视为未登录。
 - **非飞书会话：** 没有标记行的会话（包括同一已绑定用户在切换前以密码、社交登录或旧企业登录取得的会话）在飞书模式下视为未登录：受保护页面 302 到 `/[lang]/signin?callbackUrl=<原路径>`，中间件拦截的受保护 API 返回 401，BFF 与上传路由按各自的未登录响应处理，`get-session` 返回 200 `null`。
 - **`get-session`：** `/api/auth/get-session` 由路由经 `getMega2SessionResponse` 以 `resolveWebActor` 判定：飞书会话返回该会话的投影，非飞书会话与无会话返回 200 `null`（带 `Cache-Control: no-store`）。飞书会话投影中 `user.name` 的取值，以及主体冲突或核对失败时飞书会话同样返回 200 `null` 的规则，见「Mega2 授权主体」（FSL-156）。
-- **中间件：** 飞书模式下 `/api/auth/*` 只放行 `/get-session`、`/sign-out`、`/feishu-login/request` 与 `/feishu-login/verify` 四个路径（后两个由 FSL-150 加入；`resolveAuthMode` 拒绝的组合只放行前两个），按路径逐字匹配（尾斜杠、重复斜杠、编码变体，以及操作部分或 `/api/auth` 前缀本身的大小写变体都不匹配），其余路径（包括邮箱密码与社交登录、旧 `/enterprise/*`）由中间件返回 404 `{ "error": "NOT_FOUND" }`（带 `Cache-Control: no-store`）。公开页面只有首页 `/[lang]` 与登录页 `/[lang]/signin`（已登录的飞书会话访问登录页时 302 到 `/[lang]/workspace`）；注册、找回与重置密码页由中间件返回 404，与现有企业模式相同。不属于认证的其它公开路由（健康检查、BFF、上传、内部回调）的放行不变，其中 BFF 与上传在路由内以 `resolveWebActor` 判定会话。
+- **中间件：** 飞书模式下 `/api/auth/*` 只放行 `/get-session`、`/sign-out`、`/feishu-login/request` 与 `/feishu-login/verify` 四个路径（后两个由 FSL-150 加入；`resolveAuthMode` 拒绝的组合只放行前两个），按路径逐字匹配（尾斜杠、重复斜杠、编码变体，以及操作部分或 `/api/auth` 前缀本身的大小写变体都不匹配），其余路径（包括邮箱密码与社交登录、旧 `/enterprise/*`）由中间件返回 404 `{ "error": "NOT_FOUND" }`（带 `Cache-Control: no-store`）。公开页面只有首页 `/[lang]`、登录页 `/[lang]/signin` 与飞书登录页 `/[lang]/signin/feishu`（FSL-129，见「页面」；已登录的飞书会话访问这两个登录页时 302 到 `/[lang]/workspace`）；注册、找回与重置密码页由中间件返回 404，与现有企业模式相同。不属于认证的其它公开路由（健康检查、BFF、上传、内部回调）的放行不变，其中 BFF 与上传在路由内以 `resolveWebActor` 判定会话。
 - **`legacy` 部署：** 会话入口与中间件的判定与本卡之前相同。
 
 **当前状态：** 本节的会话判定由 FSL-126 实现。自 FSL-150 起，飞书模式下 `getAuth()` 返回飞书模式的认证实例，飞书登录端点签发的会话经本节判定（见「HTTP 接口」的「启用条件」；该节的端到端用例以生产的 `getAuth()` 完成登录并以该会话取得协作票据）。下述 FSL-126 契约测试仍以替身替换 `getAuth()`，验证的是会话判定本身。

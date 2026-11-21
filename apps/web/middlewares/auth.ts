@@ -19,6 +19,8 @@ type PublicRoute = {
   methods?: readonly string[];
   /** Auth pages: guests allowed; signed-in users redirect to workspace. */
   isAuthRoute?: boolean;
+  /** Public only in Feishu mode (`resolveWebSessionEntry() === "feishu"`). */
+  feishuOnly?: boolean;
 };
 
 const localeAlt = i18n.locales.map((l) => l.replace("-", "\\-")).join("|");
@@ -33,6 +35,13 @@ const publicRoutes: PublicRoute[] = [
       "i",
     ),
     isAuthRoute: true,
+  },
+  // FSL-129: the Feishu email-code sign-in page is an auth page in Feishu mode
+  // only; elsewhere it stays behind the session guard (the page is a 404 there).
+  {
+    pattern: new RegExp(`^/(${localeAlt})/signin/feishu/?$`, "i"),
+    isAuthRoute: true,
+    feishuOnly: true,
   },
   // Health + better-auth handler (handler route lands in WA-02)
   { pattern: /^\/api\/health$/i },
@@ -142,7 +151,8 @@ export async function authMiddleware(
   const matched = publicRoutes.find(
     (route) =>
       route.pattern.test(pathname) &&
-      (route.methods === undefined || route.methods.includes(request.method)),
+      (route.methods === undefined || route.methods.includes(request.method)) &&
+      (route.feishuOnly !== true || resolveWebSessionEntry() === "feishu"),
   );
 
   if (matched) {

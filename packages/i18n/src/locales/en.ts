@@ -163,6 +163,22 @@ export const en = {
           UNAVAILABLE: "Enterprise login is temporarily unavailable.",
           UNKNOWN_ERROR: "Enterprise login could not be completed. Please try again."
         }
+      },
+      feishu: {
+        title: "Sign in with Feishu",
+        description: "Enter your work email and we will send a sign-in code to your Feishu.",
+        email: "Work email",
+        emailPlaceholder: "name@company.com",
+        request: "Send code",
+        requesting: "Sending...",
+        invalidEmail: "Enter a valid email address.",
+        requestFailed: "The code could not be sent. Please try again.",
+        codeSent: "If {email} belongs to a member, a sign-in code has been sent to your Feishu.",
+        code: "Verification code",
+        codePlaceholder: "8-character code",
+        verify: "Sign in",
+        verifying: "Signing in...",
+        verifyFailed: "Sign-in could not be completed. Please try again."
       }
     },
     signup: {
