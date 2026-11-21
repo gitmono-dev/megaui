@@ -10,6 +10,7 @@ import {
   authenticateCollabConnection,
   CollabAuthError,
   denyAllDocAccess,
+  isFeishuCollabMode,
   type CollabAuthContext,
   type ResolveDocAccess,
 } from "./auth.js";
@@ -32,7 +33,11 @@ export interface CollabServerOptions {
   ticketSecret?: string;
   maxDocuments?: number;
   maxConnections?: number;
-  /** Override the Web policy bridge in tests or an explicitly wired host. */
+  /**
+   * Override the Web policy bridge in tests or an explicitly wired host.
+   * Ignored in Feishu mode (`AUTH_MODE=enterprise` + `AUTH_PROVIDER=feishu`,
+   * FSL-128), which never uses a policy bridge.
+   */
   enterprisePolicy?: EnterprisePolicyBridge;
   /** Independent credential for the internal user-revoke endpoint. */
   revokeToken?: string;
@@ -91,7 +96,17 @@ export function createCollabServer(options: CollabServerOptions = {}): CollabSer
   const resolveDocAccess = resolveDefaultAuthz(options.resolveDocAccess);
   const ticketSecret = options.ticketSecret;
   const localMode = resolveCollabAuthMode();
-  const policyBridge = options.enterprisePolicy ?? bridgeFromEnvironment();
+  // FSL-128: Feishu mode never uses an enterprise policy bridge (unlike legacy,
+  // which still does when policy keys are set or one is injected), so there is
+  // no policy read, revalidation or enterprise ticket field; every connection
+  // is checked as an ordinary collab ticket, as in legacy without a bridge.
+  const feishuMode = isFeishuCollabMode({
+    AUTH_MODE: process.env.AUTH_MODE,
+    AUTH_PROVIDER: process.env.AUTH_PROVIDER,
+  });
+  const policyBridge = feishuMode
+    ? undefined
+    : options.enterprisePolicy ?? bridgeFromEnvironment();
 
   const readPolicy = async (): Promise<EnterprisePolicyResponse | null> => {
     if (!policyBridge) return null;

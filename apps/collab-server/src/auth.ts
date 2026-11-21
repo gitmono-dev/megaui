@@ -3,7 +3,12 @@
  * Doc authz is injectible so CS-01 does not import @megaui/engine (ADR-ARCH-01).
  */
 
-import type { AuthMode, EnterprisePolicyResponse } from "@megaui/core";
+import {
+  resolveAuthMode,
+  type AuthMode,
+  type AuthModeSource,
+  type EnterprisePolicyResponse,
+} from "@megaui/core";
 import { verifyCollabTicket } from "@megaui/core/collab/ticket";
 
 import { parseRoomName, type ParsedRoom } from "./rooms.js";
@@ -82,6 +87,25 @@ export function createMapDocAccess(
       role: "none",
       reason: "no_access",
     };
+}
+
+/**
+ * FSL-128: whether this collab process runs in Feishu mode, decided by
+ * `resolveAuthMode` (FSL-116): `AUTH_MODE=enterprise` + `AUTH_PROVIDER=feishu`.
+ *
+ * In Feishu mode collab checks connections like `legacy` without a policy
+ * bridge: the server never builds an enterprise policy bridge (even when
+ * enterprise policy keys are set or one is injected) and passes no `policy` to
+ * `authenticateCollabConnection`, so the ordinary collab ticket checks
+ * (signature, expiry, room binding, document access) are the whole check and
+ * no enterprise ticket fields are required. A combination `resolveAuthMode`
+ * rejects (such as `legacy` + `feishu` or `enterprise` + `local`) throws its
+ * `AuthModeError`, so the server refuses to start. Without `AUTH_PROVIDER` the
+ * result is always `false` and the existing parsing is unchanged.
+ */
+export function isFeishuCollabMode(source: AuthModeSource): boolean {
+  const resolved = resolveAuthMode(source);
+  return resolved.mode === "enterprise" && resolved.provider === "feishu";
 }
 
 export function resolveTicketSecret(): string | null {

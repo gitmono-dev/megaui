@@ -4,7 +4,7 @@
 
 ## 配置
 
-`@megaui/core` 的 `resolveAuthMode({ AUTH_MODE, AUTH_PROVIDER })`（`packages/core/src/auth/mode.ts`，FSL-116）是认证模式与提供方的单一解析规则。它是不读取环境的纯函数，按下表返回结果或拒绝。**当前状态：** 本函数只接入了 Web 的会话入口与中间件（FSL-126，仅在 `AUTH_PROVIDER` 已设置时调用，见「会话」）；其它 Web 路径、collab 与 engine 仍按各自现有路径解析 `AUTH_MODE`。由 FSL-150（Web 接线，同时接入 FSL-121 的 `readFeishuLoginConfig`）、FSL-128（collab）接入后，下表规则才对相应进程生效。飞书登录端点由 FSL-150 接线、FSL-131 切换入口；在此之前，设置 `AUTH_PROVIDER=feishu` 不会启用飞书登录。
+`@megaui/core` 的 `resolveAuthMode({ AUTH_MODE, AUTH_PROVIDER })`（`packages/core/src/auth/mode.ts`，FSL-116）是认证模式与提供方的单一解析规则。它是不读取环境的纯函数，按下表返回结果或拒绝。**当前状态：** 本函数只接入了 Web 的会话入口与中间件（FSL-126，仅在 `AUTH_PROVIDER` 已设置时调用，见「会话」）与 collab-server（FSL-128，见「协作服务」）；其它 Web 路径与 engine 仍按各自现有路径解析 `AUTH_MODE`。由 FSL-150（Web 接线，同时接入 FSL-121 的 `readFeishuLoginConfig`）接入后，下表规则才对 Web 的其余路径生效。飞书登录端点由 FSL-150 接线、FSL-131 切换入口；在此之前，设置 `AUTH_PROVIDER=feishu` 不会启用飞书登录。
 
 | `AUTH_MODE` | `AUTH_PROVIDER` | 结果 |
 |---|---|---|
@@ -455,6 +455,19 @@ Mega2 经 `GET /api/auth/get-session` 读取当前会话，并按 `WebsiteAuthUs
 没有飞书绑定的用户规则不变：有企业资料的用户以 `login_name` 为用户名、以去除首尾空白后的资料显示名为显示名（为空时依次取去除首尾空白后的 `user.name`、用户名）；其余（legacy）用户以邮箱第一个 `@` 前的前缀为用户名、以去除首尾空白后的 `user.name` 为显示名（为空时取用户名）；两者在 `user.image` 非空时输出 `avatarUrl`，`avatarColor` 恒为 `#64748b`。
 
 `packages/engine/src/services/enterprise/public-profile.test.ts` 以一次性 PG 断言公开资料行的全部字段（`toEqual`，飞书用户另断言无 `avatarUrl`）：飞书用户分姓名与邮箱无关、姓名等于邮箱、姓名含完整本地部分（大小写不同）、姓名只含域名片段（保留，且 `user.image` 非空时仍无 `avatarUrl`）、姓名只含本地部分的片段（保留）五种，另有用户 ID 偶然包含本地部分（用户名仍为用户 ID）、首字符拼出本地部分（缩写为 `A`、姓名保留）、本地部分为 `u` 且姓名为空（缩写为空字符串）、本地部分含于 `#64748b`（颜色为 `#525252`）、本地部分为单个字母且等于用户 ID 的首字符（显示名为用户 ID、缩写为其首字符）、姓名带首尾空白（原样保留）、姓名为空字符串与另有企业资料的飞书用户各一例，并断言这些行中（最后一种取用户 ID 首字符的情形除外）不等于用户 ID 的字段值不含 `@` 与（不区分大小写的）完整本地部分；legacy 用户与企业用户各一例，断言与本卡之前的规则一致；另经议题服务创建议题，断言作者等于同一公开资料行。
+
+## 协作服务
+
+collab-server（`apps/collab-server`）在飞书模式下的连接校验（FSL-128）。
+
+- **模式判定：** `createCollabServer` 先按现有规则检查 `AUTH_MODE` 的取值（未知取值仍以现有的 `EnterprisePolicyError` 拒绝构造），再以 `resolveAuthMode`（见「配置」）对进程环境中的 `AUTH_MODE` 与 `AUTH_PROVIDER` 判定是否为飞书模式（`apps/collab-server/src/auth.ts` 的 `isFeishuCollabMode`）。`resolveAuthMode` 拒绝的组合（如 `legacy` + `feishu`、`enterprise` + `local`）使构造抛出 `AuthModeError`，服务不启动。
+- **飞书模式（`enterprise` + `feishu`）：** 无条件不构造企业策略桥（`legacy` 在设置了企业策略键或注入 `enterprisePolicy` 时仍会使用策略桥，飞书模式不会）：不读取 `BETTER_AUTH_URL`、`ENTERPRISE_INTROSPECTION_KEY`、`ENTERPRISE_DB_INSTANCE_ID`、`ENTERPRISE_ARTIFACT_SHA`（即使设置了也不使用），并忽略调用方传入的 `enterprisePolicy` 选项。因此启动时不要求策略服务配置、不请求 Web 策略接口，运行中不做企业策略复核，`/health` 不报告策略字段。每个连接只做普通协作票据校验：票据签名（密钥为 `ticketSecret` 选项，未传入时为 `MEGA_COLLAB_INTERNAL_TOKEN`）与有效期、频道房间要求票据绑定该房间、文档房间的文档访问判定，以及现有的连接数与文档数上限；不要求票据带企业字段（身份 ID 与 epoch），不调用资格判定。签名不符、格式无效、缺失或已过期的票据，频道房间中未绑定该房间的票据，以及无文档访问权的文档房间连接，都被拒绝；文档房间不比较票据中的房间名。这些规则与未使用策略桥的 `legacy` 相同，没有放宽。
+- **未设置 `AUTH_PROVIDER`：** `AUTH_MODE=enterprise`（及 `maintenance`）的部署行为不变：从环境构造策略桥时仍要求完整的企业策略桥配置（调用方经 `enterprisePolicy` 选项注入策略桥时沿用注入的桥），启动前读取 Web 策略、读取失败时拒绝启动，只接受绑定当前策略 epoch 且通过资格判定的企业票据；`legacy` 部署同样不变。
+- **撤销接口：** 本卡不改动 `/internal/revoke`（collab 企业撤销接口），飞书模式下它仍按现有规则处理请求；删除由 FSL-134 负责。
+
+**当前状态：** 本卡只改变 collab 侧的校验。Web 在飞书模式下经 `collab/token` 为飞书会话签发协作票据、该票据被以相同 `AUTH_MODE` / `AUTH_PROVIDER` 启动的 collab 接受，由 FSL-150 接线并以端到端用例验证；在此之前部署中不会签发飞书会话（见「会话」）。
+
+`apps/collab-server/src/feishu-mode.test.ts` 以真实 Hocuspocus 服务与 provider 客户端构造：飞书模式下清空全部企业策略键时服务启动成功、`/health` 返回 200 且不含策略字段、除该健康探测外没有其它 `fetch` 调用；另设置了不完整的企业策略键（在未设置 `AUTH_PROVIDER` 时会拒绝启动）并传入 `enterprisePolicy` 替身时，服务同样启动，替身的 `read` 与 `qualify` 都未被调用。不带企业字段的 v1 与 v2 票据连接文档房间被接受并能相互同步，绑定频道房间的 v2 票据连接该频道房间被接受；格式无效、空、密钥不符、签名被篡改、已过期（v1 与 v2）的票据，绑定其它频道房间的票据连接频道房间，以及无文档访问权的文档房间连接都被拒绝，且连接数为 0。未设置（或空白）`AUTH_PROVIDER` 的 `enterprise` 模式下缺少策略配置时构造仍抛出 `EnterprisePolicyError`，策略不可用时拒绝启动，普通票据与 epoch 过期的企业票据被拒绝、绑定当前 epoch 的企业票据经资格判定后被接受；未知 `AUTH_MODE` 仍以 `EnterprisePolicyError` 拒绝；`isFeishuCollabMode` 对各组合的结果，以及被拒绝组合下 `createCollabServer` 抛出 `AuthModeError`，也逐一断言。
 
 ## 数据
 
