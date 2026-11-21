@@ -334,12 +334,13 @@ export class OwnedWeb {
   private constructor(readonly directory: string, readonly port: number) {
     this.root = path.join(directory, "source");
     this.baseURL = `http://127.0.0.1:${port}`;
-    // PATH and HOME are tool locations only; do not inherit application settings,
+    // PATH, HOME and TMPDIR are tool locations only; do not inherit application settings,
     // NODE_OPTIONS, NODE_PATH, PGOPTIONS, provider credentials or proxy variables.
     const toolPath = (process.env.PATH ?? "").split(path.delimiter)
       .filter((entry) => entry && !within(SOURCE_ROOT, path.resolve(entry)));
     this.env = {
       HOME: process.env.HOME,
+      ...(process.env.TMPDIR ? { TMPDIR: process.env.TMPDIR } : {}),
       PATH: [path.dirname(process.execPath), ...toolPath].join(path.delimiter),
       NODE_ENV: "test", CI: "true", NO_COLOR: "1", NEXT_TELEMETRY_DISABLED: "1",
       MEGAUI_APP_NAME: "megaui", AUTH_MODE: "legacy", EMAIL_PROVIDER: "test",

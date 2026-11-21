@@ -213,7 +213,14 @@ jobs:
       - name: Unit tests (CMD-05)
         env:
           VITEST_MAX_WORKERS: '3'
-        run: pnpm vitest run
+          # Owned source copies (owned-web, isolated-server) go to the
+          # disk-backed runner temp dir, which the runner empties at the
+          # start of every job, instead of the host /tmp (tmpfs on the
+          # self-hosted runner) where copies from killed jobs accumulate.
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          df -h "$TMPDIR" /tmp || true
+          pnpm vitest run
 
       - name: Live provider status (FS-26)
         run: >

@@ -40,6 +40,7 @@ describe("FS-40 isolated Web server", () => {
     expect(env.FS40_SECRET).toBeUndefined();
     expect(env.HOME).toBe("/tmp/fs40-owned/home");
     expect(env.XDG_CACHE_HOME).toBe("/tmp/fs40-owned/cache");
+    expect(env.TMPDIR).toBe(process.env.TMPDIR || undefined);
   });
 
   it("starts, restarts with the same origin, and removes the private source snapshot", async () => {

@@ -75,6 +75,8 @@ export function buildIsolatedEnvironment(
     NODE_ENV: "development",
     NO_COLOR: "1",
   };
+  // Tool location only (same temp root as the parent, e.g. the CI runner temp).
+  if (process.env.TMPDIR) environment.TMPDIR = process.env.TMPDIR;
   for (const key of WEB_ENV_KEYS) {
     const value = explicit[key];
     if (value !== undefined) environment[key] = value;
