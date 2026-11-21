@@ -67,18 +67,28 @@ const enterpriseAuthOperations = new Set([
   "/sign-out",
 ]);
 
-// FSL-126: in Feishu mode (and for an AUTH_MODE / AUTH_PROVIDER pair that
-// `resolveAuthMode` refuses) the anonymous Better Auth surface is only the
-// session read and sign-out; the old enterprise operations are not exposed.
-// `get-session` answers through `resolveWebActor`, so a non-Feishu session
-// reads as null there.
+// FSL-126: for an AUTH_MODE / AUTH_PROVIDER pair that `resolveAuthMode`
+// refuses, the anonymous Better Auth surface is only the session read and
+// sign-out; the old enterprise operations are not exposed. `get-session`
+// answers through `resolveWebActor`, so a non-Feishu session reads as null.
+const invalidModeAuthOperations = new Set([
+  "/get-session",
+  "/sign-out",
+]);
+
+// FSL-150: Feishu mode (AUTH_MODE=enterprise, AUTH_PROVIDER=feishu) adds the two
+// Feishu login endpoints, matched by exact path like every other operation.
 const feishuAuthOperations = new Set([
+  "/feishu-login/request",
+  "/feishu-login/verify",
   "/get-session",
   "/sign-out",
 ]);
 
 function allowedAuthOperations(): ReadonlySet<string> | undefined {
-  if (resolveWebSessionEntry() !== "existing") return feishuAuthOperations;
+  const entry = resolveWebSessionEntry();
+  if (entry === "feishu") return feishuAuthOperations;
+  if (entry === "invalid") return invalidModeAuthOperations;
   const mode = process.env.AUTH_MODE?.trim() ?? "legacy";
   if (mode !== "enterprise" && mode !== "maintenance") return undefined;
   return enterpriseAuthOperations;

@@ -432,3 +432,36 @@ export type {
   EnterpriseOffboardingResult,
   EnterpriseOffboardingStore,
 } from "@megaui/database";
+// FSL-150: the Feishu login issue service (FSL-122, FSL-154) and the code cleanup scheduler
+// (FSL-146), wired by the Web in Feishu mode. The issue input is exported as
+// `FeishuLoginCodeIssueInput` so it cannot be mistaken for `@megaui/auth`'s
+// `FeishuLoginIssueInput` (the plugin's port input) in a module that imports both.
+export {
+  createFeishuLoginIssuer,
+  feishuLoginTenantKey,
+  FEISHU_LOGIN_COOLDOWN,
+  FEISHU_LOGIN_GLOBAL_BUDGET,
+  FEISHU_LOGIN_INACTIVE,
+  FEISHU_LOGIN_NO_TARGET,
+  FEISHU_LOGIN_PROVIDER_FAILED,
+  FEISHU_LOGIN_RESERVE_RETRY,
+  FEISHU_LOGIN_SEND_ATTEMPT,
+  FEISHU_LOGIN_SEND_MAX_RETRIES,
+  FEISHU_LOGIN_SEND_REJECTED,
+  FEISHU_LOGIN_SEND_UNKNOWN,
+  type FeishuLoginDeliveryResult,
+  type FeishuLoginIssueInput as FeishuLoginCodeIssueInput,
+  type FeishuLoginIssueLogKey,
+  type FeishuLoginIssueResult,
+  type FeishuLoginIssuer,
+  type FeishuLoginIssuerOptions,
+  type FeishuLoginReservation,
+} from "./services/feishu-login/issue";
+export {
+  FEISHU_LOGIN_CLEANUP_FAILED,
+  FEISHU_LOGIN_CLEANUP_INTERVAL_MS,
+  startFeishuLoginCleanup,
+  type FeishuLoginCleanupLogKey,
+  type FeishuLoginCleanupSchedulerOptions,
+  type StopFeishuLoginCleanup,
+} from "./services/feishu-login/cleanup";
