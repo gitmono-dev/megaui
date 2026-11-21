@@ -396,6 +396,19 @@ FSL-152 的用例：同邮箱本地用户已存在而无绑定时返回 409 `{ "
 
 FSL-169 的用例（同在 `signup.test.ts`，以测试数据库中的触发器注入故障）：首次登录时 `session` 的插入失败，与首次登录时 `feishu_login_sessions` 的插入失败（另以 `session` 上的插入审计触发器证明会话曾经签发），各自断言 503 `{ "status": "retry" }`、带 `Cache-Control: no-store`、不设置会话 Cookie、响应与控制台输出都不含注入的数据库错误（其消息含该行内容，`session` 行含 token）、`session` 与 `feishu_login_sessions` 都没有行、注入的 `log` 恰好收到一次 `FEISHU_LOGIN_SESSION_FAILED`、验证码行为 `consumed`、用户与绑定各一行；已有绑定的再次登录时把 `user` 表临时改名使读取用户抛错，或以替身使 `findUserById` 返回空、抛出 better-auth `APIError`，同样断言 503 与两表无行。这些情形随后都断言原验证码再次提交返回 401，再经 request 端点在同一 flow 重新请求验证码（其 `reserve` 为签发存储的预约，`deliver` 以 Mock 代替飞书查询与私聊、激活预约行），以新验证码登录返回 200，`user` 全部行的全部列与 `feishu_identities` 不变，会话属于原用户且恰有一行来源标记。另断言：来源标记写入与会话删除同时失败时依次输出 `FEISHU_LOGIN_SESSION_REVOKE_FAILED`、`FEISHU_LOGIN_SESSION_FAILED`，仍返回 503 且不设置会话 Cookie，`session` 留一行、`feishu_login_sessions` 无行，随后同样重新取码登录成功且不新建用户（残留的未标记会话行仍在）；未传入 `log` 时 `console.warn` 恰好收到 `FEISHU_LOGIN_SESSION_FAILED`，`log` 抛错时仍返回 503；已封禁用户登录时返回 better-auth 的 403 `BANNED_USER`，不新增会话或来源标记、不输出日志键。
 
+## 操作白名单
+
+`createAuth` 收到 `feishuLogin` 选项时，在全部插件之前注册飞书模式的 better-auth 操作策略（`packages/auth/src/feishu-login/policy.ts`，插件 ID `megaui-feishu-login-operation-policy`，FSL-127），并且不注册现有企业操作策略（`packages/auth/src/enterprise-otp/policy.ts`）：同时传入 `enterpriseOperationPolicy` 时它同样不注册，其 `resolveMode` 不被调用。未传入 `feishuLogin` 时不注册本策略，行为与本卡之前相同。
+
+- **白名单：** 只有 `/feishu-login/request`、`/feishu-login/verify`、`/get-session` 与 `/sign-out` 四个操作可达（verify 仍只在选项含 `verify` 时注册，见「HTTP 接口」）。认证实例上的其余全部端点一律拒绝，包括邮箱密码注册与登录、社交登录、找回与重置密码、admin 插件的接口（含 `/admin/create-user`）、旧 `/enterprise/*`（同时传入企业配置项、这些端点因此存在时同样拒绝），以及之后加入的插件新增的端点（判定只看路径，不依赖端点清单）。
+- **HTTP：** 策略的 `onRequest` 先于其它插件的 `onRequest`、也先于路由匹配执行。它取请求 URL 经 WHATWG URL 解析后的 pathname（better-auth 路由所用的同一个值，不解码百分号编码），去掉认证实例上下文中 `baseURL`（better-auth 补全默认路径后的值）的路径部分（即路由去掉的同一前缀，Web 挂载下为 `/api/auth`）后，与四个操作逐字比较；查询串不参与比较。尾斜杠、重复斜杠、含百分号编码的字符（如 `%2F`、`%67et-session`），以及操作部分或前缀部分的大小写不同，都不等于四个操作之一，返回 404 `{ "error": "NOT_FOUND" }`（带 `Cache-Control: no-store`），请求不到达任何端点。URL 解析本身会规范化的写法（点段 `/./`、`/../` 及其编码形式 `%2e`，以及反斜杠）在比较之前已被解析消去，按解析后的路径判定。better-auth 自身的限流（只在生产环境启用）在全部插件的 `onRequest` 之前执行，因此生产环境中超出限流的请求先得到 429，同样不到达端点。
+- **直接调用：** 策略的 `before` 钩子匹配全部端点，比较被调用端点自身的路径：服务端代码经 `auth.api.*` 调用四个操作之外的端点时抛出 better-auth `APIError`（`NOT_FOUND`，消息 `AUTH_OPERATION_NOT_FOUND`），端点处理函数不执行。
+- **范围：** 本策略只限制该认证实例的 better-auth 操作；Web 中间件对 `/api/auth/*` 的放行范围见「会话」（FSL-126）。
+
+**当前状态：** Web 尚未向 `createAuth` 传入 `feishuLogin` 选项，部署中尚未启用本策略；飞书模式的认证实例构造与中间件放行 `/api/auth/feishu-login/*` 由 FSL-150 接线。
+
+`packages/auth/src/feishu-login/policy.test.ts` 以 `createAuth` 加飞书登录配置构造（`issue` 端口为替身；`verify` 选项的连接池为替身，只应答密钥一致性检查的查询），分两种构造各跑一遍：只传飞书登录配置，以及另外同时传入 `enterprisePairing` 与 `enterpriseOperationPolicy`（`resolveMode` 恒为 `enterprise`）。断言：策略排在插件列表首位、企业操作策略未注册且 `resolveMode` 未被调用，未传入 `feishuLogin` 时不注册本策略；四个操作经 HTTP 与 `auth.api` 都可达（request 返回 202 且调用 `reserve`，无 flow Cookie 的 verify 在密钥检查后返回 401 `invalid`，无会话的 `get-session` 返回 200 `null`，`sign-out` 返回 200）；`/sign-up/email`、`/sign-in/email`、`/sign-in/social`、`/admin/create-user` 与 `/enterprise/request`（只传飞书登录配置时该端点不存在，经 HTTP 同样返回 404），以及实例上其余每个端点，经 HTTP 返回上述 404、经 `auth.api` 抛出 `NOT_FOUND`，签发端口、连接池、配对端口与邮件发送均未被调用；四个路径的尾斜杠、大小写、百分号编码与重复斜杠变体，以及 `/api/auth` 前缀的大小写、编码、尾斜杠与重复斜杠变体，都返回 404。
+
 ## 会话
 
 页面、BFF、上传与 `get-session` 共用的 Web 会话入口 `resolveWebActor`（`apps/web/lib/enterprise-session.ts`）与中间件（`apps/web/middlewares/auth.ts`）在飞书模式下的行为（FSL-126）。

@@ -53,6 +53,7 @@ import {
   feishuLoginRequestRateLimitRule,
   type FeishuLoginPluginOptions,
 } from "./feishu-login/plugin";
+import { createFeishuLoginOperationPolicy } from "./feishu-login/policy";
 
 export interface CreateAuthConfig {
   /** Display name in auth emails / better-auth `appName` (required — no brand default). */
@@ -82,7 +83,10 @@ export interface CreateAuthConfig {
     readonly resolveTransport: (request: Request) => EnterprisePairingTransport | null;
     readonly verifyPort?: EnterpriseOtpVerifyPort;
   };
-  /** Persistent enterprise operation allowlist, applied to HTTP and direct auth.api calls. */
+  /**
+   * Persistent enterprise operation allowlist, applied to HTTP and direct auth.api calls. Not
+   * registered when `feishuLogin` is passed: the Feishu-mode allowlist replaces it (FSL-127).
+   */
   enterpriseOperationPolicy?: EnterpriseOperationPolicyOptions;
   /** Public session projection, kept separate from Better Auth's internal session output. */
   enterpriseSession?: EnterpriseSessionPluginOptions;
@@ -90,6 +94,10 @@ export interface CreateAuthConfig {
    * FSL-123: the Feishu login request endpoint (`POST /feishu-login/request`). The plugin is
    * registered only when this is passed; Better Auth's per-address rate limit still applies to
    * admissible requests, while invalid inputs answer 400 ahead of it (ADR-FSL-11 order).
+   * FSL-127: passing it also registers the Feishu-mode operation allowlist ahead of every other
+   * plugin (only `/feishu-login/request`, `/feishu-login/verify`, `/get-session` and `/sign-out`
+   * stay reachable, over HTTP and through direct `auth.api` calls) and leaves
+   * `enterpriseOperationPolicy` unregistered.
    */
   feishuLogin?: FeishuLoginPluginOptions;
 }
@@ -296,10 +304,12 @@ export function createAuth(config: CreateAuthConfig) {
       },
     },
     plugins: [
+      // FSL-127: first, so its `onRequest` and `before` hook run ahead of every other plugin's.
+      ...(config.feishuLogin ? [createFeishuLoginOperationPolicy()] : []),
       admin({
         adminRoles: ["admin"],
       }),
-      ...(config.enterpriseOperationPolicy
+      ...(config.enterpriseOperationPolicy && !config.feishuLogin
         ? [createEnterpriseOperationPolicy(config.enterpriseOperationPolicy)]
         : []),
       ...(config.enterpriseSession ? [createEnterpriseSessionPlugin(config.enterpriseSession)] : []),
