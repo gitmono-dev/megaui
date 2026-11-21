@@ -211,24 +211,33 @@ jobs:
         run: pnpm turbo run lint
 
       # Owned source copies (owned-web, isolated-server) are written under
-      # os.tmpdir(). Copies left by killed or cancelled jobs used to pile up
-      # in the runner's /tmp until ENOSPC, so the tests get a dedicated
-      # directory that every job empties before the tests and removes after.
+      # os.tmpdir(). On the self-hosted runner the host /tmp tmpfs returned
+      # ENOSPC mid-run even with free space reported, so the tests use a
+      # dedicated disk-backed directory under the runner temp dir that every
+      # job empties before the tests and removes after. The diagnostics print
+      # only sizes and process names (no command lines; ER-11).
       - name: Prepare test temp dir
         run: |
-          rm -rf /tmp/megaui-ci-tmp
-          mkdir -p /tmp/megaui-ci-tmp
-          df -h /tmp || true
+          rm -rf "${{ runner.temp }}/megaui-tmp"
+          mkdir -p "${{ runner.temp }}/megaui-tmp"
+          df -h /tmp "${{ runner.temp }}" || true
+          df -i /tmp "${{ runner.temp }}" || true
+          free -g || true
+          cat /proc/sys/vm/overcommit_memory || true
+          ps -eo rss=,comm= --sort=-rss | head -10 || true
 
       - name: Unit tests (CMD-05)
         env:
           VITEST_MAX_WORKERS: '3'
-          TMPDIR: /tmp/megaui-ci-tmp
+          TMPDIR: ${{ runner.temp }}/megaui-tmp
         run: pnpm vitest run
 
       - name: Remove test temp dir
         if: always()
-        run: rm -rf /tmp/megaui-ci-tmp
+        run: |
+          rm -rf "${{ runner.temp }}/megaui-tmp"
+          df -h /tmp || true
+          df -i /tmp || true
 
       - name: Live provider status (FS-26)
         run: >
