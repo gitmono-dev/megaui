@@ -214,17 +214,14 @@ jobs:
       # os.tmpdir(). On the self-hosted runner the host /tmp tmpfs returned
       # ENOSPC mid-run even with free space reported, so the tests use a
       # dedicated disk-backed directory under the runner temp dir that every
-      # job empties before the tests and removes after. The diagnostics print
-      # only sizes and process names (no command lines; ER-11).
+      # job empties before the tests and removes after. The /tmp failure was
+      # inode exhaustion (df -i), so both space and inodes are printed.
       - name: Prepare test temp dir
         run: |
           rm -rf "${{ runner.temp }}/megaui-tmp"
           mkdir -p "${{ runner.temp }}/megaui-tmp"
           df -h /tmp "${{ runner.temp }}" || true
           df -i /tmp "${{ runner.temp }}" || true
-          free -g || true
-          cat /proc/sys/vm/overcommit_memory || true
-          ps -eo rss=,comm= --sort=-rss | head -10 || true
 
       - name: Unit tests (CMD-05)
         env:
@@ -236,8 +233,8 @@ jobs:
         if: always()
         run: |
           rm -rf "${{ runner.temp }}/megaui-tmp"
-          df -h /tmp || true
-          df -i /tmp || true
+          df -h /tmp "${{ runner.temp }}" || true
+          df -i /tmp "${{ runner.temp }}" || true
 
       - name: Live provider status (FS-26)
         run: >
