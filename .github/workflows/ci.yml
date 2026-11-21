@@ -211,30 +211,51 @@ jobs:
         run: pnpm turbo run lint
 
       # Owned source copies (owned-web, isolated-server) are written under
-      # os.tmpdir(). On the self-hosted runner the host /tmp tmpfs returned
-      # ENOSPC mid-run even with free space reported, so the tests use a
-      # dedicated disk-backed directory under the runner temp dir that every
-      # job empties before the tests and removes after. The /tmp failure was
-      # inode exhaustion (df -i), so both space and inodes are printed.
+      # os.tmpdir() and need many inodes. On the self-hosted runner the host
+      # /tmp tmpfs ran out of inodes (ENOSPC with free space reported), and a
+      # disk-backed directory made the suite slow enough to hit test timeouts.
+      # Each run gets its own directory (mktemp -d) on /tmp when it is a tmpfs
+      # with enough free inodes and space, else under the runner temp dir, and
+      # removes only that directory afterwards. All test temp files live
+      # inside it, so a killed job leaves only a megaui-cirun-* directory;
+      # such directories in /tmp that are owned by the runner user and older
+      # than three hours (the job timeout is 120 minutes) are removed first.
       - name: Prepare test temp dir
         run: |
-          rm -rf "${{ runner.temp }}/megaui-tmp"
-          mkdir -p "${{ runner.temp }}/megaui-tmp"
-          df -h /tmp "${{ runner.temp }}" || true
-          df -i /tmp "${{ runner.temp }}" || true
+          find /tmp -mindepth 1 -maxdepth 1 -type d -user "$(id -u)" -mmin +180 \
+            -regextype posix-extended -regex '/tmp/megaui-cirun-[0-9]+-[0-9]+-[A-Za-z0-9]{6}' \
+            -exec rm -rf {} + 2>/dev/null || true
+          base="${{ runner.temp }}"
+          fstype=$(stat -f -c %T /tmp 2>/dev/null || echo unknown)
+          ifree=$(df --output=iavail /tmp | tail -n 1 | tr -d ' ')
+          kfree=$(df --output=avail -k /tmp | tail -n 1 | tr -d ' ')
+          echo "/tmp: type=$fstype, free inodes=$ifree, free KiB=$kfree"
+          if [ "$fstype" = tmpfs ] && [ "${ifree:-0}" -ge 900000 ] && [ "${kfree:-0}" -ge 52428800 ]; then
+            base=/tmp
+          else
+            echo "/tmp is not a tmpfs with >=900000 free inodes and >=50 GiB; using the runner temp dir"
+          fi
+          dir=$(mktemp -d "$base/megaui-cirun-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-XXXXXX")
+          echo "MEGAUI_TEST_TMPDIR=$dir" >> "$GITHUB_ENV"
+          echo "test temp dir: $dir"
 
       - name: Unit tests (CMD-05)
         env:
           VITEST_MAX_WORKERS: '3'
-          TMPDIR: ${{ runner.temp }}/megaui-tmp
+          TMPDIR: ${{ env.MEGAUI_TEST_TMPDIR }}
         run: pnpm vitest run
 
       - name: Remove test temp dir
         if: always()
         run: |
-          rm -rf "${{ runner.temp }}/megaui-tmp"
-          df -h /tmp "${{ runner.temp }}" || true
-          df -i /tmp "${{ runner.temp }}" || true
+          dir="${MEGAUI_TEST_TMPDIR:-}"
+          tmp_prefix="/tmp/megaui-cirun-${GITHUB_RUN_ID}-"
+          runner_prefix="${RUNNER_TEMP}/megaui-cirun-${GITHUB_RUN_ID}-"
+          case "$dir" in
+            "$tmp_prefix"*|"$runner_prefix"*) rm -rf "$dir" ;;
+          esac
+          df -h /tmp || true
+          df -i /tmp || true
 
       - name: Live provider status (FS-26)
         run: >
