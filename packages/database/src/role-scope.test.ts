@@ -6,8 +6,16 @@
 //   role granted only DML and sequence USAGE.
 // AC1-AC6: with NODE_ENV=production each of the first six (and the read failure) is refused with
 // DATABASE_ROLE_SCOPE_REJECTED and the DML-only role passes. AC7: in development and test each
-// of them only prints DATABASE_ROLE_SCOPE_WARNING. It needs a docker daemon: without one the run
-// fails instead of passing quietly.
+// of them only prints DATABASE_ROLE_SCOPE_WARNING.
+// FSL-162 (ownership and output redaction): seven more roles, each owning exactly one thing and
+// holding nothing else unless stated: a non-public schema, a table, a collation, a text search
+// configuration, the current database, a NOINHERIT member that may SET ROLE to the table owner,
+// and the migration role itself. AC1-AC4: with NODE_ENV=production each is refused with
+// DATABASE_ROLE_SCOPE_REJECTED and hits exactly its ownership facts. AC5/AC6: the refusal and the
+// warning are captured and equal `role=<name> facts=<categories>` exactly, without the connection
+// string, the password, the host or any object or schema name; a role name that is not a plain
+// identifier cannot split the line. It needs a docker daemon: without one the run fails instead
+// of passing quietly.
 import { randomBytes } from "node:crypto";
 
 import { drizzle } from "drizzle-orm/node-postgres";
@@ -78,6 +86,60 @@ const TOO_POWERFUL: readonly RoleCase[] = [
   { label: "AC2 member that may SET ROLE to a CREATEDB role", login: "rs_member", expected: { rs_creator: ["createdb"] } },
 ];
 
+/**
+ * FSL-162: the roles that own something (AC1-AC4). Owning a schema also grants `CREATE` on it;
+ * the owner of the database also holds `CREATE` on it and is a member of `pg_database_owner`, the
+ * owner of `public`.
+ */
+const OWNERS: readonly RoleCase[] = [
+  {
+    label: "FSL-162 AC1 owns a non-public schema",
+    login: "rs_schema_owner",
+    expected: { rs_schema_owner: ["schema_create", "schema_owner", "object_owner"] },
+  },
+  { label: "FSL-162 AC2 owns a table", login: "rs_table_owner", expected: { rs_table_owner: ["object_owner"] } },
+  { label: "FSL-162 AC2 owns a collation", login: "rs_collation_owner", expected: { rs_collation_owner: ["object_owner"] } },
+  {
+    label: "FSL-162 AC2 owns a text search configuration",
+    login: "rs_tsconfig_owner",
+    expected: { rs_tsconfig_owner: ["object_owner"] },
+  },
+  {
+    label: "FSL-162 AC3 owns the current database",
+    login: "rs_db_owner",
+    expected: {
+      pg_database_owner: ["schema_create", "schema_owner"],
+      rs_db_owner: ["database_create", "schema_create", "database_owner"],
+    },
+  },
+  {
+    label: "FSL-162 AC4 NOINHERIT member that may SET ROLE to the table owner",
+    login: "rs_noinherit_owner",
+    expected: { rs_table_owner: ["object_owner"] },
+  },
+  {
+    label: "FSL-162 AC2 the migration role used as the runtime role",
+    login: "rs_migrator",
+    expected: { rs_migrator: ["database_create", "schema_create", "schema_owner", "object_owner"] },
+  },
+];
+
+/** The object and schema names of the ownership fixture; no output may name them. */
+const OBJECT_NAMES = ["rs_objects", "rs_owned_schema", "rs_owned_table", "rs_owned_collation", "rs_owned_tsconfig", "drizzle", "feishu_"];
+
+/** The exact output of `findings`, in the order of the checked role set. */
+function rendered(expected: RoleCase["expected"]): string {
+  return Object.entries(expected).map(([role, facts]) => `role=${role} facts=${facts.join(",")}`).join("; ");
+}
+
+/** AC5/AC6: no connection string, password, host, database, object or schema name. */
+function expectRedacted(output: string, login: string): void {
+  const url = new URL(isolated!.databaseUrl);
+  for (const leak of [PASSWORD, urlAs(login), isolated!.databaseUrl, url.host, isolated!.databaseName, ...OBJECT_NAMES]) {
+    expect(output).not.toContain(leak);
+  }
+}
+
 describe("FSL-158 Web runtime role privilege isolation", () => {
   beforeAll(async () => {
     isolated = await createIsolatedPostgres();
@@ -113,6 +175,25 @@ describe("FSL-158 Web runtime role privilege isolation", () => {
     // The runtime role of a deployment: DML on the tables of the migration role, sequence USAGE.
     await migrator.query("grant select, insert, update, delete on all tables in schema public to rs_runtime");
     await migrator.query("grant usage on all sequences in schema public to rs_runtime");
+
+    // FSL-162: `rs_objects` belongs to the admin (the bootstrap superuser, whose ownership
+    // `pg_shdepend` does not record) and holds one object of each kind, each owned by a role that
+    // holds nothing else.
+    for (const role of ["rs_schema_owner", "rs_table_owner", "rs_collation_owner", "rs_tsconfig_owner", "rs_db_owner"]) {
+      await admin.query(`create role ${role} login password '${PASSWORD}'`);
+    }
+    await admin.query("create schema rs_owned_schema authorization rs_schema_owner");
+    await admin.query("create schema rs_objects");
+    await admin.query("create table rs_objects.rs_owned_table (id int)");
+    await admin.query("alter table rs_objects.rs_owned_table owner to rs_table_owner");
+    await admin.query("create collation rs_objects.rs_owned_collation (provider = libc, locale = 'C')");
+    await admin.query("alter collation rs_objects.rs_owned_collation owner to rs_collation_owner");
+    await admin.query("create text search configuration rs_objects.rs_owned_tsconfig (copy = pg_catalog.simple)");
+    await admin.query("alter text search configuration rs_objects.rs_owned_tsconfig owner to rs_tsconfig_owner");
+    await admin.query(`alter database ${db} owner to rs_db_owner`);
+    await admin.query(`create role rs_noinherit_owner login noinherit password '${PASSWORD}'`);
+    await admin.query("grant rs_table_owner to rs_noinherit_owner");
+    await admin.query("grant usage on schema rs_objects to rs_table_owner, rs_noinherit_owner");
   }, 180_000);
 
   afterAll(async () => {
@@ -150,8 +231,10 @@ describe("FSL-158 Web runtime role privilege isolation", () => {
     const privileges = await readRuntimeRolePrivileges(poolAs("rs_member"));
     expect(privileges.roles.map(role => role.roleName)).toEqual(["rs_creator", "rs_member"]);
     // The member itself holds nothing; only the role it may switch to does.
-    expect(privileges.roles.find(role => role.roleName === "rs_member"))
-      .toEqual({ roleName: "rs_member", superuser: false, createDb: false, databaseCreate: false, schemaCreate: false });
+    expect(privileges.roles.find(role => role.roleName === "rs_member")).toEqual({
+      roleName: "rs_member", superuser: false, createDb: false, databaseCreate: false, schemaCreate: false,
+      databaseOwner: false, schemaOwner: false, objectOwner: false,
+    });
   });
 
   it.each([
@@ -209,9 +292,10 @@ describe("FSL-158 Web runtime role privilege isolation", () => {
     const pool = poolAs("rs_runtime");
     const privileges = await readRuntimeRolePrivileges(pool);
     expect(privileges.currentUser).toBe("rs_runtime");
-    expect(privileges.roles).toEqual([
-      { roleName: "rs_runtime", superuser: false, createDb: false, databaseCreate: false, schemaCreate: false },
-    ]);
+    expect(privileges.roles).toEqual([{
+      roleName: "rs_runtime", superuser: false, createDb: false, databaseCreate: false, schemaCreate: false,
+      databaseOwner: false, schemaOwner: false, objectOwner: false,
+    }]);
     const warnings: string[] = [];
     await expect(checkRuntimeRoleScope(pool, { nodeEnv: "production", warn: line => warnings.push(line) })).resolves.toEqual([]);
     expect(warnings).toEqual([]);
@@ -246,6 +330,117 @@ describe("FSL-158 Web runtime role privilege isolation", () => {
       await expect(checkRuntimeRoleScope(poolAs("rs_runtime"), { nodeEnv, warn: line => warnings.push(line) })).resolves.toEqual([]);
       expect(warnings).toEqual([]);
     });
+  });
+
+  it.each(OWNERS)("$label: the checked role set hits exactly its facts", async ({ login, expected }) => {
+    const privileges = await readRuntimeRolePrivileges(poolAs(login));
+    expect(privileges.currentUser).toBe(login);
+    expect(Object.fromEntries(findRuntimeRoleScopeViolations(privileges).map(finding => [finding.roleName, finding.facts])))
+      .toEqual(expected);
+  });
+
+  it("FSL-162 AC4: the NOINHERIT member may not alter the table itself but may after SET ROLE", async () => {
+    const pool = poolAs("rs_noinherit_owner");
+    const privileges = await readRuntimeRolePrivileges(pool);
+    expect(privileges.roles.map(role => role.roleName)).toEqual(["rs_noinherit_owner", "rs_table_owner"]);
+    expect(privileges.roles.find(role => role.roleName === "rs_noinherit_owner")).toEqual({
+      roleName: "rs_noinherit_owner", superuser: false, createDb: false, databaseCreate: false, schemaCreate: false,
+      databaseOwner: false, schemaOwner: false, objectOwner: false,
+    });
+    await pool.query("begin");
+    try {
+      await expect(pool.query("alter table rs_objects.rs_owned_table add column rs_probe int")).rejects.toThrow(/must be owner/);
+    } finally {
+      await pool.query("rollback");
+    }
+    await pool.query("begin");
+    try {
+      await pool.query("set local role rs_table_owner");
+      await pool.query("alter table rs_objects.rs_owned_table add column rs_probe int");
+    } finally {
+      await pool.query("rollback");
+    }
+  });
+
+  it.each(OWNERS)("$label: NODE_ENV=production refuses with exactly the role names and fact categories", async ({ login, expected }) => {
+    const warnings: string[] = [];
+    const refusal = await checkRuntimeRoleScope(poolAs(login), { nodeEnv: "production", warn: line => warnings.push(line) })
+      .then(() => undefined, (error: unknown) => error);
+    expect(refusal).toBeInstanceOf(DatabaseRoleScopeError);
+    const error = refusal as DatabaseRoleScopeError;
+    expect(error).toMatchObject({ code: DATABASE_ROLE_SCOPE_REJECTED, unreadable: false });
+    expect(error.message).toBe(`${DATABASE_ROLE_SCOPE_REJECTED}: ${rendered(expected)}`);
+    expect(error.cause).toBeUndefined();
+    // AC5: the message, its string form, its stack and its serialized fields carry nothing else.
+    for (const output of [error.message, String(error), error.stack ?? "", JSON.stringify(error)]) {
+      expectRedacted(output, login);
+    }
+    expect(warnings).toEqual([]);
+  });
+
+  it("FSL-162 AC5: a refused read prints no driver error, connection string or password", async () => {
+    const failing: RoleScopeQueryable = {
+      query: () => Promise.reject(new Error(`password authentication failed: ${urlAs("rs_runtime")}`)),
+    };
+    const refusal = await checkRuntimeRoleScope(failing, { nodeEnv: "production" }).then(() => undefined, (error: unknown) => error);
+    const error = refusal as DatabaseRoleScopeError;
+    expect(error.message).toBe(`${DATABASE_ROLE_SCOPE_REJECTED}: facts=unreadable`);
+    expect(error.cause).toBeUndefined();
+    for (const output of [error.message, String(error), error.stack ?? "", JSON.stringify(error)]) {
+      expectRedacted(output, "rs_runtime");
+      expect(output).not.toContain("password authentication");
+    }
+  });
+
+  describe.each(["development", "test"])("FSL-162 AC6: NODE_ENV=%s", nodeEnv => {
+    it.each(OWNERS)("$label: prints exactly one redacted DATABASE_ROLE_SCOPE_WARNING line", async ({ login, expected }) => {
+      const warnings: string[] = [];
+      await expect(checkRuntimeRoleScope(poolAs(login), { nodeEnv, warn: line => warnings.push(line) }))
+        .resolves.toEqual(Object.entries(expected).map(([roleName, facts]) => ({ roleName, facts })));
+      expect(warnings).toEqual([`${DATABASE_ROLE_SCOPE_WARNING}: ${rendered(expected)}`]);
+      expectRedacted(warnings[0]!, login);
+    });
+
+    it("an unreadable read prints no driver error, connection string or password", async () => {
+      const warnings: string[] = [];
+      const failing: RoleScopeQueryable = {
+        query: () => Promise.reject(new Error(`password authentication failed: ${urlAs("rs_runtime")}`)),
+      };
+      await expect(checkRuntimeRoleScope(failing, { nodeEnv, warn: line => warnings.push(line) })).resolves.toEqual([]);
+      expect(warnings).toEqual([`${DATABASE_ROLE_SCOPE_WARNING}: facts=unreadable`]);
+    });
+  });
+
+  it("FSL-162 AC5/AC6: a role name that is not a plain identifier is quoted and escaped on one line", () => {
+    const owner = (roleName: string) => ({
+      roleName, superuser: false, createDb: false, databaseCreate: false, schemaCreate: false,
+      databaseOwner: false, schemaOwner: false, objectOwner: true,
+    });
+    const privileges = {
+      currentUser: "rs_odd",
+      roles: [owner('rs odd\nDATABASE_ROLE_SCOPE_WARNING: role=x facts=none; "q" \\ é'), owner("rs_plain.name-1$")],
+    };
+    const expected = "role=\"rs odd\\u000aDATABASE_ROLE_SCOPE_WARNING: role\\u003dx facts\\u003dnone\\u003b \\u0022q\\u0022 \\u005c \\u00e9\" "
+      + "facts=object_owner; "
+      + "role=rs_plain.name-1$ facts=object_owner";
+    const warnings: string[] = [];
+    assertRuntimeRoleScope({ privileges, nodeEnv: "test", warn: line => warnings.push(line) });
+    expect(warnings).toEqual([`${DATABASE_ROLE_SCOPE_WARNING}: ${expected}`]);
+    expect(warnings[0]).not.toContain("\n");
+    // Exactly two entries: the name forges neither a separator nor a `role=` entry.
+    expect(warnings[0]!.split("; ")).toHaveLength(2);
+    expect(warnings[0]!.match(/role=/g)).toHaveLength(2);
+    let refusal: unknown;
+    try {
+      assertRuntimeRoleScope({ privileges, nodeEnv: "production" });
+    } catch (error) {
+      refusal = error;
+    }
+    expect(refusal).toBeInstanceOf(DatabaseRoleScopeError);
+    expect((refusal as Error).message).toBe(`${DATABASE_ROLE_SCOPE_REJECTED}: ${expected}`);
+    expect((refusal as Error).message).not.toContain("\n");
+    // The structured findings keep the role name as it is.
+    expect((refusal as DatabaseRoleScopeError).findings[0]!.roleName).toContain("\n");
   });
 
   it("assertRuntimeRoleScope prints to console.warn by default outside production", () => {
