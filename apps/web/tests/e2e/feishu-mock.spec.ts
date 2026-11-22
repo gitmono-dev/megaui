@@ -20,6 +20,11 @@ async function stateOf(mock: StartedFeishuMock): Promise<{
   };
 }
 
+/** The retained authenticated single member read (FSM-18). */
+function userPath(mock: StartedFeishuMock, openId = "ou_mock_alice"): string {
+  return `${mock.baseUrl}/open-apis/contact/v3/users/${openId}?user_id_type=open_id&department_id_type=open_department_id`;
+}
+
 async function issueToken(mock: StartedFeishuMock): Promise<string> {
   const response = await fetch(`${mock.baseUrl}/open-apis/auth/v3/tenant_access_token/internal`, {
     method: "POST",
@@ -38,21 +43,17 @@ test.describe("feishu mock protocol", () => {
     try {
       const token = await issueToken(mock);
 
-      const directory = await fetch(
+      // FSL-167: the department directory is gone; its route answers the frozen 404.
+      const retired = await fetch(
         `${mock.baseUrl}/open-apis/contact/v3/users/find_by_department?department_id=od_mock_engineering&page_size=100`,
         { headers: { authorization: `Bearer ${token}` } },
       );
-      expect(directory.status).toBe(200);
-      const listed = (await directory.json()) as {
-        data: { items: Array<{ open_id: string }>; has_more: boolean };
-      };
-      expect(listed.data.items.map((user) => user.open_id)).toEqual(["ou_mock_alice", "ou_mock_bob"]);
+      expect(retired.status).toBe(404);
 
-      const single = await fetch(
-        `${mock.baseUrl}/open-apis/contact/v3/users/ou_mock_alice?user_id_type=open_id&department_id_type=open_department_id`,
-        { headers: { authorization: `Bearer ${token}` } },
-      );
+      const single = await fetch(userPath(mock), { headers: { authorization: `Bearer ${token}` } });
       expect(single.status).toBe(200);
+      const read = (await single.json()) as { data: { user: { open_id: string } } };
+      expect(read.data.user.open_id).toBe("ou_mock_alice");
 
       // The provider route writes the inbox of the member it addresses.
       const message = await fetch(`${mock.baseUrl}/open-apis/im/v1/messages?receive_id_type=open_id`, {
@@ -129,15 +130,9 @@ test.describe("feishu mock protocol", () => {
         body: JSON.stringify({ target: "token", kind: "403" }),
       });
 
-      // A cursor of the current generation, so the reset can be shown to
-      // refuse it afterwards.
-      const paged = await fetch(
-        `${mock.baseUrl}/open-apis/contact/v3/users/find_by_department?department_id=od_mock_engineering&page_size=1`,
-        { headers: { authorization: `Bearer ${token}` } },
-      );
-      const pagedBody = (await paged.json()) as { data: { page_token: string } };
-      const cursor = pagedBody.data.page_token;
-      expect(cursor.length).toBeGreaterThan(0);
+      // The token of the current generation is admitted before the reset.
+      const beforeReset = await fetch(userPath(mock), { headers: { authorization: `Bearer ${token}` } });
+      expect(beforeReset.status).toBe(200);
 
       const firstMessage = await fetch(`${mock.baseUrl}/open-apis/im/v1/messages?receive_id_type=open_id`, {
         method: "POST",
@@ -167,24 +162,18 @@ test.describe("feishu mock protocol", () => {
       expect(view.data.inboxes).toEqual({});
       expect(view.data.faults).toEqual([]);
 
-      // The token of the old generation is refused as well.
-      const afterReset = await fetch(
-        `${mock.baseUrl}/open-apis/contact/v3/users/find_by_department?department_id=od_mock_engineering`,
-        { headers: { authorization: `Bearer ${token}` } },
-      );
+      // The token of the old generation is refused on the retained
+      // authenticated route.
+      const afterReset = await fetch(userPath(mock), { headers: { authorization: `Bearer ${token}` } });
       expect(afterReset.status).toBe(401);
+      expect(await afterReset.json()).toEqual({ code: 2, msg: "mock_provider_unauthorized" });
 
       // The fault rule of the old generation is gone, so a fresh token is
       // issued again.
       const freshToken = await issueToken(mock);
 
-      // The cursor of the old generation is refused as well.
-      const staleCursor = await fetch(
-        `${mock.baseUrl}/open-apis/contact/v3/users/find_by_department?department_id=od_mock_engineering&page_size=1&page_token=${cursor}`,
-        { headers: { authorization: `Bearer ${freshToken}` } },
-      );
-      expect(staleCursor.status).toBe(400);
-      expect(await staleCursor.json()).toEqual({ code: 1, msg: "mock_cursor_invalid" });
+      const freshRead = await fetch(userPath(mock), { headers: { authorization: `Bearer ${freshToken}` } });
+      expect(freshRead.status).toBe(200);
 
       // The uuid ledger of the old generation is empty, so the same uuid
       // delivers a second message instead of repeating the first one.
@@ -218,11 +207,11 @@ test.describe("feishu mock protocol", () => {
       expect(first.runtime.appSecret).not.toBe(second.runtime.appSecret);
 
       const token = await issueToken(first);
-      const crossed = await fetch(
-        `${second.baseUrl}/open-apis/contact/v3/users/find_by_department?department_id=od_mock_engineering`,
-        { headers: { authorization: `Bearer ${token}` } },
-      );
+      const own = await fetch(userPath(first), { headers: { authorization: `Bearer ${token}` } });
+      expect(own.status).toBe(200);
+      const crossed = await fetch(userPath(second), { headers: { authorization: `Bearer ${token}` } });
       expect(crossed.status).toBe(401);
+      expect(await crossed.json()).toEqual({ code: 2, msg: "mock_provider_unauthorized" });
     } finally {
       await first.stop();
       await second.stop();

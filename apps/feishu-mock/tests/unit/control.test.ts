@@ -173,7 +173,7 @@ describe("mock control plane (FSM-07)", () => {
     expect(response.body).not.toContain("callbackUrl");
   });
 
-  it("creates the initial members and departments from the frozen fixture", async () => {
+  it("creates the initial members from the frozen fixture", async () => {
     listener = await startMockListener(CONFIG, { adminToken: ADMIN_TOKEN });
     const response = await call(listener.baseUrl, "/__mock/state", { headers: admin() });
     const payload = JSON.parse(response.body) as {
@@ -204,11 +204,12 @@ describe("mock control plane (FSM-07)", () => {
     expect(users[5]?.enterprise_email).toBe(users[4]?.enterprise_email);
 
     const state = createMockState();
-    expect(state.departments.map((department) => department.open_department_id)).toEqual([
-      MOCK_DEPARTMENT_ENGINEERING,
-      MOCK_DEPARTMENT_OPERATIONS,
-    ]);
     expect(state.users).toHaveLength(SYNTHETIC_USERS.length);
+    // FSL-167: the state keeps no department directory; the members keep their
+    // department_ids field.
+    expect(Object.keys(state).sort()).toEqual(["faults", "inboxes", "users"]);
+    expect(state).not.toHaveProperty("departments");
+    expect(listener.state).not.toHaveProperty("departments");
   });
 
   it("expresses the status enum as the frozen four boolean flags", () => {

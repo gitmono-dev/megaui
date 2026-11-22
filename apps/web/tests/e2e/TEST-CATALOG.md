@@ -73,7 +73,7 @@ pnpm exec playwright test apps/web/tests/e2e/<live-specs>
 
 See `docs/implementation/live-e2e-notes.md` for digests and re-pin notes.
 
-- Mock 自身 API-only 集成：[feishu-mock](catalog/feishu-mock.md)（真实 CLI/HTTP 协议：token、目录、定向消息、在职状态控制与 reset；Mock 不再发送回调或记录事件（FSL-140）；无网站/DB/browser；专用配置 `playwright.feishu-mock.config.ts`）
+- Mock 自身 API-only 集成：[feishu-mock](catalog/feishu-mock.md)（真实 CLI/HTTP 协议：token、单人读取、定向消息、在职状态控制与 reset；Mock 不再发送回调或记录事件（FSL-140），部门分页与游标已删除（FSL-167）；无网站/DB/browser；专用配置 `playwright.feishu-mock.config.ts`）
 
 - 飞书登录页两步主流程：[feishu-login-page](catalog/feishu-login-page.md)（邮箱步骤、验证码步骤、已知与未知邮箱同形、Mock 收件箱验证码登录进入首页；基座在成功与失败路径释放 PG、Mock 与 Web；专用配置 `playwright.feishu-login.config.ts`）
 

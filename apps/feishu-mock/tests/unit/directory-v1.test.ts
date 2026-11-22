@@ -14,8 +14,6 @@ import { MOCK_TOKEN_TTL_SECONDS } from "../../src/provider";
 import { startMockListener, type MockListener } from "../../src/server";
 import {
   MOCK_APP_ID,
-  MOCK_DEPARTMENT_ENGINEERING,
-  MOCK_DEPARTMENT_OPERATIONS,
   statusFlags,
   type MockUserStatus,
 } from "../../src/state";
@@ -551,20 +549,12 @@ describe("unchanged neighbours of the Directory v1 routes (FSL-118)", () => {
   });
 
   it("AC70 the new members stay out of the department pages", async () => {
-    const token = await issueToken();
-    const read = async (department: string) => {
-      const answer = await call(
-        `/open-apis/contact/v3/users/find_by_department?department_id=${department}&page_size=100`,
-        { headers: bearer(token) },
-      );
-      return (answer.json.data as { items: { open_id: string }[] }).items.map((item) => item.open_id);
-    };
-    expect({
-      engineering: await read(MOCK_DEPARTMENT_ENGINEERING),
-      operations: await read(MOCK_DEPARTMENT_OPERATIONS),
-    }).toEqual({
-      engineering: ["ou_mock_alice", "ou_mock_bob"],
-      operations: ["ou_mock_carol"],
-    });
+    const view = await call("/__mock/state", { headers: bearer(ADMIN_TOKEN) });
+    const users = (view.json.data as { users: { open_id: string; department_ids: string[] }[] }).users;
+    for (const openId of ["ou_mock_dave", "ou_mock_erin", "ou_mock_frank"]) {
+      const member = users.find((user) => user.open_id === openId);
+      expect(member, openId).toBeDefined();
+      expect(member!.department_ids, openId).toEqual([]);
+    }
   });
 });

@@ -4,8 +4,9 @@
  * runtime 只在本进程内存在：四个秘密每 run 随机生成，默认写在系统临时目录
  * 下由 CLI 独占创建的 0700 目录中，文件以 0600 独占创建。
  *
- * FSM-07 起本文件同时承载本 run 的合成目录：固定的 synthetic App、成员与部门，
- * 以及成员状态到冻结四布尔组合的映射。这里没有任何真实人员数据。
+ * FSM-07 起本文件同时承载本 run 的合成目录：固定的 synthetic App 与成员，
+ * 以及成员状态到冻结四布尔组合的映射。这里没有任何真实人员数据。FSL-167 起
+ * 状态不再含部门目录；成员记录仍带冻结的 `department_ids` 字段。
  */
 import { randomBytes } from "node:crypto";
 import {
@@ -68,11 +69,6 @@ export interface MockUser {
   status: MockUserStatusFlags;
 }
 
-export interface MockDepartment {
-  open_department_id: string;
-  name: string;
-}
-
 /** A message kept in a member inbox. */
 export interface MockInboxEntry {
   messageId: string;
@@ -85,7 +81,7 @@ export interface MockInboxEntry {
 
 /** A bounded fault rule. */
 export interface MockFaultRule {
-  target: "token" | "directory" | "user" | "message";
+  target: "token" | "user" | "message";
   kind: "429" | "403" | "500" | "timeout" | "disconnect_after_accept";
   count: number;
   skip: number;
@@ -132,9 +128,9 @@ export const SYNTHETIC_USERS: readonly MockUser[] = [
     enterprise_email: "",
     status: statusFlags("active"),
   },
-  // FSL-118: three members outside every department, so they never appear in
-  // the department pages. They exist for the Directory v1 employee routes: one
-  // with only an enterprise address, and two sharing one enterprise address.
+  // FSL-118: three members outside every department. They exist for the
+  // Directory v1 employee routes: one with only an enterprise address, and two
+  // sharing one enterprise address.
   {
     open_id: "ou_mock_dave",
     user_id: "u_mock_dave",
@@ -170,15 +166,9 @@ export const SYNTHETIC_USERS: readonly MockUser[] = [
   },
 ];
 
-export const SYNTHETIC_DEPARTMENTS: readonly MockDepartment[] = [
-  { open_department_id: MOCK_DEPARTMENT_ENGINEERING, name: "Mock Engineering" },
-  { open_department_id: MOCK_DEPARTMENT_OPERATIONS, name: "Mock Operations" },
-];
-
 /** The state of one run. */
 export interface MockState {
   users: MockUser[];
-  departments: MockDepartment[];
   inboxes: Map<string, MockInboxEntry[]>;
   faults: MockFaultRule[];
 }
@@ -191,7 +181,6 @@ export function createMockState(): MockState {
       department_ids: [...user.department_ids],
       status: { ...user.status },
     })),
-    departments: SYNTHETIC_DEPARTMENTS.map((department) => ({ ...department })),
     inboxes: new Map<string, MockInboxEntry[]>(),
     faults: [],
   };
@@ -210,7 +199,6 @@ export function resetMockState(state: MockState): void {
     department_ids: [...user.department_ids],
     status: { ...user.status },
   }));
-  state.departments = SYNTHETIC_DEPARTMENTS.map((department) => ({ ...department }));
   state.inboxes = new Map<string, MockInboxEntry[]>();
   state.faults = [];
 }

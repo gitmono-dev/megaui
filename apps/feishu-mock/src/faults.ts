@@ -12,8 +12,8 @@ import type { MockFaultRule, MockState } from "./state";
 /** How many fault rules one run keeps. */
 export const MOCK_MAX_FAULT_RULES = 16;
 
-/** The frozen fault targets. */
-export const MOCK_FAULT_TARGETS = ["token", "directory", "user", "message"] as const;
+/** The frozen fault targets; the department directory target is gone since FSL-167. */
+export const MOCK_FAULT_TARGETS = ["token", "user", "message"] as const;
 export type MockFaultTarget = (typeof MOCK_FAULT_TARGETS)[number];
 
 /** The synchronous fault kinds this card delivers. */

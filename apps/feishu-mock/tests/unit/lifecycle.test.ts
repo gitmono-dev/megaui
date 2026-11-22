@@ -100,6 +100,8 @@ describe("mock run lifecycle (FSM-08)", () => {
     expect(state.inboxes.size).toBe(0);
     // FSL-140: the state keeps no event ledger, before or after a reset.
     expect(state).not.toHaveProperty("events");
+    // FSL-167: nor a department directory.
+    expect(state).not.toHaveProperty("departments");
   });
 
   it("keeps the run configuration across a reset", async () => {
@@ -195,10 +197,8 @@ describe("mock run lifecycle (FSM-08)", () => {
     state.users = [];
     resetMockState(state);
     expect(state.users).toHaveLength(SYNTHETIC_USERS.length);
-    expect(state.departments.map((department) => department.open_department_id)).toEqual([
-      "od_mock_engineering",
-      "od_mock_operations",
-    ]);
+    // FSL-167: a reset restores no department directory.
+    expect(Object.keys(state).sort()).toEqual(["faults", "inboxes", "users"]);
   });
 
   it("exits when the IPC channel closes and keeps running without one", async () => {

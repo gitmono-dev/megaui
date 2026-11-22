@@ -103,7 +103,7 @@ describe("asynchronous fault admission and cancellation (FSM-19)", () => {
     const refused = await call(listener!.baseUrl, "/__mock/faults", {
       method: "POST",
       headers: admin(),
-      body: JSON.stringify({ target: "directory", kind: "disconnect_after_accept" }),
+      body: JSON.stringify({ target: "user", kind: "disconnect_after_accept" }),
     });
     expect((refused as { status: number }).status).toBe(400);
   });
@@ -174,11 +174,11 @@ describe("asynchronous fault admission and cancellation (FSM-19)", () => {
   it("applies the timeout fault to every provider target", async () => {
     await startListener();
     const token = await issueToken();
-    await addFault({ target: "directory", kind: "timeout" });
+    await addFault({ target: "user", kind: "timeout" });
     const started = Date.now();
     const response = await call(
       listener!.baseUrl,
-      "/open-apis/contact/v3/users/find_by_department?department_id=od_mock_engineering",
+      "/open-apis/contact/v3/users/ou_mock_alice?user_id_type=open_id&department_id_type=open_department_id",
       { headers: { authorization: `Bearer ${token}` } },
     );
     expect("status" in response && response.status).toBe(504);

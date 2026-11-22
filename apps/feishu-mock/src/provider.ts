@@ -5,23 +5,17 @@
  * run 签发、有效期 7200 秒、活跃上限 32 个，到期可回收后重新分配容量。判定本身
  * 是纯函数单元，不冒称尚无前卡交付的受保护 HTTP 路由。
  *
- * FSM-09 起本模块也承载 provider 的受保护路由：目录读取要用本 run 签发且仍
+ * FSM-18 起本模块也承载 provider 的受保护路由：单人读取要用本 run 签发且仍
  * 有效的 tenant token。
  *
  * FSL-118 起本模块把 Directory v1 员工路由分发给 `employees.ts`。
+ *
+ * FSL-167 起部门目录（`find_by_department` 分页与游标）已删除：该路径在鉴权
+ * 之前直接返回冻结的 404。
  */
 import { randomBytes } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-import {
-  findDirectoryUser,
-  MOCK_DEFAULT_PAGE_SIZE,
-  MOCK_DEPARTMENT_ID_TYPE,
-  MOCK_MAX_PAGE_SIZE,
-  MOCK_USER_ID_TYPE,
-  queryDepartment,
-  type MockCursorStore,
-} from "./directory";
 import {
   handleEmployeesRequest,
   MOCK_EMPLOYEES_MGET_PATH,
@@ -39,7 +33,7 @@ import {
   sendMockJson,
   type MockHttpError,
 } from "./http";
-import { MOCK_APP_ID, type MockState } from "./state";
+import { MOCK_APP_ID, type MockState, type MockUser } from "./state";
 
 /** The lifetime of a tenant token, in seconds. */
 export const MOCK_TOKEN_TTL_SECONDS = 7200;
@@ -50,8 +44,19 @@ export const MOCK_MAX_ACTIVE_TOKENS = 32;
 /** The legacy tenant token endpoint. */
 export const MOCK_TENANT_TOKEN_PATH = "/open-apis/auth/v3/tenant_access_token/internal";
 
-/** The directory read endpoint. */
-export const MOCK_DIRECTORY_PATH = "/open-apis/contact/v3/users/find_by_department";
+/**
+ * The retired department directory endpoint (FSL-167).
+ *
+ * It sits below the single member prefix, so it is matched first and answered
+ * with the frozen 404 before any authentication.
+ */
+export const MOCK_RETIRED_DIRECTORY_PATH = "/open-apis/contact/v3/users/find_by_department";
+
+/** The only accepted department id type. */
+export const MOCK_DEPARTMENT_ID_TYPE = "open_department_id";
+
+/** The only accepted user id type. */
+export const MOCK_USER_ID_TYPE = "open_id";
 
 /** The prefix of the single member read endpoint. */
 export const MOCK_USER_PATH_PREFIX = "/open-apis/contact/v3/users/";
@@ -61,6 +66,16 @@ export const MOCK_MESSAGE_PATH = "/open-apis/im/v1/messages";
 
 /** Every provider route lives below this prefix. */
 export const MOCK_PROVIDER_PREFIX = "/open-apis/";
+
+/**
+ * Reads a single member of the current synthetic directory.
+ *
+ * The mock only knows open ids, so the path value is read as one; a member
+ * that is unknown or was deleted is not in the directory anymore.
+ */
+export function findUser(state: MockState, openId: string): MockUser | undefined {
+  return state.users.find((user) => user.open_id === openId);
+}
 
 export interface MockAppCredentials {
   appId: string;
@@ -155,7 +170,8 @@ export class MockTokenStore {
  * Serves the provider routes.
  *
  * The tenant token route issues a token for the matching app credentials; the
- * directory route needs a tenant token this run issued and still accepts.
+ * protected routes need a tenant token this run issued and still accepts. The
+ * retired department directory answers the frozen 404 before authentication.
  */
 export async function handleProviderRequest(
   request: IncomingMessage,
@@ -163,7 +179,6 @@ export async function handleProviderRequest(
   path: string,
   state: MockState,
   tokens: MockTokenStore,
-  cursors: MockCursorStore,
   messages: MockMessageStore,
   faults: MockFaultStore,
   lifecycle: MockLifecycle,
@@ -172,8 +187,10 @@ export async function handleProviderRequest(
     await handleTenantTokenRequest(request, response, tokens, faults, lifecycle);
     return;
   }
-  if (path === MOCK_DIRECTORY_PATH) {
-    await handleDirectoryRequest(request, response, path, state, tokens, cursors, faults, lifecycle);
+  if (path === MOCK_RETIRED_DIRECTORY_PATH) {
+    // FSL-167: the department directory is gone; answer the frozen 404 before
+    // authentication, so the single member route never sees this path.
+    sendMockError(response, mockError(4, "not_found"));
     return;
   }
   if (path.startsWith(MOCK_USER_PATH_PREFIX)) {
@@ -259,48 +276,6 @@ async function injectFault(
   return true;
 }
 
-/** Reads one page of the members of a department. */
-async function handleDirectoryRequest(
-  request: IncomingMessage,
-  response: ServerResponse,
-  path: string,
-  state: MockState,
-  tokens: MockTokenStore,
-  cursors: MockCursorStore,
-  faults: MockFaultStore,
-  lifecycle: MockLifecycle,
-): Promise<void> {
-  if (request.method !== "GET") {
-    sendMockError(response, mockError(4, "not_found"));
-    return;
-  }
-  const bearer = parseBearer(request.headers.authorization);
-  if (!tokens.validate(bearer, MOCK_APP_ID)) {
-    sendMockError(response, mockError(2, "mock_provider_unauthorized"));
-    return;
-  }
-  const query = parseDirectoryQuery(request.url ?? path);
-  if ("error" in query) {
-    sendMockError(response, query.error);
-    return;
-  }
-  if (await injectFault(faults, "directory", response, lifecycle)) return;
-  const result = queryDepartment(state, query.query, cursors);
-  if (!result.ok) {
-    sendMockError(response, result.error);
-    return;
-  }
-  sendMockJson(response, 200, {
-    code: 0,
-    msg: "ok",
-    data: {
-      items: result.items,
-      has_more: result.hasMore,
-      page_token: result.pageToken ?? "",
-    },
-  });
-}
-
 /**
  * Reads a single member.
  *
@@ -352,7 +327,7 @@ async function handleUserRequest(
     sendMockError(response, mockError(4, "not_found"));
     return;
   }
-  const user = findDirectoryUser(state, openId);
+  const user = findUser(state, openId);
   if (user === undefined) {
     sendMockError(response, mockError(4, "mock_user_not_found"));
     return;
@@ -454,41 +429,4 @@ async function handleMessageRequest(
     return;
   }
   sendMockJson(response, 200, messageSuccessResponse(outcome.record));
-}
-
-/** Reads and validates the query of the directory route. */
-function parseDirectoryQuery(
-  url: string,
-): { query: { departmentId: string; departmentIdType: string; userIdType: string; pageSize: number; pageToken: string | undefined } } | { error: MockHttpError } {
-  const parameters = new URLSearchParams(url.includes("?") ? url.slice(url.indexOf("?") + 1) : "");
-  const departmentId = parameters.get("department_id");
-  if (departmentId === null || departmentId === "") {
-    return { error: mockError(1, "mock_department_id_required") };
-  }
-  const departmentIdType = parameters.get("department_id_type") ?? MOCK_DEPARTMENT_ID_TYPE;
-  if (departmentIdType !== MOCK_DEPARTMENT_ID_TYPE) {
-    return { error: mockError(1, "mock_id_type_invalid") };
-  }
-  const userIdType = parameters.get("user_id_type") ?? MOCK_USER_ID_TYPE;
-  if (userIdType !== MOCK_USER_ID_TYPE) {
-    return { error: mockError(1, "mock_id_type_invalid") };
-  }
-  const rawPageSize = parameters.get("page_size");
-  let pageSize = MOCK_DEFAULT_PAGE_SIZE;
-  if (rawPageSize !== null) {
-    const parsed = Number(rawPageSize);
-    if (!Number.isInteger(parsed) || parsed < 1 || parsed > MOCK_MAX_PAGE_SIZE) {
-      return { error: mockError(1, "mock_page_size_invalid") };
-    }
-    pageSize = parsed;
-  }
-  return {
-    query: {
-      departmentId,
-      departmentIdType,
-      userIdType,
-      pageSize,
-      pageToken: parameters.get("page_token") ?? undefined,
-    },
-  };
 }

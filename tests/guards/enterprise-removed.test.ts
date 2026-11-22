@@ -475,3 +475,16 @@ describe("FSL-140: Mock enterprise callbacks and events removed", () => {
     expect(existsSync(join(ROOT, path)), path).toBe(false);
   });
 });
+
+describe("FSL-167: Mock department directory removed", () => {
+  // AC1 and the card's other deletion: these exact paths are gone. The card registers no rg
+  // guard: the Mock's kept regression tests still name public Feishu interfaces.
+  const deletedPaths = [
+    ["AC1", "apps/feishu-mock/src/directory.ts"],
+    ["write set", "apps/feishu-mock/tests/unit/directory.test.ts"],
+  ] as const;
+
+  it.each(deletedPaths)("%s: %s does not exist", (_ac, path) => {
+    expect(existsSync(join(ROOT, path)), path).toBe(false);
+  });
+});

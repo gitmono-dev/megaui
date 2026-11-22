@@ -4,7 +4,7 @@
 
 ## 当前交付能力
 
-已交付：源码依赖隔离守卫（FSM-17）、Mock workspace 工具链（FSM-21）、CLI 开发准入 validator（FSM-22）、可运行的 Mock CLI 与独占 runtime（FSM-01）、有界 JSON HTTP 边界（FSM-06）、受保护控制面与合成目录（FSM-07）、本 run 的资源注册、reset 与进程生命周期（FSM-08）、tenant token 签发与准入（FSM-02）、Contact 目录分页与游标读取（FSM-09）Contact 单人读取（FSM-18）DM 请求准入 validator（FSM-20）定向 DM 与 uuid 幂等（FSM-10）、成员在职状态控制（FSL-140）和有界 provider 故障注入（FSM-04）与异步故障受理与取消（FSM-19）、复用 CLI 启动夹具（FSM-15）、逐测 reset 及夹具清理（FSM-16）和 API-only E2E 与 CI（FSM-05），以及 Directory v1 员工路由（FSL-118）。FSL-140 起 Mock 不再发送企业回调、不再记录事件：callback 编码与投递、消息注入、URL 握手、成员事件与事件重放均已删除。
+已交付：源码依赖隔离守卫（FSM-17）、Mock workspace 工具链（FSM-21）、CLI 开发准入 validator（FSM-22）、可运行的 Mock CLI 与独占 runtime（FSM-01）、有界 JSON HTTP 边界（FSM-06）、受保护控制面与合成目录（FSM-07）、本 run 的资源注册、reset 与进程生命周期（FSM-08）、tenant token 签发与准入（FSM-02）、Contact 单人读取（FSM-18）DM 请求准入 validator（FSM-20）定向 DM 与 uuid 幂等（FSM-10）、成员在职状态控制（FSL-140）和有界 provider 故障注入（FSM-04）与异步故障受理与取消（FSM-19）、复用 CLI 启动夹具（FSM-15）、逐测 reset 及夹具清理（FSM-16）和 API-only E2E 与 CI（FSM-05），以及 Directory v1 员工路由（FSL-118）。FSL-140 起 Mock 不再发送企业回调、不再记录事件：callback 编码与投递、消息注入、URL 握手、成员事件与事件重放均已删除。FSL-167 起部门目录也已删除：`find_by_department` 分页与游标、`directory` 故障 target 与状态中的部门列表都不再存在，`GET /open-apis/contact/v3/users/find_by_department` 返回冻结的 404。
 
 - `apps/feishu-mock` 是 workspace 内的私有包 `@megaui/feishu-mock`，具备 `typecheck`/`build`/`lint`/`dev` 脚本，`tests/` 纳入类型检查，lockfile 由 CMD-10 生成了空 importer，且不引入任何第三方依赖。
 - `resolveMockConfig(env)` 只接收调用方提供的环境对象，不读 `process.env`，不监听端口、不写 runtime。它要求 `FEISHU_SIMULATOR_ENABLED` 精确为 `1`、`NODE_ENV` 为 `development` 或 `test`，监听地址固定 `127.0.0.1`，端口取冻结默认 `19400` 或 `0..65535` 的整数；配置不含回调地址，已退场的 `FEISHU_SIMULATOR_CALLBACK_URL` 与其它未知 `FEISHU_SIMULATOR_*` 键一律以 `simulator_unknown_key` 拒绝；返回的配置被冻结。被拒绝的值不会回显到错误消息。
@@ -49,7 +49,7 @@
 
 合成目录是固定的 fixture，不含任何真实人员数据：
 
-| 成员 | `open_id` | 部门 | 通知邮箱 | 其它 |
+| 成员 | `open_id` | `department_ids` | 通知邮箱 | 其它 |
 |---|---|---|---|---|
 | Mock Alice | `ou_mock_alice` | `od_mock_engineering` | `alice@example.com` | `user_id=u_mock_alice`、`union_id=on_mock_alice`、`mobile=+15550000001` |
 | Mock Bob | `ou_mock_bob` | `od_mock_engineering` | `bob@example.com` | `user_id=u_mock_bob`、`union_id=on_mock_bob`、`mobile=+15550000002` |
@@ -58,7 +58,7 @@
 | Mock Erin | `ou_mock_erin` | 无 | 空 | `enterprise_email=shared@corp.example.com`、`user_id=u_mock_erin`、`union_id=on_mock_erin`、`mobile=+15550000005` |
 | Mock Frank | `ou_mock_frank` | 无 | 空 | `enterprise_email=shared@corp.example.com`、`user_id=u_mock_frank`、`union_id=on_mock_frank`、`mobile=+15550000006` |
 
-部门为 `od_mock_engineering`（Mock Engineering）与 `od_mock_operations`（Mock Operations）。「通知邮箱」列是成员的 `email` 字段。Alice、Bob、Carol 的 `enterprise_email` 为空；Dave、Erin、Frank 是 FSL-118 为 Directory v1 员工路由加入的固定成员：Dave 只有 `enterprise_email`、`email` 为空，Erin 与 Frank 共用同一个 `enterprise_email`。这三名成员不属于任何部门，因此不出现在部门分页（`find_by_department`）里；它们是固定 fixture，不经控制面写操作产生，reset 后恢复。
+`department_ids` 列是成员记录里冻结的字段值（单人读取照常返回该字段）；FSL-167 起 Mock 不再保存部门列表、也不提供按部门读取。「通知邮箱」列是成员的 `email` 字段。Alice、Bob、Carol 的 `enterprise_email` 为空；Dave、Erin、Frank 是 FSL-118 为 Directory v1 员工路由加入的固定成员：Dave 只有 `enterprise_email`、`email` 为空，Erin 与 Frank 共用同一个 `enterprise_email`。这三名成员的 `department_ids` 为空；它们是固定 fixture，不经控制面写操作产生，reset 后恢复。
 
 成员状态用冻结的四个布尔字段表达：`active` = `true/false/false/false`，`suspended` = `true/true/false/false`，`resigned` = `false/false/true/true`（依次为 `is_activated`/`is_frozen`/`is_resigned`/`is_exited`）。初态成员都是 `active`。
 
@@ -68,7 +68,7 @@
 
 - `MockLifecycle` 维护一个 generation。`reset()` 先递增 generation，因此旧 generation 的异步完成无法写回新状态；随后取消全部已注册在途任务并等待它们结束，再逐个调用已注册 store 的重置器，只有这些都完成后才报告成功。
 - 异步任务通过 `context.commit(effect)` 写回：只有当任务没有被取消且 generation 仍是当前值时写入才会生效，否则返回 false。
-- synthetic 目录是一个已注册 store，reset 后恢复冻结初态（成员与其在职状态、部门复原，inbox、故障清空）。本 run 的 App 配置与 admin token 不属于任何 store，reset 后保留。
+- synthetic 目录是一个已注册 store，reset 后恢复冻结初态（成员与其在职状态复原，inbox、故障清空）。本 run 的 App 配置与 admin token 不属于任何 store，reset 后保留。
 - `POST /__mock/reset`（admin Bearer，body 为 `{}` 或无 body）执行 reset，返回 `{"code":0,"data":{"generation":N}}`。
 - 关闭与信号：SIGINT/SIGTERM 先关闭 listener 并取消已注册任务，再由 FSM-01 的 `removeRuntimeTarget` 清理 runtime 文件；调用方指定的目录永不删除。
 - IPC：由父进程以 `stdio` 里的 `ipc` 启动时，父进程关闭 IPC 通道会让本进程收到进程级 `disconnect` 事件，随后 cleanup 并以 0 退出；手工启动（没有 IPC 通道）不会因为缺少 IPC 而自动退出。
@@ -83,23 +83,16 @@
 - provider Bearer 的准入判定是纯函数 `MockTokenStore.validate(bearer, appId)`：只接受本 run 签发、未到期且属于该 app 的 token；跨进程或其它 run 的 token 一律不获准。本片不提供受保护的 provider 路由，那属于后续卡。
 - token store 是已注册的 store，reset 后本 run 之前签发的 token 立即失效。
 
-## Contact 目录与游标（FSM-09）
-
-- `GET /open-apis/contact/v3/users/find_by_department`（provider Bearer）按部门分页读取成员。必须带 `department_id`；`department_id_type` 只接受 `open_department_id`、`user_id_type` 只接受 `open_id`（缺省即这两个冻结值，其它值一律拒绝）；`page_size` 取 1..100、缺省 2。
-- 响应是 provider 形状：`{"code":0,"msg":"ok","data":{"items":[User],"has_more":…,"page_token":…}}`。`items` 只含冻结的 User 子集，成员顺序按 fixture 固定，分页稳定。部门不存在返回 `404 {"code":4,"msg":"mock_department_not_found"}`。
-- 游标是不透明随机 token，绑定完整查询（部门、两种 ID 类型、page_size）。篡改、跨查询或跨 page_size 使用都返回 `400 {"code":1,"msg":"mock_cursor_invalid"}`。
-- 游标 TTL 300 秒、至多 128 个。到期游标在写入前回收；满额时拒绝新建并返回 `429 {"code":6,"msg":"mock_cursor_capacity_exceeded"}`，且不淘汰仍有效的记录。
-- cursor store 已注册到 reset，重置后旧游标不再获准（重置同时作废本 run 签发的 token，因此需要重新签发才能再次访问目录）。
-
 ## Contact 单人读取（FSM-18）
 
 - `GET /open-apis/contact/v3/users/:user_id`（provider Bearer）按 open_id 读取单个成员。路径值只按 open_id 解释；请求必须带 `user_id_type=open_id` 与 `department_id_type=open_department_id`，缺一个返回 `400 {"code":1,"msg":"mock_id_type_required"}`，写成别的值返回 `400 {"code":1,"msg":"mock_id_type_invalid"}`。
 - 成功响应是 provider 形状：`{"code":0,"msg":"ok","data":{"user":User}}`，`user` 是当前 synthetic 目录里的冻结 User 子集；未知或已删除的 open_id 返回 `404 {"code":4,"msg":"mock_user_not_found"}`。
-- 该路由复用 FSM-02 的 tenant validator 与同一份当前目录，与分页路由读到的是同一批成员。
+- 该路由复用 FSM-02 的 tenant validator 与同一份当前目录，与 Directory v1 员工路由读到的是同一批成员。
+- 已删除的部门分页路径 `/open-apis/contact/v3/users/find_by_department` 不被当作 open_id 读取：无论是否带 Bearer，都在鉴权之前返回冻结的 `404 {"code":4,"msg":"not_found"}`（FSL-167）。
 
 ## Directory v1 员工路由（FSL-118）
 
-两条路由按真实租户实测的形状应答（FSL-115、FSL-164，见 `feishu-live-contract-lookup.md`、`feishu-live-contract-member.md`），处理逻辑在 `apps/feishu-mock/src/employees.ts`，直接读取本 run 的当前成员（与部门分页、单人读取是同一份目录），不依赖部门目录模块。
+两条路由按真实租户实测的形状应答（FSL-115、FSL-164，见 `feishu-live-contract-lookup.md`、`feishu-live-contract-member.md`），处理逻辑在 `apps/feishu-mock/src/employees.ts`，直接读取本 run 的当前成员（与单人读取是同一份目录）。
 
 - `POST /open-apis/directory/v1/employees/search?employee_id_type=open_id` 与 `POST /open-apis/directory/v1/employees/mget?employee_id_type=open_id` 都必须带 `employee_id_type=open_id`：缺省返回 `400 {"code":1,"msg":"mock_id_type_required"}`，写成别的值返回 `400 {"code":1,"msg":"mock_id_type_invalid"}`。非 `POST` 返回冻结的 404。
 - `search` 的 body 为 `{query, required_fields?, page_request?}`，`query` 必须是非空白字符串；`mget` 的 body 为 `{employee_ids, required_fields?}`，`employee_ids` 是 1..100 个非空字符串。未知字段返回 `mock_unknown_field`，类型不符返回 `400 {"code":1,"msg":"mock_body_invalid"}`。`required_fields` 只做类型校验，响应总是下文的固定字段集；`page_request` 只做类型校验（`page_size` 取 1..100）。
@@ -125,7 +118,7 @@
 - Bearer token 不被接受（非本 run 签发、已到期或属于其它 app）：HTTP 400，`{"code":99991663,"msg":"Invalid access token for authorization. …","error":{"message":…,"log_id":…,"troubleshooter":…}}`，没有 `data`。
 - `error` 的各值是 Mock 的固定串，不回显请求里的 token。过期 token 在真实租户的形状未实测，Mock 按伪造 token 处理（`99991663`）。
 
-其它 provider 路由的鉴权错误不变：token 签发仍是 `mock_app_credentials_invalid`，部门分页、单人读取与发消息仍是 `401 {"code":2,"msg":"mock_provider_unauthorized"}`。这两条路由不消费故障注入队列（故障 target 仍只有 `token`/`directory`/`user`/`message`）。
+其它 provider 路由的鉴权错误不变：token 签发仍是 `mock_app_credentials_invalid`，单人读取与发消息仍是 `401 {"code":2,"msg":"mock_provider_unauthorized"}`。这两条路由不消费故障注入队列（故障 target 只有 `token`/`user`/`message`）。
 
 ## DM 请求准入（FSM-20）
 
@@ -156,7 +149,7 @@
 
 ## 有界 provider 故障注入（FSM-04）
 
-- `POST /__mock/faults`（admin Bearer，`{target,kind,count?,skip?}`）向本 run 的规则队列加入一条规则。target 只接受 `token`/`directory`/`user`/`message`，kind 只接受本片交付的 `429`/`403`/`500`；`count` 取 1..10（缺省 1），`skip` 取 0..10（缺省 0）。
+- `POST /__mock/faults`（admin Bearer，`{target,kind,count?,skip?}`）向本 run 的规则队列加入一条规则。target 只接受 `token`/`user`/`message`（`directory` 自 FSL-167 起返回 `400 {"code":1,"msg":"mock_fault_target_invalid"}`），kind 只接受本片交付的 `429`/`403`/`500`；`count` 取 1..10（缺省 1），`skip` 取 0..10（缺省 0）。
 - 队列最多 16 条，满额时 `429 {"code":6,"msg":"mock_fault_capacity_exceeded"}`。规则按加入顺序按 target 消费：先跳过 `skip` 次，再逐次扣减 `count`，归零后移除。
 - 注入响应：403 → `{"code":3,"msg":"mock_fault_forbidden"}`；429 → `{"code":6,"msg":"mock_fault_rate_limited"}`；500 → **HTTP 500** 加 `{"code":8,"msg":"mock_provider_failure"}`（这是冻结的故障 override，code 8 的默认映射为 503）。
 - 只有通过各自输入/鉴权的 provider 请求才消费规则；被拒绝的请求不消耗。控制面、health 与 reset 不受故障队列影响。
@@ -183,7 +176,7 @@
 ## API-only E2E 与 CI（FSM-05）
 
 - `playwright.feishu-mock.config.ts` 只收集 `feishu-mock.spec.ts`，workers 2、fullyParallel，trace/video/screenshot 全部关闭；不启动网站、浏览器或数据库。
-- `apps/web/tests/e2e/feishu-mock.spec.ts` 用真实 CLI 与真实 HTTP 跑完整协议：签发 tenant token、目录分页读取、单人读取、provider 定向消息写入成员 inbox、已删除的消息注入路由返回 404、在职状态控制只改目标成员；reset 后 token/cursor/inbox/uuid/fault 全部清空且旧 generation 的 token 不再获准；同一 worker 内第二个实例的端口、状态与凭据互不影响。
+- `apps/web/tests/e2e/feishu-mock.spec.ts` 用真实 CLI 与真实 HTTP 跑完整协议：签发 tenant token、单人读取、provider 定向消息写入成员 inbox、已删除的部门分页与消息注入路由返回 404、在职状态控制只改目标成员；reset 后 token/inbox/uuid/fault 全部清空，旧 generation 的 token 在单人读取路由上返回 401；同一 worker 内第二个实例的端口、状态与凭据互不影响，跨实例 token 在单人读取路由上被拒。
 - quality 作业不再执行 Mock API E2E 及三个 TS 文件（`playwright.feishu-mock.config.ts`、`feishu-mock.spec.ts`、`helpers/feishu-mock.ts`）的独立类型门；两者按 CMD-07 在本地运行（命令见下文「验证 Mock API E2E」）。
 
 ## 源码边界
@@ -256,12 +249,6 @@ pnpm vitest run apps/feishu-mock/tests/unit/lifecycle.test.ts
 
 ```sh
 pnpm vitest run apps/feishu-mock/tests/unit/token.test.ts
-```
-
-验证 Contact 目录分页与游标：
-
-```sh
-pnpm vitest run apps/feishu-mock/tests/unit/directory.test.ts
 ```
 
 验证 Contact 单人读取：

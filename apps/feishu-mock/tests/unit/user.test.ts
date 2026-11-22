@@ -2,7 +2,7 @@ import { request } from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { resolveMockConfig } from "../../src/config";
-import { findDirectoryUser } from "../../src/directory";
+import { findUser } from "../../src/provider";
 import { startMockListener, type MockListener } from "../../src/server";
 import { MOCK_APP_ID } from "../../src/state";
 
@@ -166,26 +166,59 @@ describe("single member read (FSM-18)", () => {
     expect(JSON.parse(response.body)).toEqual({ code: 4, msg: "mock_user_not_found" });
   });
 
-  it("reads the same current directory as the paging route", async () => {
+  it("answers the members outside every department and the fixture fields", async () => {
     await startListener();
     const token = await issueToken();
-    const paged = await call(
+    const response = await call(
       listener!.baseUrl,
-      "/open-apis/contact/v3/users/find_by_department?department_id=od_mock_engineering&page_size=100",
+      `/open-apis/contact/v3/users/ou_mock_dave?${FROZEN_TYPES}`,
       { headers: bearer(token) },
     );
-    const single = await call(listener!.baseUrl, `${USER_PATH}?${FROZEN_TYPES}`, {
+    expect(response.status).toBe(200);
+    const user = (JSON.parse(response.body) as { data: { user: Record<string, unknown> } }).data.user;
+    expect(user).toEqual(listener!.state.users.find((candidate) => candidate.open_id === "ou_mock_dave"));
+    expect(user.department_ids).toEqual([]);
+    expect(user.email).toBe("");
+    expect(user.enterprise_email).toBe("dave@corp.example.com");
+  });
+
+  it("reads the current member status of the run", async () => {
+    await startListener();
+    const token = await issueToken();
+    const patched = await call(listener!.baseUrl, "/__mock/users/ou_mock_alice", {
+      method: "PATCH",
+      headers: bearer(ADMIN_TOKEN),
+      body: JSON.stringify({ status: "suspended" }),
+    });
+    expect(patched.status).toBe(200);
+    const response = await call(listener!.baseUrl, `${USER_PATH}?${FROZEN_TYPES}`, {
       headers: bearer(token),
     });
-    const pagedItems = (JSON.parse(paged.body) as { data: { items: Record<string, unknown>[] } }).data.items;
-    const singleUser = (JSON.parse(single.body) as { data: { user: Record<string, unknown> } }).data.user;
-    expect(pagedItems[0]).toEqual(singleUser);
+    expect(response.status).toBe(200);
+    const user = (JSON.parse(response.body) as { data: { user: Record<string, unknown> } }).data.user;
+    expect(user.status).toEqual({
+      is_activated: true,
+      is_frozen: true,
+      is_resigned: false,
+      is_exited: false,
+    });
+  });
+
+  it("refuses a method other than GET with the frozen 404", async () => {
+    await startListener();
+    const token = await issueToken();
+    const response = await call(listener!.baseUrl, `${USER_PATH}?${FROZEN_TYPES}`, {
+      method: "DELETE",
+      headers: bearer(token),
+    });
+    expect(response.status).toBe(404);
+    expect(JSON.parse(response.body)).toEqual({ code: 4, msg: "not_found" });
   });
 
   it("does not find a member that the directory does not hold", async () => {
     await startListener();
-    expect(findDirectoryUser(listener!.state, "ou_mock_alice")?.open_id).toBe("ou_mock_alice");
-    expect(findDirectoryUser(listener!.state, "ou_mock_deleted")).toBeUndefined();
+    expect(findUser(listener!.state, "ou_mock_alice")?.open_id).toBe("ou_mock_alice");
+    expect(findUser(listener!.state, "ou_mock_deleted")).toBeUndefined();
     expect(MOCK_APP_ID).toBe("cli_mock_megaui");
   });
 });

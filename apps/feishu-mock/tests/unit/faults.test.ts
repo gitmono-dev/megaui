@@ -8,7 +8,11 @@ import { startMockListener, type MockListener } from "../../src/server";
 const APP_SECRET = "mock-app-secret-for-the-tenant-token";
 const ADMIN_TOKEN = "mock-admin-token-for-the-control-plane";
 const TOKEN_PATH = "/open-apis/auth/v3/tenant_access_token/internal";
-const DIRECTORY_PATH = "/open-apis/contact/v3/users/find_by_department?department_id=od_mock_engineering";
+const USER_PATH =
+  "/open-apis/contact/v3/users/ou_mock_alice?user_id_type=open_id&department_id_type=open_department_id";
+/** The retired department directory route (FSL-167). */
+const RETIRED_DIRECTORY_PATH =
+  "/open-apis/contact/v3/users/find_by_department?department_id=od_mock_engineering&page_size=100";
 
 let listener: MockListener | undefined;
 
@@ -159,37 +163,66 @@ describe("bounded provider fault injection (FSM-04)", () => {
   it("maps 403 and 500 to the frozen responses", async () => {
     await startListener();
     const token = await issueToken();
-    await addFault({ target: "directory", kind: "403" });
+    await addFault({ target: "user", kind: "403" });
     await addFault({ target: "user", kind: "500" });
 
-    const forbidden = await call(listener!.baseUrl, DIRECTORY_PATH, {
+    const forbidden = await call(listener!.baseUrl, USER_PATH, {
       headers: { authorization: `Bearer ${token}` },
     });
     expect(forbidden.status).toBe(403);
     expect(JSON.parse(forbidden.body)).toEqual({ code: 3, msg: "mock_fault_forbidden" });
 
-    const failure = await call(
-      listener!.baseUrl,
-      "/open-apis/contact/v3/users/ou_mock_alice?user_id_type=open_id&department_id_type=open_department_id",
-      { headers: { authorization: `Bearer ${token}` } },
-    );
+    const failure = await call(listener!.baseUrl, USER_PATH, {
+      headers: { authorization: `Bearer ${token}` },
+    });
     expect(failure.status).toBe(500);
     expect(JSON.parse(failure.body)).toEqual({ code: 8, msg: "mock_provider_failure" });
   });
 
   it("does not consume a rule for a request that fails input or authentication", async () => {
     await startListener();
-    await addFault({ target: "directory", kind: "429" });
-    const unauthorized = await call(listener!.baseUrl, DIRECTORY_PATH);
+    await addFault({ target: "user", kind: "429" });
+    const unauthorized = await call(listener!.baseUrl, USER_PATH);
     expect(unauthorized.status).toBe(401);
     const state = await call(listener!.baseUrl, "/__mock/state", { headers: admin() });
     expect((JSON.parse(state.body) as { data: { faults: unknown[] } }).data.faults).toHaveLength(1);
 
     const token = await issueToken();
-    const injected = await call(listener!.baseUrl, DIRECTORY_PATH, {
+    const injected = await call(listener!.baseUrl, USER_PATH, {
       headers: { authorization: `Bearer ${token}` },
     });
     expect(injected.status).toBe(429);
+  });
+
+  it("refuses the retired directory target (FSL-167)", async () => {
+    await startListener();
+    for (const kind of ["403", "429", "500", "timeout"]) {
+      const response = await addFault({ target: "directory", kind });
+      expect(response.status).toBe(400);
+      expect(JSON.parse(response.body)).toEqual({ code: 1, msg: "mock_fault_target_invalid" });
+    }
+    const state = await call(listener!.baseUrl, "/__mock/state", { headers: admin() });
+    expect((JSON.parse(state.body) as { data: { faults: unknown[] } }).data.faults).toEqual([]);
+  });
+
+  it("answers the frozen 404 on the retired find_by_department route before authentication (FSL-167)", async () => {
+    await startListener();
+    const anonymous = await call(listener!.baseUrl, RETIRED_DIRECTORY_PATH);
+    expect(anonymous.status).toBe(404);
+    expect(JSON.parse(anonymous.body)).toEqual({ code: 4, msg: "not_found" });
+
+    const token = await issueToken();
+    for (const path of [
+      RETIRED_DIRECTORY_PATH,
+      "/open-apis/contact/v3/users/find_by_department",
+      "/open-apis/contact/v3/users/find_by_department?user_id_type=open_id&department_id_type=open_department_id",
+    ]) {
+      const authorized = await call(listener!.baseUrl, path, {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(authorized.status).toBe(404);
+      expect(JSON.parse(authorized.body)).toEqual({ code: 4, msg: "not_found" });
+    }
   });
 
   it("leaves the control plane and health untouched", async () => {

@@ -27,7 +27,6 @@ import {
   type MockHttpError,
 } from "./http";
 import { MockLifecycle } from "./lifecycle";
-import { MockCursorStore } from "./directory";
 import { MockFaultStore } from "./faults";
 import { MockMessageStore } from "./messages";
 import { handleProviderRequest, MockTokenStore, MOCK_PROVIDER_PREFIX } from "./provider";
@@ -95,10 +94,6 @@ export async function startMockListener(
   // The token store is registered too, so a reset really invalidates the
   // tokens this run issued.
   lifecycle.registerStore({ name: "tenant-tokens", reset: () => tokens.reset() });
-  const cursors = new MockCursorStore();
-  // The cursor store is registered as well, so a reset refuses the cursors
-  // this run handed out.
-  lifecycle.registerStore({ name: "directory-cursors", reset: () => cursors.reset() });
   const messages = new MockMessageStore(state);
   // The message store is registered too, so a reset empties the uuid ledger
   // and the inboxes of this run.
@@ -117,7 +112,7 @@ export async function startMockListener(
         socketState.arm();
       });
     }
-    void handleRequest(request, response, expectedHost, socketState, state, lifecycle, tokens, cursors, messages, faults, controlDeps, options.adminToken);
+    void handleRequest(request, response, expectedHost, socketState, state, lifecycle, tokens, messages, faults, controlDeps, options.adminToken);
   });
   installReadBudget(server, states);
   await new Promise<void>((resolvePromise, reject) => {
@@ -243,7 +238,6 @@ async function handleRequest(
   state: MockState,
   lifecycle: MockLifecycle,
   tokens: MockTokenStore,
-  cursors: MockCursorStore,
   messages: MockMessageStore,
   faults: MockFaultStore,
   controlDeps: MockControlDeps,
@@ -273,7 +267,7 @@ async function handleRequest(
     return;
   }
   if (path.startsWith(MOCK_PROVIDER_PREFIX)) {
-    await handleProviderRequest(request, response, path, state, tokens, cursors, messages, faults, lifecycle);
+    await handleProviderRequest(request, response, path, state, tokens, messages, faults, lifecycle);
     if (socketState) socketState.responded = true;
     return;
   }
