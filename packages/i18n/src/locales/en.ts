@@ -178,7 +178,10 @@ export const en = {
         codePlaceholder: "8-character code",
         verify: "Sign in",
         verifying: "Signing in...",
-        verifyFailed: "Sign-in could not be completed. Please try again."
+        verifyFailed: "Sign-in could not be completed. Please try again.",
+        codeInvalid: "The code is invalid or has expired.",
+        accountConflict: "This email is already used by another account on this site, so it cannot sign in with Feishu. Please contact your administrator.",
+        codeRetry: "Sign-in could not be completed. Please request a new code."
       }
     },
     signup: {

@@ -2,9 +2,12 @@
 //
 // Posts `{ code }` to `POST /api/auth/feishu-login/verify`; the flow is the HttpOnly flow
 // cookie the request step received, so the browser sends it and this component never
-// reads it. A 200 (the server also sets the session cookie) goes to the home page. Any
-// other answer shows one generic message and stays on this step; the per-status messages
-// belong to FSL-130, resend and change-email to FSL-155. For typing and pasting, the field
+// reads it. A 200 (the server also sets the session cookie) goes to the home page. Every
+// other answer stays on this step with a message chosen by the status alone (FSL-130):
+// 400 and 401 say the code is invalid or expired (one text for a wrong, expired, voided or
+// used code, as the server answers them alike), 409 the account conflict, 503 to request a
+// new code, anything else (500, 403, 429 or no answer) a generic retry. Resend and
+// change-email belong to FSL-155. For typing and pasting, the field
 // drops all whitespace, upper-cases and keeps at most 8 characters (no `maxLength`, so a
 // pasted code with a space is not cut before the space is removed); the server still
 // trims and upper-cases on its own and remains the only judge of the format.
@@ -21,6 +24,23 @@ import { useTranslation } from "@/hooks/use-translation";
 
 const FEISHU_LOGIN_VERIFY_PATH = "/api/auth/feishu-login/verify";
 const CODE_LENGTH = 8;
+
+type FeishuLoginCopy = ReturnType<typeof useTranslation>["t"]["auth"]["signin"]["feishu"];
+
+/** The code step's message for a verify answer other than 200, by status only. */
+function verifyErrorText(status: number, copy: FeishuLoginCopy): string {
+  switch (status) {
+    case 400:
+    case 401:
+      return copy.codeInvalid;
+    case 409:
+      return copy.accountConflict;
+    case 503:
+      return copy.codeRetry;
+    default:
+      return copy.verifyFailed;
+  }
+}
 
 /**
  * POSTs a JSON body same-origin and answers the status, or 0 when nothing came back. Both
@@ -61,7 +81,7 @@ export function CodeForm({ email }: { email: string }) {
       return;
     }
     setLoading(false);
-    setError(copy.verifyFailed);
+    setError(verifyErrorText(status, copy));
   };
 
   return (

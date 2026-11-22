@@ -1,5 +1,6 @@
 // megaui-only (FSL-129 AC2): every text of the Feishu sign-in page has a key in both the
-// `zh-CN` and the `en` dictionaries (`auth.signin.feishu`, GC-14).
+// `zh-CN` and the `en` dictionaries (`auth.signin.feishu`, GC-14). FSL-130 adds the code
+// step's per-status verify messages.
 //
 // The keys the page and its two step components read are collected from their source
 // (`copy.<key>`, where `copy` is `auth.signin.feishu`), so a new text cannot be added
@@ -37,7 +38,16 @@ describe("FSL-129 Feishu sign-in page texts", () => {
     expect(used).toEqual(expect.arrayContaining([
       "title", "description", "email", "emailPlaceholder", "request", "requesting", "invalidEmail",
       "requestFailed", "codeSent", "code", "codePlaceholder", "verify", "verifying", "verifyFailed",
+      "codeInvalid", "accountConflict", "codeRetry",
     ]));
+  });
+
+  it("FSL-130: the code step's verify messages are four different texts in each locale", () => {
+    for (const locale of LOCALES) {
+      const copy = getTranslation(locale).auth.signin.feishu;
+      const texts = [copy.codeInvalid, copy.accountConflict, copy.codeRetry, copy.verifyFailed];
+      expect(new Set(texts).size, locale).toBe(texts.length);
+    }
   });
 
   it("AC2: every key the page uses is a non-empty string in zh-CN and en", () => {

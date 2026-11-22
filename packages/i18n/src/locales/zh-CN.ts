@@ -178,7 +178,10 @@ export const zhCN = {
         codePlaceholder: "8 位验证码",
         verify: "登录",
         verifying: "登录中…",
-        verifyFailed: "登录未完成，请重试。"
+        verifyFailed: "登录未完成，请重试。",
+        codeInvalid: "验证码无效或已过期。",
+        accountConflict: "该邮箱已被本站的其它账号使用，无法通过飞书登录，请联系管理员。",
+        codeRetry: "登录未完成，请重新获取验证码。"
       }
     },
     signup: {
