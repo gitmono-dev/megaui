@@ -4,6 +4,10 @@
 // legacy mode it starts no cleanup and builds nothing. FSL-132: there is no enterprise runtime
 // startup any more, and `maintenance` or `enterprise` without AUTH_PROVIDER refuses the startup
 // with `INVALID_AUTH_PROVIDER` before any cleanup.
+// FSL-158 (GC-15): with NODE_ENV=production, `register()` refuses a runtime role that holds DDL
+// (a superuser, or CREATE on schema public), and privileges it cannot read (no DATABASE_URL),
+// with `DATABASE_ROLE_SCOPE_REJECTED` before the cleanup starts, and starts normally with a role granted only DML and sequence USAGE; in test it
+// prints `DATABASE_ROLE_SCOPE_WARNING` for the superuser and continues.
 import { randomBytes, randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -39,6 +43,23 @@ const saved = new Map(MANAGED.map(key => [key, process.env[key]]));
 
 let isolated: IsolatedPostgres | undefined;
 let database: DatabaseClient | undefined;
+const savedNodeEnv = process.env.NODE_ENV;
+const ROLE_PASSWORD = randomBytes(16).toString("hex");
+
+/** The connection string of the one-shot database as `role`. */
+function urlAs(role: string): string {
+  const url = new URL(isolated!.databaseUrl);
+  url.username = role;
+  url.password = ROLE_PASSWORD;
+  return url.toString();
+}
+
+/** Points the shared database client of `register()` at `url` and sets NODE_ENV. */
+async function runAs(url: string, nodeEnv: string): Promise<void> {
+  await closeDatabaseClient();
+  process.env.DATABASE_URL = url;
+  Reflect.set(process.env, "NODE_ENV", nodeEnv);
+}
 
 const hex = () => randomBytes(32).toString("hex");
 
@@ -81,6 +102,17 @@ describe("FSL-150 register() in Feishu mode", () => {
       FEISHU_APP_SECRET: "fsl150-wiring-secret",
       ENTERPRISE_OTP_HMAC_KEY: randomBytes(32).toString("base64url"),
     });
+    // FSL-158: a role that may CREATE in schema public, and the runtime role of a deployment
+    // (DML on every table, sequence USAGE).
+    const db = `"${isolated.databaseName}"`;
+    for (const role of ["wiring_public_create", "wiring_runtime"]) {
+      await database.pool.query(`create role ${role} login password '${ROLE_PASSWORD}'`);
+      await database.pool.query(`grant connect on database ${db} to ${role}`);
+      await database.pool.query(`grant usage on schema public to ${role}`);
+    }
+    await database.pool.query("grant create on schema public to wiring_public_create");
+    await database.pool.query("grant select, insert, update, delete on all tables in schema public to wiring_runtime");
+    await database.pool.query("grant usage on all sequences in schema public to wiring_runtime");
   }, 180_000);
 
   beforeEach(async () => {
@@ -91,6 +123,9 @@ describe("FSL-150 register() in Feishu mode", () => {
 
   afterEach(async () => {
     await stopFeishuWebRuntime();
+    if (process.env.DATABASE_URL !== isolated!.databaseUrl || process.env.NODE_ENV !== savedNodeEnv) {
+      await runAs(isolated!.databaseUrl, savedNodeEnv ?? "test");
+    }
   });
 
   afterAll(async () => {
@@ -102,6 +137,7 @@ describe("FSL-150 register() in Feishu mode", () => {
     for (const [key, value] of saved) {
       if (value === undefined) delete process.env[key]; else process.env[key] = value;
     }
+    Reflect.set(process.env, "NODE_ENV", savedNodeEnv);
     if (errors.length) throw new AggregateError(errors, "FSL-150 wiring cleanup failed");
   }, 120_000);
 
@@ -172,5 +208,68 @@ describe("FSL-150 register() in Feishu mode", () => {
     expect(spies.startCleanup).not.toHaveBeenCalled();
     expect(spies.createAuth).not.toHaveBeenCalled();
     expect((await readRow(id))?.state).toBe("active");
+  }, 60_000);
+  it.each([
+    ["AC1 superuser", "superuser"],
+    ["AC4 CREATE on schema public", "wiring_public_create"],
+  ] as const)("FSL-158 %s: NODE_ENV=production refuses the startup before the cleanup", async (_label, role) => {
+    setMode("enterprise", "feishu");
+    const id = await seedExpiredRow();
+    await runAs(role === "superuser" ? isolated!.databaseUrl : urlAs(role), "production");
+
+    const refusal = await register().then(() => undefined, (error: unknown) => error);
+
+    expect(refusal).toMatchObject({ name: "DatabaseRoleScopeError", code: "DATABASE_ROLE_SCOPE_REJECTED" });
+    expect((refusal as Error).message).not.toContain(ROLE_PASSWORD);
+    expect((refusal as Error).message).not.toContain(isolated!.databaseName);
+    expect(spies.startCleanup).not.toHaveBeenCalled();
+    expect(spies.createAuth).not.toHaveBeenCalled();
+    expect((await readRow(id))?.state).toBe("active");
+  }, 60_000);
+
+  it("FSL-158 AC5: NODE_ENV=production refuses the startup when the privileges cannot be read", async () => {
+    setMode("enterprise", "feishu");
+    const id = await seedExpiredRow();
+    await runAs(isolated!.databaseUrl, "production");
+    delete process.env.DATABASE_URL;
+
+    await expect(register()).rejects.toMatchObject({ code: "DATABASE_ROLE_SCOPE_REJECTED", unreadable: true });
+
+    expect(spies.startCleanup).not.toHaveBeenCalled();
+    expect(spies.createAuth).not.toHaveBeenCalled();
+    expect((await readRow(id))?.state).toBe("active");
+  }, 60_000);
+
+  it("FSL-158 AC6: NODE_ENV=production starts normally with a DML-only runtime role", async () => {
+    setMode("enterprise", "feishu");
+    const id = await seedExpiredRow();
+    await runAs(urlAs("wiring_runtime"), "production");
+    const warn = vi.spyOn(console, "warn");
+    try {
+      await register();
+      expect(warn.mock.calls.flat().join("\n")).not.toContain("DATABASE_ROLE_SCOPE");
+    } finally {
+      warn.mockRestore();
+    }
+
+    expect(spies.startCleanup).toHaveBeenCalledTimes(1);
+    expect(await readRow(id)).toEqual({ state: "void", email: null, open_id: null, display_name: null, code_hmac: null });
+  }, 60_000);
+
+  it("FSL-158 AC7: NODE_ENV=test warns about the superuser and continues", async () => {
+    setMode("enterprise", "feishu");
+    const id = await seedExpiredRow();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await register();
+      const lines = warn.mock.calls.map(call => String(call[0])).filter(line => line.startsWith("DATABASE_ROLE_SCOPE_WARNING"));
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain("facts=superuser");
+      expect(lines[0]).not.toContain(isolated!.databaseName);
+    } finally {
+      warn.mockRestore();
+    }
+    expect(spies.startCleanup).toHaveBeenCalledTimes(1);
+    expect((await readRow(id))?.state).toBe("void");
   }, 60_000);
 });

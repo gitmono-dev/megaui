@@ -66,6 +66,8 @@ FS-58 的 mega2 通知偏好 adapter 只消费当前 `enabled` 与事件偏好�
 
 数据库目标由 `packages/database/src/enterprise-scope.ts` 守卫：目标必须携带登记的 owner、instance 与 environment，SQL 角色的实际权限不得超出登记范围，陌生目标不会被自动初始化，`db:migrate` 在连接目标前先做预检，预检失败则一次 DDL 都不会发生。
 
+**production 的 Web 运行角色（FSL-158，GC-15）：** 飞书模式（`AUTH_MODE=enterprise` + `AUTH_PROVIDER=feishu`）的 Web 以 `DATABASE_URL` 连接的角色是运行角色，它只获授 `SELECT` / `INSERT` / `UPDATE` / `DELETE` 与序列 `USAGE`；表由迁移角色拥有，迁移由 `db:migrate` 以迁移角色（另一个连接串）执行。运行角色及其可 `SET ROLE` 的全部角色都不得为超级用户、不得具有 `CREATEDB` 属性，也不得对当前数据库或其中任一 schema（`pg_catalog`、`information_schema`、`pg_toast*` 除外）持有 `CREATE`。飞书模式的 Web 启动时检查这些事实：`NODE_ENV=production` 下任一为真或权限无法读取时以 `DATABASE_ROLE_SCOPE_REJECTED` 拒绝启动；其它环境（`development`、`test` 与其它取值，含未设置）只输出 `DATABASE_ROLE_SCOPE_WARNING` 并继续。`legacy` 与未设置 `AUTH_PROVIDER` 的部署不做该检查。详见 [飞书邮箱验证码登录 · 数据库角色](./implementation/feishu-login.md#数据库角色)。
+
 企业身份与通知资料由三张表承载：`enterprise_identity`（外部身份三元组与本地用户的绑定，唯一约束 `tenant_key+app_id+open_id` 与 `local_user_id+tenant_key+app_id`）、`enterprise_profile`（租户内唯一的 `login_name`、实例内唯一的不可变 `backend_username`、可空且不参与唯一约束的 `notification_email`）与 `enterprise_policy`（实例归属与单调激活水位 `auth_epoch`）。三张表都继续引用原 `user.id`。
 
 测试用的 Postgres 由 `packages/database/src/test-support/isolated-pg.ts` 隔离器独占：它在本次运行内创建带 run_id 标签的独立容器与一次性数据库，不读 `DATABASE_URL`，只销毁本次运行登记的资源；迁移一致性因此由隔离器证明，而不是拿环境里的数据库跑。

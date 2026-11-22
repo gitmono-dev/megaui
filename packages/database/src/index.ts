@@ -21,3 +21,4 @@ export * from "./enterprise-repair-store";
 export * from "./enterprise-grant-store";
 export * from "./enterprise-offboarding-store";
 export * from "./feishu-login-store";
+export * from "./role-scope";
