@@ -18,6 +18,7 @@ import { MessageList } from "../../channels/components/message-list";
 import { useChatCollectionSync } from "../../channels/hooks/use-chat-collection-sync";
 import { useTranslation } from "@/hooks/use-translation";
 import { authClient } from "@/lib/auth-client";
+import { selfDisplayName } from "@/lib/self-display-name";
 
 export default function DmPage() {
   const params = useParams<{ id: string }>();
@@ -47,7 +48,8 @@ export default function DmPage() {
   const { refetchInterval } = useChatCollectionSync({
     channelId,
     enabled: Boolean(channelId),
-    localUser: selfUserId ? { id: selfUserId, name: session?.user?.name ?? undefined } : undefined,
+    // FSL-183: the optimistic author name reads the own name only through `selfDisplayName`.
+    localUser: selfUserId ? { id: selfUserId, name: selfDisplayName(session?.user) ?? undefined } : undefined,
   });
 
   const messagesQuery = useQuery({

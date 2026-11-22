@@ -16,6 +16,7 @@ import { MEGA_RADIUS_TOKENS, MEGA_SPACING_TOKENS, MEGA_TOKENS } from "@megaui/ui
 
 import { useTranslation } from "@/hooks/use-translation";
 import { authClient } from "@/lib/auth-client";
+import { selfDisplayName } from "@/lib/self-display-name";
 
 import { ChatComposer } from "../components/chat-composer";
 import { MembersPanel } from "../components/members-panel";
@@ -43,7 +44,8 @@ export default function ChannelPage() {
   const { refetchInterval } = useChatCollectionSync({
     channelId,
     enabled: Boolean(channelId),
-    localUser: selfUserId ? { id: selfUserId, name: session?.user?.name ?? undefined } : undefined,
+    // FSL-183: the optimistic author name reads the own name only through `selfDisplayName`.
+    localUser: selfUserId ? { id: selfUserId, name: selfDisplayName(session?.user) ?? undefined } : undefined,
     threadRootId,
   });
 

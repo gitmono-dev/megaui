@@ -20,6 +20,7 @@ import {
 } from "@megaui/ui/content/editor";
 
 import { authClient } from "@/lib/auth-client";
+import { selfDisplayName } from "@/lib/self-display-name";
 import { bodyHasVisibleContent } from "./doc-outline";
 import { DocRoamShortcuts } from "./doc-roam-shortcuts";
 
@@ -161,6 +162,10 @@ export function DocWriter({
     refetchOnWindowFocus: false,
   });
 
+  // FSL-183: the presence username (seen by other collaborators) reads the own name only
+  // through `selfDisplayName` (the Feishu projection `displayName`, else the session name); not trimmed.
+  const selfName = selfDisplayName(session.data?.user);
+
   const collabConfig = useMemo<MegaDocCollabConfig | undefined>(() => {
     // Only terminal auth failure drops collab (not transient WS offline / soft disconnect).
     if (!collabPublicUrl || !docId || collabFailed) return undefined;
@@ -169,7 +174,7 @@ export function DocWriter({
       documentName: buildDocContainerRoomName(docId),
       token: collabTokenQuery.data?.token ?? null,
       userId: collabTokenQuery.data?.userId ?? session.data?.user?.id,
-      username: session.data?.user?.name ?? profilePrefsQuery.data?.username ?? undefined,
+      username: selfName ?? profilePrefsQuery.data?.username ?? undefined,
       initialEditorStateJSON: draftBody ?? doc.body,
       onConnectionStatus: (status) => {
         setCollabSynced(status === "connected");
@@ -188,8 +193,8 @@ export function DocWriter({
     docId,
     draftBody,
     profilePrefsQuery.data?.username,
+    selfName,
     session.data?.user?.id,
-    session.data?.user?.name,
   ]);
 
   const collabMode = resolveCollabMode(collabConfig);
