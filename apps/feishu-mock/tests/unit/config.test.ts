@@ -2,9 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { MockConfigError, resolveMockConfig } from "../../src/config";
 
-const CALLBACK_PATH = "/api/integrations/feishu/events";
 const DEFAULT_PORT = 19400;
-const DEFAULT_CALLBACK_URL = `http://127.0.0.1:3000${CALLBACK_PATH}`;
 
 function baseEnv(
   overrides: Record<string, string | undefined> = {},
@@ -48,10 +46,17 @@ describe("mock CLI configuration (FSM-22)", () => {
     expect(resolveMockConfig(baseEnv()).host).toBe("127.0.0.1");
   });
 
-  it("uses the frozen default port and callback url", () => {
+  it("uses the frozen default port", () => {
     expect(resolveMockConfig(baseEnv()).port).toBe(19400);
-    expect(resolveMockConfig(baseEnv()).callbackUrl).toBe(
-      "http://127.0.0.1:3000/api/integrations/feishu/events",
+  });
+
+  it("carries no callback target (FSL-140)", () => {
+    const config = resolveMockConfig(baseEnv());
+    expect(Object.keys(config).sort()).toEqual(["host", "nodeEnv", "port", "runtimeFile"]);
+    // The callback url key is gone: it is now an unknown simulator key.
+    expectRejection(
+      baseEnv({ FEISHU_SIMULATOR_CALLBACK_URL: "http://127.0.0.1:3000/api/integrations/feishu/events" }),
+      "simulator_unknown_key",
     );
   });
 
@@ -65,66 +70,6 @@ describe("mock CLI configuration (FSM-22)", () => {
     expectRejection(baseEnv({ FEISHU_SIMULATOR_PORT: "1.5" }), "simulator_port_invalid");
     expectRejection(baseEnv({ FEISHU_SIMULATOR_PORT: "3000 " }), "simulator_port_invalid");
     expectRejection(baseEnv({ FEISHU_SIMULATOR_PORT: "http" }), "simulator_port_invalid");
-  });
-
-  it("accepts only the exact loopback callback target", () => {
-    expect(resolveMockConfig(baseEnv()).callbackUrl).toBe(DEFAULT_CALLBACK_URL);
-    expect(resolveMockConfig(baseEnv()).callbackUrl).toBe(
-      "http://127.0.0.1:3000/api/integrations/feishu/events",
-    );
-    expect(
-      resolveMockConfig(
-        baseEnv({ FEISHU_SIMULATOR_CALLBACK_URL: `http://127.0.0.1:3100${CALLBACK_PATH}` }),
-      ).callbackUrl,
-    ).toBe(`http://127.0.0.1:3100${CALLBACK_PATH}`);
-
-    // Port 80 is legal: a parsed URL would drop it as the http default port.
-    expect(
-      resolveMockConfig(
-        baseEnv({ FEISHU_SIMULATOR_CALLBACK_URL: `http://127.0.0.1:80${CALLBACK_PATH}` }),
-      ).callbackUrl,
-    ).toBe(`http://127.0.0.1:80${CALLBACK_PATH}`);
-
-    // Only the literal host is allowed, not a form a parser would canonicalize.
-    for (const host of ["127.1", "2130706433", "0x7f000001", "127.0.0.1."]) {
-      expectRejection(
-        baseEnv({ FEISHU_SIMULATOR_CALLBACK_URL: `http://${host}:3000${CALLBACK_PATH}` }),
-        "simulator_callback_url_invalid",
-      );
-    }
-
-    expectRejection(
-      baseEnv({ FEISHU_SIMULATOR_CALLBACK_URL: `https://127.0.0.1:3000${CALLBACK_PATH}` }),
-      "simulator_callback_url_invalid",
-    );
-    expectRejection(
-      baseEnv({ FEISHU_SIMULATOR_CALLBACK_URL: `http://localhost:3000${CALLBACK_PATH}` }),
-      "simulator_callback_url_invalid",
-    );
-    expectRejection(
-      baseEnv({ FEISHU_SIMULATOR_CALLBACK_URL: "http://127.0.0.1:3000/other" }),
-      "simulator_callback_url_invalid",
-    );
-    expectRejection(
-      baseEnv({ FEISHU_SIMULATOR_CALLBACK_URL: `http://user:pw@127.0.0.1:3000${CALLBACK_PATH}` }),
-      "simulator_callback_url_invalid",
-    );
-    expectRejection(
-      baseEnv({ FEISHU_SIMULATOR_CALLBACK_URL: `http://127.0.0.1:3000${CALLBACK_PATH}?a=1` }),
-      "simulator_callback_url_invalid",
-    );
-    expectRejection(
-      baseEnv({ FEISHU_SIMULATOR_CALLBACK_URL: `http://127.0.0.1:3000${CALLBACK_PATH}#frag` }),
-      "simulator_callback_url_invalid",
-    );
-    expectRejection(
-      baseEnv({ FEISHU_SIMULATOR_CALLBACK_URL: `http://127.0.0.1${CALLBACK_PATH}` }),
-      "simulator_callback_url_invalid",
-    );
-    expectRejection(
-      baseEnv({ FEISHU_SIMULATOR_CALLBACK_URL: "not-a-url" }),
-      "simulator_callback_url_invalid",
-    );
   });
 
   it("rejects unknown simulator config keys", () => {

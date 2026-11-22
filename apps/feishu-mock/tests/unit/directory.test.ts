@@ -337,7 +337,6 @@ describe("contact directory and cursors (FSM-09)", () => {
       users: [],
       departments: [{ open_department_id: "od_mock_empty", name: "Mock Empty" }],
       inboxes: new Map(),
-      events: [],
       faults: [],
     };
     const cursors = new MockCursorStore();

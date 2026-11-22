@@ -9,26 +9,15 @@ import { startFeishuMock, type StartedFeishuMock } from "./helpers/feishu-mock";
  */
 
 async function stateOf(mock: StartedFeishuMock): Promise<{
-  data: { users: unknown[]; inboxes: Record<string, unknown[]>; events: unknown[]; faults: unknown[] };
+  data: { users: Array<{ open_id: string; status: Record<string, boolean> }>; inboxes: Record<string, unknown[]>; faults: unknown[] };
 }> {
   const response = await fetch(`${mock.baseUrl}/__mock/state`, {
     headers: { authorization: `Bearer ${mock.runtime.adminToken}` },
   });
   expect(response.status).toBe(200);
   return (await response.json()) as {
-    data: { users: unknown[]; inboxes: Record<string, unknown[]>; events: unknown[]; faults: unknown[] };
+    data: { users: Array<{ open_id: string; status: Record<string, boolean> }>; inboxes: Record<string, unknown[]>; faults: unknown[] };
   };
-}
-
-/** Waits for the delivery of a callback to be recorded. */
-async function waitForEvents(mock: StartedFeishuMock, count: number): Promise<unknown[]> {
-  for (let attempt = 0; attempt < 40; attempt += 1) {
-    const view = await stateOf(mock);
-    if (view.data.events.length >= count) return view.data.events;
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
-  }
-  const view = await stateOf(mock);
-  return view.data.events;
 }
 
 async function issueToken(mock: StartedFeishuMock): Promise<string> {
@@ -78,18 +67,27 @@ test.describe("feishu mock protocol", () => {
       });
       expect(message.status).toBe(200);
 
-      // The control route sends the p2p event to the callback target.
-      const control = await fetch(`${mock.baseUrl}/__mock/messages`, {
+      // FSL-140: message injection is gone; the status control only changes one member.
+      const injected = await fetch(`${mock.baseUrl}/__mock/messages`, {
         method: "POST",
         headers: { authorization: `Bearer ${mock.runtime.adminToken}`, "content-type": "application/json" },
         body: JSON.stringify({ openId: "ou_mock_bob", text: "from the mock" }),
       });
-      expect(control.status).toBe(200);
+      expect(injected.status).toBe(404);
+      const status = await fetch(`${mock.baseUrl}/__mock/users/ou_mock_bob`, {
+        method: "PATCH",
+        headers: { authorization: `Bearer ${mock.runtime.adminToken}`, "content-type": "application/json" },
+        body: JSON.stringify({ status: "suspended" }),
+      });
+      expect(status.status).toBe(200);
 
       const view = await stateOf(mock);
       expect(view.data.users).toHaveLength(6);
+      expect(Object.keys(view.data).sort()).toEqual(["faults", "inboxes", "users"]);
+      expect(view.data.users.find((user) => user.open_id === "ou_mock_bob")?.status.is_frozen).toBe(true);
+      expect(view.data.users.find((user) => user.open_id === "ou_mock_alice")?.status.is_frozen).toBe(false);
       expect(view.data.inboxes.ou_mock_alice).toHaveLength(1);
-      expect(await waitForEvents(mock, 1)).toHaveLength(1);
+      expect(view.data.inboxes.ou_mock_bob).toBeUndefined();
 
       // The same uuid in the same generation repeats the first answer instead
       // of delivering a second message.
@@ -164,10 +162,9 @@ test.describe("feishu mock protocol", () => {
         headers: { authorization: `Bearer ${mock.runtime.adminToken}` },
       });
       const view = (await state.json()) as {
-        data: { inboxes: Record<string, unknown[]>; events: unknown[]; faults: unknown[] };
+        data: { inboxes: Record<string, unknown[]>; faults: unknown[] };
       };
       expect(view.data.inboxes).toEqual({});
-      expect(view.data.events).toEqual([]);
       expect(view.data.faults).toEqual([]);
 
       // The token of the old generation is refused as well.
@@ -218,7 +215,7 @@ test.describe("feishu mock protocol", () => {
     try {
       expect(first.baseUrl).not.toBe(second.baseUrl);
       expect(first.runtime.adminToken).not.toBe(second.runtime.adminToken);
-      expect(first.runtime.callbackUrl).not.toBe(second.runtime.callbackUrl);
+      expect(first.runtime.appSecret).not.toBe(second.runtime.appSecret);
 
       const token = await issueToken(first);
       const crossed = await fetch(

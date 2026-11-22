@@ -128,7 +128,6 @@ describe("Feishu login code issue main flow with real Mock HTTP and PostgreSQL (
   let isolated: IsolatedPostgres;
   let pool: Pool;
   let child: ChildProcess;
-  let receiver: Server;
   /** A recording proxy in front of the Mock; the service only ever talks to it. */
   let proxy: Server;
   let runtimeFile: string;
@@ -255,15 +254,6 @@ describe("Feishu login code issue main flow with real Mock HTTP and PostgreSQL (
     // eslint-disable-next-line @typescript-eslint/ban-ts-comment
     // @ts-ignore TS6059 only: the borrowed module is outside the engine rootDir.
     generateCode = (await import("../../../../auth/src/feishu-login/code")).generateFeishuLoginCode;
-    // Member status writes emit a callback; a local receiver keeps them inside this run.
-    receiver = createServer((request, response) => {
-      request.resume();
-      request.on("end", () => response.end("{}"));
-    });
-    await new Promise<void>((resolve) => receiver.listen(0, "127.0.0.1", resolve));
-    const address = receiver.address();
-    if (!address || typeof address === "string") throw new Error("missing fixture receiver");
-    const callbackUrl = "http://127.0.0.1:" + address.port + "/api/integrations/feishu/events";
     // Frozen CLI protocol only: engine tests never import Mock source.
     child = spawn(process.execPath, ["--import", "tsx", join(ROOT, "apps/feishu-mock/src/index.ts")], {
       cwd: ROOT,
@@ -273,7 +263,6 @@ describe("Feishu login code issue main flow with real Mock HTTP and PostgreSQL (
         NODE_ENV: "test",
         FEISHU_SIMULATOR_ENABLED: "1",
         FEISHU_SIMULATOR_PORT: "0",
-        FEISHU_SIMULATOR_CALLBACK_URL: callbackUrl,
       },
     });
     child.stderr?.resume();
@@ -422,13 +411,6 @@ describe("Feishu login code issue main flow with real Mock HTTP and PostgreSQL (
       if (proxy) {
         proxy.closeAllConnections();
         await new Promise<void>((resolve, reject) => proxy.close((error) => (error ? reject(error) : resolve())));
-      }
-    } catch (error) {
-      errors.push(error);
-    }
-    try {
-      if (receiver) {
-        await new Promise<void>((resolve, reject) => receiver.close((error) => (error ? reject(error) : resolve())));
       }
     } catch (error) {
       errors.push(error);

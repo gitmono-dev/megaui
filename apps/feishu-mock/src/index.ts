@@ -53,13 +53,10 @@ async function run(): Promise<void> {
     listener = await startMockListener(config, {
       adminToken: secrets.adminToken,
       appSecret: secrets.appSecret,
-      verificationToken: secrets.verificationToken,
-      encryptKey: secrets.encryptKey,
     });
     const runtime: MockRuntime = {
       schemaVersion: MOCK_RUNTIME_SCHEMA_VERSION,
       baseUrl: listener.baseUrl,
-      callbackUrl: config.callbackUrl,
       appId: MOCK_APP_ID,
       tenantKey: MOCK_TENANT_KEY,
       ...secrets,

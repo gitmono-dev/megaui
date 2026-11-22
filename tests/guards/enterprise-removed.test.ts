@@ -458,3 +458,20 @@ describe("FSL-168: enterprise schema and tables dropped", () => {
     }
   });
 });
+
+describe("FSL-140: Mock enterprise callbacks and events removed", () => {
+  // AC1 and the card's other deletions: these exact paths are gone. The card registers no rg
+  // guard: the Mock's kept regression tests still name public Feishu interfaces.
+  const deletedPaths = [
+    ["AC1", "apps/feishu-mock/src/callbacks.ts"],
+    ["write set", "apps/feishu-mock/tests/unit/callback-target.test.ts"],
+    ["write set", "apps/feishu-mock/tests/unit/callback-wire.test.ts"],
+    ["write set", "apps/feishu-mock/tests/unit/member-events.test.ts"],
+    ["write set", "apps/feishu-mock/tests/unit/message-events.test.ts"],
+    ["write set", "apps/feishu-mock/tests/unit/replay.test.ts"],
+  ] as const;
+
+  it.each(deletedPaths)("%s: %s does not exist", (_ac, path) => {
+    expect(existsSync(join(ROOT, path)), path).toBe(false);
+  });
+});

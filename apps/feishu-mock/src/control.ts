@@ -7,8 +7,12 @@
  *
  * FSM-08 起本模块也承载 reset：它调用已注册 store 的重置器恢复 synthetic 初态，
  * 并在成功响应前取消全部已注册在途任务。
+ *
+ * FSL-140 起控制面不再注入消息、校验回调地址或重放事件；成员路由只剩
+ * `PATCH /__mock/users/:open_id`，它只修改目标成员的在职状态，不发送回调、
+ * 不记录事件。
  */
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from "node:http";
 
 import {
@@ -19,28 +23,21 @@ import {
   sendMockJson,
   type MockHttpError,
 } from "./http";
-import {
-  buildCallbackEnvelope,
-  MOCK_EVENT_MAX_RECORDS,
-  type MockCallbackApp,
-  type MockCallbackSender,
-} from "./callbacks";
-import { MOCK_TEXT_MAX_LENGTH } from "./message-input";
 import type { MockFaultStore } from "./faults";
 import type { MockLifecycle } from "./lifecycle";
-import { MOCK_TENANT_KEY, statusFlags, type MockState, type MockUserStatus } from "./state";
+import { statusFlags, type MockState, type MockUserStatus } from "./state";
 
 export const MOCK_CONTROL_PREFIX = "/__mock/";
 
-/** Paths of the control plane this card delivers. */
+/** The prefix of the member status control, `PATCH /__mock/users/:open_id`. */
+export const MOCK_CONTROL_USERS_PREFIX = "/__mock/users/";
+
+/** Paths of the control plane this run delivers. */
 export const MOCK_CONTROL_DELIVERED_PATHS: readonly string[] = [
   "/__mock/state",
   "/__mock/reset",
-  "/__mock/messages",
-  "/__mock/verify-callback",
-  "/__mock/users",
   "/__mock/faults",
-  "/__mock/replay",
+  MOCK_CONTROL_USERS_PREFIX,
 ];
 
 export interface MockControlContext {
@@ -52,7 +49,6 @@ export interface MockControlContext {
 export interface MockControlStateView {
   users: MockState["users"];
   inboxes: Record<string, unknown[]>;
-  events: unknown[];
   faults: unknown[];
 }
 
@@ -109,9 +105,8 @@ function equalsSecret(presented: string, expected: string): boolean {
  * Builds the state view.
  *
  * Only the frozen business summary is exposed: the directory users, the
- * inboxes grouped by open id, the event delivery summaries and the fault
- * rules. Runtime configuration, tokens, secrets and callback bodies are never
- * part of this view.
+ * inboxes grouped by open id and the fault rules. Runtime configuration,
+ * tokens and secrets are never part of this view.
  */
 export function buildStateView(state: MockState): MockControlSuccess {
   return {
@@ -123,7 +118,6 @@ export function buildStateView(state: MockState): MockControlSuccess {
       inboxes: Object.fromEntries(
         [...state.inboxes].map(([openId, messages]) => [openId, messages.map((entry) => ({ ...entry }))]),
       ),
-      events: state.events.map((event) => ({ ...event })),
       faults: state.faults.map((fault) => ({ ...fault })),
     },
   };
@@ -134,17 +128,11 @@ export function buildStateView(state: MockState): MockControlSuccess {
  *
  * The gate comes first: the control plane accepts nothing but this run's admin
  * bearer, and a request that carries an Origin is refused. Only the routes
- * this run delivers exist; the remaining frozen write verbs are not
- * implemented yet and answer the frozen 404.
+ * this run delivers exist: state, reset, faults and the member status
+ * control; every other path answers the frozen 404.
  */
 export interface MockControlDeps {
-  callbacks?: MockControlCallbacks;
   faults?: MockFaultStore;
-}
-
-export interface MockControlCallbacks {
-  app: MockCallbackApp;
-  sender: MockCallbackSender;
 }
 
 export async function handleControlRequest(
@@ -156,7 +144,6 @@ export async function handleControlRequest(
   adminToken: string | undefined,
   deps: MockControlDeps = {},
 ): Promise<void> {
-  const callbacks = deps.callbacks;
   const unauthorized = authorizeControlRequest({ adminToken, headers: request.headers });
   if (unauthorized) {
     sendMockError(response, unauthorized);
@@ -188,76 +175,15 @@ export async function handleControlRequest(
     sendMockJson(response, 200, { code: 0, data: { generation } });
     return;
   }
-  if (path === "/__mock/messages") {
-    await handleControlMessages(request, response, state, callbacks);
-    return;
-  }
-  if (path === "/__mock/verify-callback") {
-    await handleVerifyCallback(request, response, callbacks);
-    return;
-  }
-  if (path.startsWith("/__mock/users/")) {
-    await handleMemberWrite(request, response, path, state, callbacks);
+  if (path.startsWith(MOCK_CONTROL_USERS_PREFIX)) {
+    await handleMemberStatus(request, response, path, state);
     return;
   }
   if (path === "/__mock/faults") {
     await handleFaultAdd(request, response, deps.faults);
     return;
   }
-  if (path === "/__mock/replay") {
-    await handleReplay(request, response, callbacks);
-    return;
-  }
   sendMockError(response, mockError(4, "not_found"));
-}
-
-/**
- * Replays a recorded event.
- *
- * The event identity and the business payload are kept and the signature
- * time and nonce are generated again; the receipt reports the delivery as it
- * actually happened.
- */
-async function handleReplay(
-  request: IncomingMessage,
-  response: ServerResponse,
-  callbacks: MockControlCallbacks | undefined,
-): Promise<void> {
-  if (request.method !== "POST") {
-    sendMockError(response, mockError(4, "not_found"));
-    return;
-  }
-  if (callbacks === undefined) {
-    sendMockError(response, mockError(8, "mock_callback_unavailable"));
-    return;
-  }
-  const body = await readJsonBody(request, ["eventId"]);
-  if (!body.ok) {
-    sendMockError(response, body.error);
-    return;
-  }
-  const eventId = body.body.eventId;
-  if (typeof eventId !== "string" || eventId === "") {
-    sendMockError(response, mockError(1, "mock_body_invalid"));
-    return;
-  }
-  const result = await callbacks.sender.replay(eventId);
-  if (result.missing) {
-    sendMockError(response, mockError(4, "mock_event_not_found"));
-    return;
-  }
-  if (result.error) {
-    sendMockError(response, result.error);
-    return;
-  }
-  sendMockJson(response, 200, {
-    code: 0,
-    data: {
-      eventId,
-      delivered: result.delivery?.ok ?? false,
-      statusCode: result.delivery?.statusCode ?? null,
-    },
-  });
 }
 
 /**
@@ -294,240 +220,47 @@ async function handleFaultAdd(
 }
 
 /**
- * Updates or deletes a synthetic member.
+ * Sets the employment status of one synthetic member.
  *
- * The event capacity is reserved before the directory changes, so a full
- * ledger refuses the write with the directory untouched. Once the directory
- * is committed the callback is attempted, and a failed delivery is reported
- * as it is instead of pretending the change did not happen.
+ * This is a test control for the Feishu login tests: it changes only the
+ * status of the target member, sends no callback and records no event. Every
+ * method other than PATCH answers the frozen 404 and changes nothing.
  */
-async function handleMemberWrite(
+async function handleMemberStatus(
   request: IncomingMessage,
   response: ServerResponse,
   path: string,
   state: MockState,
-  callbacks: MockControlCallbacks | undefined,
 ): Promise<void> {
-  if (callbacks === undefined) {
-    sendMockError(response, mockError(8, "mock_callback_unavailable"));
+  if (request.method !== "PATCH") {
+    sendMockError(response, mockError(4, "not_found"));
     return;
   }
-  const openId = decodeURIComponent(path.slice("/__mock/users/".length));
+  let openId: string;
+  try {
+    openId = decodeURIComponent(path.slice(MOCK_CONTROL_USERS_PREFIX.length));
+  } catch {
+    sendMockError(response, mockError(4, "mock_user_not_found"));
+    return;
+  }
   const user = state.users.find((candidate) => candidate.open_id === openId);
   if (user === undefined) {
     sendMockError(response, mockError(4, "mock_user_not_found"));
     return;
   }
-  if (MOCK_EVENT_MAX_RECORDS <= state.events.length) {
-    sendMockError(response, mockError(6, "mock_event_capacity_exceeded"));
-    return;
-  }
-  if (request.method === "PATCH") {
-    const body = await readJsonBody(request, ["status"]);
-    if (!body.ok) {
-      sendMockError(response, body.error);
-      return;
-    }
-    const status = body.body.status;
-    if (status !== "active" && status !== "suspended" && status !== "resigned") {
-      sendMockError(response, mockError(1, "mock_status_invalid"));
-      return;
-    }
-    const previousStatus = user.status;
-    user.status = statusFlags(status as MockUserStatus);
-    const createTime = Date.now();
-    const eventId = `evt_${randomBytes(12).toString("hex")}`;
-    const envelope = buildCallbackEnvelope(
-      {
-        eventId,
-        eventType: "contact.user.updated_v3",
-        createTime,
-        payload: {
-          object: { ...user, department_ids: [...user.department_ids] },
-          old_object: { open_id: user.open_id, status: previousStatus },
-        },
-      },
-      callbacks.app,
-    );
-    const result = await callbacks.sender.send(envelope, { encrypted: true });
-    if (result.error) {
-      sendMockError(response, result.error);
-      return;
-    }
-    sendMockJson(response, 200, {
-      code: 0,
-      data: { user, eventId, delivered: result.delivery?.ok ?? false, statusCode: result.delivery?.statusCode ?? null },
-    });
-    return;
-  }
-  if (request.method === "DELETE") {
-    const deleted = {
-      open_id: user.open_id,
-      user_id: user.user_id,
-      union_id: user.union_id,
-      name: user.name,
-      mobile: user.mobile,
-      department_ids: [...user.department_ids],
-      email: user.email,
-      enterprise_email: user.enterprise_email,
-      status: { is_activated: false, is_frozen: false, is_resigned: true, is_exited: true },
-    };
-    state.users = state.users.filter((candidate) => candidate.open_id !== openId);
-    const createTime = Date.now();
-    const eventId = `evt_${randomBytes(12).toString("hex")}`;
-    const envelope = buildCallbackEnvelope(
-      {
-        eventId,
-        eventType: "contact.user.deleted_v3",
-        createTime,
-        payload: {
-          object: deleted,
-          old_object: { open_id: deleted.open_id, department_ids: [...deleted.department_ids] },
-        },
-      },
-      callbacks.app,
-    );
-    const result = await callbacks.sender.send(envelope, { encrypted: true });
-    if (result.error) {
-      sendMockError(response, result.error);
-      return;
-    }
-    sendMockJson(response, 200, {
-      code: 0,
-      data: { eventId, delivered: result.delivery?.ok ?? false, statusCode: result.delivery?.statusCode ?? null },
-    });
-    return;
-  }
-  sendMockError(response, mockError(4, "not_found"));
-}
-
-/**
- * Sends a p2p message event on behalf of a synthetic member.
- *
- * Only a member of the current synthetic directory may speak, the text reuses
- * the frozen message limit, and the delivery result is reported as it is.
- */
-async function handleControlMessages(
-  request: IncomingMessage,
-  response: ServerResponse,
-  state: MockState,
-  callbacks: MockControlCallbacks | undefined,
-): Promise<void> {
-  if (request.method !== "POST") {
-    sendMockError(response, mockError(4, "not_found"));
-    return;
-  }
-  if (callbacks === undefined) {
-    sendMockError(response, mockError(8, "mock_callback_unavailable"));
-    return;
-  }
-  const body = await readJsonBody(request, ["openId", "text", "encrypted"]);
+  const body = await readJsonBody(request, ["status"]);
   if (!body.ok) {
     sendMockError(response, body.error);
     return;
   }
-  const openId = body.body.openId;
-  if (typeof openId !== "string" || state.users.find((user) => user.open_id === openId) === undefined) {
-    sendMockError(response, mockError(4, "mock_user_not_found"));
+  const status = body.body.status;
+  if (status !== "active" && status !== "suspended" && status !== "resigned") {
+    sendMockError(response, mockError(1, "mock_status_invalid"));
     return;
   }
-  const text = body.body.text;
-  if (typeof text !== "string") {
-    sendMockError(response, mockError(1, "mock_body_invalid"));
-    return;
-  }
-  if (text.length > MOCK_TEXT_MAX_LENGTH) {
-    sendMockError(response, mockError(1, "mock_text_too_long"));
-    return;
-  }
-  const encrypted = body.body.encrypted !== false;
-  const createTime = Date.now();
-  const eventId = `evt_${randomBytes(12).toString("hex")}`;
-  const envelope = buildCallbackEnvelope(
-    {
-      eventId,
-      eventType: "im.message.receive_v1",
-      createTime,
-      payload: {
-        sender: { sender_id: { open_id: openId }, sender_type: "user" },
-        tenant_key: MOCK_TENANT_KEY,
-        message: {
-          message_id: `om_${randomBytes(12).toString("hex")}`,
-          create_time: String(createTime),
-          chat_id: `oc_${openId}`,
-          chat_type: "p2p",
-          message_type: "text",
-          content: JSON.stringify({ text }),
-        },
-      },
-    },
-    callbacks.app,
-  );
-  const result = await callbacks.sender.send(envelope, { encrypted });
-  if (result.error) {
-    sendMockError(response, result.error);
-    return;
-  }
+  user.status = statusFlags(status as MockUserStatus);
   sendMockJson(response, 200, {
     code: 0,
-    data: {
-      eventId,
-      delivered: result.delivery?.ok ?? false,
-      statusCode: result.delivery?.statusCode ?? null,
-    },
-  });
-}
-
-/**
- * Runs the URL verification handshake.
- *
- * A random challenge is sent and only the same challenge coming back makes the
- * handshake succeed; nothing here authorizes a login.
- */
-async function handleVerifyCallback(
-  request: IncomingMessage,
-  response: ServerResponse,
-  callbacks: MockControlCallbacks | undefined,
-): Promise<void> {
-  if (request.method !== "POST") {
-    sendMockError(response, mockError(4, "not_found"));
-    return;
-  }
-  if (callbacks === undefined) {
-    sendMockError(response, mockError(8, "mock_callback_unavailable"));
-    return;
-  }
-  const body = await readJsonBody(request, ["encrypted"]);
-  if (!body.ok) {
-    sendMockError(response, body.error);
-    return;
-  }
-  const encrypted = body.body.encrypted !== false;
-  const challenge = randomBytes(16).toString("hex");
-  const result = await callbacks.sender.send(
-    { type: "url_verification", token: callbacks.app.verificationToken, challenge },
-    { encrypted, readBody: true },
-  );
-  if (result.error) {
-    sendMockError(response, result.error);
-    return;
-  }
-  let verified = false;
-  const answer = result.delivery?.body;
-  if (answer !== undefined) {
-    try {
-      const parsed = JSON.parse(answer) as { challenge?: unknown };
-      verified = parsed.challenge === challenge;
-    } catch {
-      verified = false;
-    }
-  }
-  if (!verified) {
-    sendMockError(response, mockError(8, "mock_callback_verification_failed"));
-    return;
-  }
-  sendMockJson(response, 200, {
-    code: 0,
-    data: { verified: true, statusCode: result.delivery?.statusCode ?? null },
+    data: { user: { ...user, department_ids: [...user.department_ids], status: { ...user.status } } },
   });
 }

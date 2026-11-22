@@ -83,13 +83,6 @@ export interface MockInboxEntry {
   createTime: string;
 }
 
-/** A delivery summary of a recorded event; never the full callback body. */
-export interface MockEventSummary {
-  eventId: string;
-  eventType: string;
-  delivered: boolean;
-}
-
 /** A bounded fault rule. */
 export interface MockFaultRule {
   target: "token" | "directory" | "user" | "message";
@@ -187,7 +180,6 @@ export interface MockState {
   users: MockUser[];
   departments: MockDepartment[];
   inboxes: Map<string, MockInboxEntry[]>;
-  events: MockEventSummary[];
   faults: MockFaultRule[];
 }
 
@@ -201,7 +193,6 @@ export function createMockState(): MockState {
     })),
     departments: SYNTHETIC_DEPARTMENTS.map((department) => ({ ...department })),
     inboxes: new Map<string, MockInboxEntry[]>(),
-    events: [],
     faults: [],
   };
 }
@@ -221,7 +212,6 @@ export function resetMockState(state: MockState): void {
   }));
   state.departments = SYNTHETIC_DEPARTMENTS.map((department) => ({ ...department }));
   state.inboxes = new Map<string, MockInboxEntry[]>();
-  state.events = [];
   state.faults = [];
 }
 
@@ -235,7 +225,6 @@ export interface MockSecrets {
 export interface MockRuntime {
   schemaVersion: typeof MOCK_RUNTIME_SCHEMA_VERSION;
   baseUrl: string;
-  callbackUrl: string;
   appId: string;
   tenantKey: string;
   appSecret: string;

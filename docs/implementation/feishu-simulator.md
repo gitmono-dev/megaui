@@ -4,15 +4,15 @@
 
 ## 当前交付能力
 
-已交付：源码依赖隔离守卫（FSM-17）、Mock workspace 工具链（FSM-21）、CLI 开发准入 validator（FSM-22）、可运行的 Mock CLI 与独占 runtime（FSM-01）、有界 JSON HTTP 边界（FSM-06）、受保护控制面与合成目录（FSM-07）、本 run 的资源注册、reset 与进程生命周期（FSM-08）、tenant token 签发与准入（FSM-02）、Contact 目录分页与游标读取（FSM-09）Contact 单人读取（FSM-18）DM 请求准入 validator（FSM-20）定向 DM 与 uuid 幂等（FSM-10）callback 签名与加密 wire codec（FSM-03）、callback 目的地与投递回执（FSM-11）p2p 消息事件与 URL 握手（FSM-12）成员变更与 Contact 事件（FSM-13）和有界 provider 故障注入（FSM-04）与异步故障受理与取消（FSM-19）、有界事件重放（FSM-14）、复用 CLI 启动夹具（FSM-15）、逐测 reset 及夹具清理（FSM-16）和 API-only E2E 与 CI（FSM-05），以及 Directory v1 员工路由（FSL-118）。
+已交付：源码依赖隔离守卫（FSM-17）、Mock workspace 工具链（FSM-21）、CLI 开发准入 validator（FSM-22）、可运行的 Mock CLI 与独占 runtime（FSM-01）、有界 JSON HTTP 边界（FSM-06）、受保护控制面与合成目录（FSM-07）、本 run 的资源注册、reset 与进程生命周期（FSM-08）、tenant token 签发与准入（FSM-02）、Contact 目录分页与游标读取（FSM-09）Contact 单人读取（FSM-18）DM 请求准入 validator（FSM-20）定向 DM 与 uuid 幂等（FSM-10）、成员在职状态控制（FSL-140）和有界 provider 故障注入（FSM-04）与异步故障受理与取消（FSM-19）、复用 CLI 启动夹具（FSM-15）、逐测 reset 及夹具清理（FSM-16）和 API-only E2E 与 CI（FSM-05），以及 Directory v1 员工路由（FSL-118）。FSL-140 起 Mock 不再发送企业回调、不再记录事件：callback 编码与投递、消息注入、URL 握手、成员事件与事件重放均已删除。
 
 - `apps/feishu-mock` 是 workspace 内的私有包 `@megaui/feishu-mock`，具备 `typecheck`/`build`/`lint`/`dev` 脚本，`tests/` 纳入类型检查，lockfile 由 CMD-10 生成了空 importer，且不引入任何第三方依赖。
-- `resolveMockConfig(env)` 只接收调用方提供的环境对象，不读 `process.env`，不监听端口、不写 runtime、不发 callback。它要求 `FEISHU_SIMULATOR_ENABLED` 精确为 `1`、`NODE_ENV` 为 `development` 或 `test`，监听地址固定 `127.0.0.1`，端口取冻结默认 `19400` 或 `0..65535` 的整数，callback 只接受 `http://127.0.0.1:<1..65535>/api/integrations/feishu/events`，未知 `FEISHU_SIMULATOR_*` 键一律拒绝；返回的配置被冻结。被拒绝的值不会回显到错误消息。
-- CLI（`pnpm --filter @megaui/feishu-mock run dev`）只以该 validator 的结果启动：在 `127.0.0.1` 上监听，生成每 run 独立的四个随机秘密（`appSecret`/`verificationToken`/`encryptKey`/`adminToken`），把它连同 `schemaVersion:1`、`baseUrl`、`callbackUrl`、`appId`、`tenantKey` 写入独占 runtime 文件，然后向 stdout 输出唯一一行 `{"baseUrl":...,"runtimeFile":...}`；这一行不含任何秘密或 runtime 内容。
+- `resolveMockConfig(env)` 只接收调用方提供的环境对象，不读 `process.env`，不监听端口、不写 runtime。它要求 `FEISHU_SIMULATOR_ENABLED` 精确为 `1`、`NODE_ENV` 为 `development` 或 `test`，监听地址固定 `127.0.0.1`，端口取冻结默认 `19400` 或 `0..65535` 的整数；配置不含回调地址，已退场的 `FEISHU_SIMULATOR_CALLBACK_URL` 与其它未知 `FEISHU_SIMULATOR_*` 键一律以 `simulator_unknown_key` 拒绝；返回的配置被冻结。被拒绝的值不会回显到错误消息。
+- CLI（`pnpm --filter @megaui/feishu-mock run dev`）只以该 validator 的结果启动：在 `127.0.0.1` 上监听，生成每 run 独立的四个随机秘密（`appSecret`/`verificationToken`/`encryptKey`/`adminToken`），把它连同 `schemaVersion:1`、`baseUrl`、`appId`、`tenantKey` 写入独占 runtime 文件（不含回调地址；`verificationToken`/`encryptKey` 仍随 runtime 生成，但 Mock 不再使用它们），然后向 stdout 输出唯一一行 `{"baseUrl":...,"runtimeFile":...}`；这一行不含任何秘密或 runtime 内容。
 - runtime 默认写在系统临时目录下由 CLI 独占创建的 0700 目录中，文件以 0600 独占创建；`FEISHU_SIMULATOR_RUNTIME_FILE` 可指定调用方路径，但已存在或为符号链接时拒绝启动。CLI 在运行期间保持该文件的描述符和自建目录的句柄打开，使它们的 inode 不会被回收复用。正常退出、SIGINT 或 SIGTERM 时，CLI 只删除本进程创建的那个 runtime 文件（以打开描述符的 dev/ino 核对，替换过的文件不删）；写入失败时先删除半写文件并清空归属记录。自建目录只在身份（dev/ino）仍匹配且为空时删除，调用方指定的目录永不删除。路径式删除无法与替换操作做成原子，这一窗口需要同一用户在同一路径上并发替换才会命中，属于本工具的既有边界。
 - 本片只提供 listener：未由前序卡交付的路由一律返回冻结的 404 形状 `{"code":4,"msg":"not_found"}`。
 
-尚未交付：控制面的其余写verb、provider 的其余路由与事件能力由后续各卡逐片交付；当前还不能进行企业身份登录或模拟飞书发送。
+控制面只有 `GET /__mock/state`、`POST /__mock/reset`、`POST /__mock/faults` 与 `PATCH /__mock/users/:open_id`；其它控制路径一律返回冻结的 404。
 
 ## HTTP 边界（FSM-06）
 
@@ -44,8 +44,8 @@
 
 - 只接受本 run 独立生成的 admin Bearer（`Authorization: Bearer <adminToken>`）。缺该 header 返回 `401 {"code":2,"msg":"mock_admin_token_missing"}`；header 存在但不是 Bearer、scheme 不对或 token 不匹配返回 `401 {"code":2,"msg":"mock_admin_token_invalid"}`。比较用摘要后的常量时间比较，不泄露 token 内容。
 - 带 `Origin` 的控制面请求返回 `403 {"code":3,"msg":"mock_control_origin_rejected"}`；任何响应都不带 CORS 头，预检请求同样拿不到 CORS 头。
-- provider token 不能访问 `/__mock/**`。本卡尚未交付的写verb（`POST /__mock/messages`、`PATCH|DELETE /__mock/users/:openId`、`POST /__mock/verify-callback`、`POST /__mock/replay`、`POST /__mock/faults`、`POST /__mock/reset`）返回冻结的 404。
-- `GET /__mock/state` 返回 `{"code":0,"data":{"users","inboxes","events","faults"}}`。`users` 是冻结的目录成员子集，`inboxes` 按 `open_id` 分组，`events` 只有投递摘要，`faults` 是故障规则；runtime 配置、token、secret 和完整 callback 正文都不在其中。
+- provider token 不能访问 `/__mock/**`。已删除的 `POST /__mock/messages`、`POST /__mock/verify-callback`、`POST /__mock/replay` 与 `/__mock/users/:open_id` 上除 `PATCH` 以外的方法返回冻结的 404（FSL-140）。
+- `GET /__mock/state` 返回 `{"code":0,"data":{"users","inboxes","faults"}}`。`users` 是冻结的目录成员子集，`inboxes` 按 `open_id` 分组，`faults` 是故障规则；状态不含事件，runtime 配置、token 和 secret 都不在其中。
 
 合成目录是固定的 fixture，不含任何真实人员数据：
 
@@ -68,7 +68,7 @@
 
 - `MockLifecycle` 维护一个 generation。`reset()` 先递增 generation，因此旧 generation 的异步完成无法写回新状态；随后取消全部已注册在途任务并等待它们结束，再逐个调用已注册 store 的重置器，只有这些都完成后才报告成功。
 - 异步任务通过 `context.commit(effect)` 写回：只有当任务没有被取消且 generation 仍是当前值时写入才会生效，否则返回 false。
-- synthetic 目录是一个已注册 store，reset 后恢复冻结初态（成员、部门、inbox、事件、故障清空）。本 run 的 App 配置与 admin token 不属于任何 store，reset 后保留。
+- synthetic 目录是一个已注册 store，reset 后恢复冻结初态（成员与其在职状态、部门复原，inbox、故障清空）。本 run 的 App 配置与 admin token 不属于任何 store，reset 后保留。
 - `POST /__mock/reset`（admin Bearer，body 为 `{}` 或无 body）执行 reset，返回 `{"code":0,"data":{"generation":N}}`。
 - 关闭与信号：SIGINT/SIGTERM 先关闭 listener 并取消已注册任务，再由 FSM-01 的 `removeRuntimeTarget` 清理 runtime 文件；调用方指定的目录永不删除。
 - IPC：由父进程以 `stdio` 里的 `ipc` 启动时，父进程关闭 IPC 通道会让本进程收到进程级 `disconnect` 事件，随后 cleanup 并以 0 退出；手工启动（没有 IPC 通道）不会因为缺少 IPC 而自动退出。
@@ -147,79 +147,43 @@
 - 成员 inbox 上限 100 条，满额时拒绝新消息：`429 {"code":6,"msg":"mock_inbox_full"}`；但既有 uuid 的同载荷重试仍返回原结果。
 - 账本保留到本 run reset 或进程结束，token 到期不释放它。消息与 uuid store 已注册到 reset，重置后 inbox 与账本都为空。
 
-## callback 签名与加密 wire codec（FSM-03）
+## 成员在职状态控制（FSL-140）
 
-本片是同步纯编码，不发网络请求、不持有在途任务；网络发送、目标与 2 秒预算由 FSM-11 首次交付。
-
-- `buildCallbackEnvelope(event, app)` 生成冻结 v2 信封：`schema:"2.0"`，`header` 含 `event_id`/`event_type`/`create_time`（毫秒 Unix 时间的十进制字符串）/`token`（本 run 的 verificationToken）/`app_id`/`tenant_key`，业务载荷在 `event`。
-- `encodeCallback(envelope, app, {encrypted})` 产出 headers 与 wire body：`Content-Type: application/json`、`X-Lark-Request-Timestamp`（Unix 秒十进制）、`X-Lark-Request-Nonce`（每次发送随机）、`X-Lark-Signature`（小写 hex）。
-- 签名 = `SHA256(UTF8(timestamp+nonce+encryptKey) || rawWireBodyBytes)`；它覆盖真正上网的字节：加密时覆盖 encrypt wrapper，明文时覆盖原始 JSON。
-- 加密：key = `SHA256(UTF8(encryptKey))`，随机 16 字节 IV，AES-256-CBC/PKCS#7；wire body 为 `{"encrypt":"<Base64(IV||ciphertext)>"}`。
-- 明文模式直接发送原始 JSON，不套 `encrypt` 包装。
-- 测试用独立 oracle 重新计算签名并解密，不 import 被测实现来证明自身兼容。
-
-## callback 目的地与投递回执（FSM-11）
-
-- `MockCallbackSender` 只向配置里冻结的 callback origin/path 投递，调用方无法用请求替换目标。
-- 不跟随 redirect：3xx 按实际状态判为失败，重定向目标不会被请求。
-- 投递结果只看实际响应状态：2xx 记成功，其它与超时都记失败。
-- 单次投递有 2 秒预算，超时即终止；同时在途上限 8，超出拒绝新投递（`429 {"code":6,"msg":"mock_callback_capacity_exceeded"}`）。
-- 事件账本上限 100 条，满额拒绝新事件且不淘汰已有记录（`429 {"code":6,"msg":"mock_event_capacity_exceeded"}`）。
-- 每次投递都通过 `startTask` 注册为任务；reset 会中止在途请求，且旧 generation 的完成不会写回新状态。
-- state 里的 callback 记录只有冻结投递摘要 `{eventId,eventType,delivered}`，不含响应正文。
-
-## p2p 消息事件与 URL 握手（FSM-12）
-
-- `POST /__mock/messages`（admin Bearer，`{openId,text,encrypted?}`）代表当前 synthetic 成员发送 `im.message.receive_v1`：只接受目录里的成员（未知 openId 返回 `404 {"code":4,"msg":"mock_user_not_found"}`），文本复用冻结的 4096 字符上限（超出 `400 {"code":1,"msg":"mock_text_too_long"}`）。
-- 事件使用冻结 v2 信封与 payload：`event.sender.sender_id.open_id`、`sender_type:"user"`、`tenant_key`，以及 `message` 的 `message_id`/`create_time`/`chat_id`/`chat_type:"p2p"`/`message_type:"text"`/`content`（JSON 文本字符串）。控制响应返回 `eventId` 与实际投递摘要，不生成 OTP 或 session。
-- `POST /__mock/verify-callback`（admin Bearer，`{encrypted?}`）发送随机 challenge 的 URL verification；只有接收端返回相同 challenge 才报告通过，否则 `503 {"code":8,"msg":"mock_callback_verification_failed"}`。这不是登录授权。
-- 两个控制请求都可显式 `encrypted:false` 走已交付的明文测试路径；缺省使用加密模式。
-- 未配置 app secret 的运行没有 callback 凭据，这两条路由返回 `503 {"code":8,"msg":"mock_callback_unavailable"}`。
-
-## 成员变更与 Contact 事件（FSM-13）
-
-- `PATCH /__mock/users/:openId`（admin Bearer，`{status:"active"|"suspended"|"resigned"}`）写入目录状态，后续分页路由与单人读取立即读到新状态，并产生 `contact.user.updated_v3`：`event.object` 是当前 User 子集，`event.old_object` 只含 `open_id` 与被改字段的旧值。
-- `DELETE /__mock/users/:openId`（admin Bearer，无 body）把成员从目录移除，并产生离职快照 `contact.user.deleted_v3`：`event.object` 为删除前 User 的 `open_id`/`user_id`/`union_id`/`name`/`mobile`/`department_ids` 加 `status={is_activated:false,is_frozen:false,is_resigned:true,is_exited:true}`，`event.old_object` 只含删除前的 `open_id`/`department_ids`。
-- 成员写先检查事件容量，满额时以 `429 {"code":6,"msg":"mock_event_capacity_exceeded"}` 拒绝且目录零变化；随后才提交目录变更并尝试 callback。callback 失败如实报告 `delivered:false`，不撤回已提交的目录事实。
-- 删除成员保留既有 inbox 消息与 uuid 归属：同一 uuid 的同载荷重试仍从账本返回原 `message_id`，即使该成员已不在目录里。
-- 未知成员返回 `404 {"code":4,"msg":"mock_user_not_found"}`，非法 status 返回 `400 {"code":1,"msg":"mock_status_invalid"}`；没有 callback 凭据的运行返回 `503 {"code":8,"msg":"mock_callback_unavailable"}`。
+- `PATCH /__mock/users/:open_id`（admin Bearer，`{status:"active"|"suspended"|"resigned"}`）只修改目标成员的在职状态，其他成员与 inbox、故障队列都不变；后续单人读取与 Directory v1 员工路由立即读到新状态。成功返回 `{"code":0,"data":{"user":…}}`。
+- 它是 engine 飞书集成测试构造不在职成员的测试控制：不发送回调、不产生事件，也不需要 app secret。
+- 同一路径的其它方法（`DELETE`、`GET`、`POST`、`PUT` 等）返回冻结的 `404 {"code":4,"msg":"not_found"}`，不改变状态。
+- 未知成员（含无法解码的路径值）返回 `404 {"code":4,"msg":"mock_user_not_found"}`，非法 status 返回 `400 {"code":1,"msg":"mock_status_invalid"}`，body 出现未定义字段按 HTTP 边界拒绝；reset 恢复冻结初态的在职状态。
 
 ## 有界 provider 故障注入（FSM-04）
 
 - `POST /__mock/faults`（admin Bearer，`{target,kind,count?,skip?}`）向本 run 的规则队列加入一条规则。target 只接受 `token`/`directory`/`user`/`message`，kind 只接受本片交付的 `429`/`403`/`500`；`count` 取 1..10（缺省 1），`skip` 取 0..10（缺省 0）。
 - 队列最多 16 条，满额时 `429 {"code":6,"msg":"mock_fault_capacity_exceeded"}`。规则按加入顺序按 target 消费：先跳过 `skip` 次，再逐次扣减 `count`，归零后移除。
-- 注入响应：403 → `{"code":3,"msg":"mock_fault_forbidden"}`；429 → `{"code":6,"msg":"mock_fault_rate_limited"}`；500 → **HTTP 500** 加 `{"code":8,"msg":"mock_provider_failure"}`（这是冻结的故障 override，code 8 的默认 503 只用于 callback 失败）。
+- 注入响应：403 → `{"code":3,"msg":"mock_fault_forbidden"}`；429 → `{"code":6,"msg":"mock_fault_rate_limited"}`；500 → **HTTP 500** 加 `{"code":8,"msg":"mock_provider_failure"}`（这是冻结的故障 override，code 8 的默认映射为 503）。
 - 只有通过各自输入/鉴权的 provider 请求才消费规则；被拒绝的请求不消耗。控制面、health 与 reset 不受故障队列影响。
 - `timeout` 与 `disconnect_after_accept` 由 FSM-19 受理：timeout 等待 1 秒后返回 `504 {"code":7,"msg":"mock_provider_timeout"}`；`disconnect_after_accept` 只对 `message` 有效，在消息与 uuid 落库后断开连接（客户端看到连接错误），同 uuid 重试从账本返回原结果、不产生第二条消息。
 - 延迟 timer 注册为任务，reset 会在其成功返回前取消它；旧 generation 的完成不会写回新状态。
 - 故障队列是已注册的 store，reset 后清空。
 
-## 有界事件重放（FSM-14）
-
-- `POST /__mock/replay`（admin Bearer，`{eventId}`）重发本 run 已投递过的事件：`event_id`、`message_id` 与业务 payload 保持不变，时间戳与 nonce 重新生成，签名仍覆盖实际 wire bytes。
-- 不存在的 eventId 返回 `404 {"code":4,"msg":"mock_event_not_found"}`；reset 之后旧事件同样按不存在处理（归档只在 run state 仍登记该 eventId 时可达）。
-- 重放不占新事件身份容量：事件账本已满时仍可重放；投递回执如实反映实际结果。
-
 ## 复用 CLI 启动夹具（FSM-15）
 
-`apps/web/tests/e2e/helpers/feishu-mock.ts` 导出 `startFeishuMock({callbackUrl?})`：
+`apps/web/tests/e2e/helpers/feishu-mock.ts` 导出 `startFeishuMock()`：
 
-- 以冻结协议直接启动真实 CLI：`spawn(process.execPath, ["--import","tsx",<repo>/apps/feishu-mock/src/index.ts], {cwd: repoRoot, shell:false, stdio:["ignore","pipe","pipe","ipc"]})`，子进程环境只有冻结的模拟器键（`FEISHU_SIMULATOR_ENABLED`/`NODE_ENV`/`FEISHU_SIMULATOR_PORT`，以及可选的 `FEISHU_SIMULATOR_CALLBACK_URL`），不接受调用方传入的 env 对象。
-- listener 与缺省自有 callback receiver 都由 port0 实际分配；调用方可传入已知 Web 的 loopback 事件 URL，此时不创建也不关闭任何调用方接收端，目标最终由 CLI 侧 FSM-22 校验并固定。
+- 以冻结协议直接启动真实 CLI：`spawn(process.execPath, ["--import","tsx",<repo>/apps/feishu-mock/src/index.ts], {cwd: repoRoot, shell:false, stdio:["ignore","pipe","pipe","ipc"]})`，子进程环境只有冻结的模拟器键（`FEISHU_SIMULATOR_ENABLED`/`NODE_ENV`/`FEISHU_SIMULATOR_PORT`），不接受调用方传入的 env 对象。
+- listener 由 port0 实际分配；FSL-140 起夹具不再创建 callback receiver，也不再设置回调地址。
 - 启动在 15 秒预算内等待 ready 行、runtime 文件与 `/health` 三者一致，任一处不符或进程早退都会失败并清理本片创建的资源。
-- 成功返回 `{baseUrl, runtime, runtimeFile, stop}`；`stop()` 先 SIGTERM 再按需 SIGKILL，关闭本片自有 receiver 并确认进程真实退出，不关闭调用方的 callback 目标。
+- 成功返回 `{baseUrl, runtime, runtimeFile, pid, reset, stop}`；`stop()` 先 SIGTERM 再按需 SIGKILL，并确认进程真实退出。
 
 ## 逐测 reset 与夹具清理（FSM-16）
 
-- 夹具的 `reset()` 把本 run 恢复到 synthetic 初态：reset 先取消旧 generation 的 callback 再应答，因此调用方只有在 reset 成功之后才清 receiver。
-- `stop()` 成功与失败共用同一条 finally 清理路径：先 reset（取消旧 callback），再关本片自有 receiver，最后停进程；任一步失败都不会被吞掉，teardown 失败会让测试失败。
+- 夹具的 `reset()` 把本 run 恢复到 synthetic 初态：reset 先取消旧 generation 的在途任务（如延迟的故障应答）再应答。
+- `stop()` 成功与失败共用同一条 finally 清理路径：先 reset，再停进程；任一步失败都不会被吞掉，teardown 失败会让测试失败。
 - 停进程最多等 3 秒 SIGTERM，未退出再 SIGKILL 并最多等 3 秒，且以真实 exit 事件判定，不用 `child.killed` 冒充退出。
-- 兜底清理只触及 ready 回执确认归本 run 的资源（runtime 文件、本片子进程、自有 receiver）；调用方的 callback 接收端与其它 run 一律不动。
+- 兜底清理只触及 ready 回执确认归本 run 的资源（runtime 文件、本片子进程）；其它 run 一律不动。
 
 ## API-only E2E 与 CI（FSM-05）
 
 - `playwright.feishu-mock.config.ts` 只收集 `feishu-mock.spec.ts`，workers 2、fullyParallel，trace/video/screenshot 全部关闭；不启动网站、浏览器或数据库。
-- `apps/web/tests/e2e/feishu-mock.spec.ts` 用真实 CLI 与真实 HTTP 跑完整协议：签发 tenant token、目录分页读取、单人读取、provider 定向消息写入成员 inbox、控制面发送 p2p 事件并由 callback 目标接收；reset 后 token/cursor/inbox/uuid/event/fault 全部清空且旧 generation 的 token 不再获准；同一 worker 内第二个实例的端口、状态与凭据互不影响。
+- `apps/web/tests/e2e/feishu-mock.spec.ts` 用真实 CLI 与真实 HTTP 跑完整协议：签发 tenant token、目录分页读取、单人读取、provider 定向消息写入成员 inbox、已删除的消息注入路由返回 404、在职状态控制只改目标成员；reset 后 token/cursor/inbox/uuid/fault 全部清空且旧 generation 的 token 不再获准；同一 worker 内第二个实例的端口、状态与凭据互不影响。
 - quality 作业不再执行 Mock API E2E 及三个 TS 文件（`playwright.feishu-mock.config.ts`、`feishu-mock.spec.ts`、`helpers/feishu-mock.ts`）的独立类型门；两者按 CMD-07 在本地运行（命令见下文「验证 Mock API E2E」）。
 
 ## 源码边界
@@ -324,28 +288,10 @@ pnpm vitest run apps/feishu-mock/tests/unit/message-input.test.ts
 pnpm vitest run apps/feishu-mock/tests/unit/messages.test.ts
 ```
 
-验证 callback 签名与加密 wire codec：
+验证控制面与成员在职状态控制：
 
 ```sh
-pnpm vitest run apps/feishu-mock/tests/unit/callback-wire.test.ts
-```
-
-验证 callback 目的地与投递回执：
-
-```sh
-pnpm vitest run apps/feishu-mock/tests/unit/callback-target.test.ts
-```
-
-验证 p2p 消息事件与 URL 握手：
-
-```sh
-pnpm vitest run apps/feishu-mock/tests/unit/message-events.test.ts
-```
-
-验证成员变更与 Contact 事件：
-
-```sh
-pnpm vitest run apps/feishu-mock/tests/unit/member-events.test.ts
+pnpm vitest run apps/feishu-mock/tests/unit/control.test.ts
 ```
 
 验证有界 provider 故障注入：
@@ -358,12 +304,6 @@ pnpm vitest run apps/feishu-mock/tests/unit/faults.test.ts
 
 ```sh
 pnpm vitest run apps/feishu-mock/tests/unit/async-faults.test.ts
-```
-
-验证有界事件重放：
-
-```sh
-pnpm vitest run apps/feishu-mock/tests/unit/replay.test.ts
 ```
 
 验证复用 CLI 启动夹具：
@@ -390,7 +330,7 @@ pnpm exec playwright test --config playwright.feishu-mock.config.ts
 
 依赖违规会使检查以非零退出，并输出命中的规则。应把违规依赖移回所属模块，跨进程调用使用 CLI、HTTP；不要通过测试目录或路径别名给生产源码开口。
 
-配置准入被拒时抛出 `MockConfigError`，其 `code` 是稳定的机器键：`simulator_disabled`（`FEISHU_SIMULATOR_ENABLED` 不是精确的 `1`）、`simulator_node_env_invalid`（`NODE_ENV` 不是 `development`/`test`）、`simulator_port_invalid`（端口不是 `0..65535` 的整数）、`simulator_callback_url_invalid`（callback 不是精确的 `http://127.0.0.1:<1..65535>/api/integrations/feishu/events`）、`simulator_runtime_file_invalid`（runtime 文件路径为空）、`simulator_unknown_key`（出现未登记的 `FEISHU_SIMULATOR_*` 键）。调用方按 `code` 分支处理，不要匹配错误文案。
+配置准入被拒时抛出 `MockConfigError`，其 `code` 是稳定的机器键：`simulator_disabled`（`FEISHU_SIMULATOR_ENABLED` 不是精确的 `1`）、`simulator_node_env_invalid`（`NODE_ENV` 不是 `development`/`test`）、`simulator_port_invalid`（端口不是 `0..65535` 的整数）、`simulator_runtime_file_invalid`（runtime 文件路径为空）、`simulator_unknown_key`（出现未登记的 `FEISHU_SIMULATOR_*` 键）。调用方按 `code` 分支处理，不要匹配错误文案。
 
 HTTP 侧的错误同样是机器键：`{"code":…,"msg":…}` 中的 `msg` 取值见上表。调用方按 `code` 分支处理，不要匹配错误文案，也不要假设响应会回显请求内容。超时后连接会被关闭，客户端需要重连而不是复用该连接。
 

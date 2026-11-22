@@ -106,7 +106,6 @@ describe("FSL-154: a flow is bound to its latest request (real Mock HTTP and Pos
   let isolated: IsolatedPostgres;
   let pool: Pool;
   let child: ChildProcess;
-  let receiver: Server;
   let proxy: Server;
   let runtimeFile: string;
   let runtime: MockRuntime;
@@ -326,13 +325,6 @@ describe("FSL-154: a flow is bound to its latest request (real Mock HTTP and Pos
     // eslint-disable-next-line @typescript-eslint/ban-ts-comment
     // @ts-ignore TS6059 only: the borrowed module is outside the engine rootDir.
     generateCode = (await import("../../../../auth/src/feishu-login/code")).generateFeishuLoginCode;
-    receiver = createServer((request, response) => {
-      request.resume();
-      request.on("end", () => response.end("{}"));
-    });
-    await new Promise<void>((resolve) => receiver.listen(0, "127.0.0.1", resolve));
-    const address = receiver.address();
-    if (!address || typeof address === "string") throw new Error("missing fixture receiver");
     child = spawn(process.execPath, ["--import", "tsx", join(ROOT, "apps/feishu-mock/src/index.ts")], {
       cwd: ROOT,
       stdio: ["ignore", "pipe", "pipe", "ipc"],
@@ -341,7 +333,6 @@ describe("FSL-154: a flow is bound to its latest request (real Mock HTTP and Pos
         NODE_ENV: "test",
         FEISHU_SIMULATOR_ENABLED: "1",
         FEISHU_SIMULATOR_PORT: "0",
-        FEISHU_SIMULATOR_CALLBACK_URL: "http://127.0.0.1:" + address.port + "/api/integrations/feishu/events",
       },
     });
     child.stderr?.resume();
@@ -462,13 +453,6 @@ describe("FSL-154: a flow is bound to its latest request (real Mock HTTP and Pos
       if (proxy) {
         proxy.closeAllConnections();
         await new Promise<void>((resolve, reject) => proxy.close((error) => (error ? reject(error) : resolve())));
-      }
-    } catch (error) {
-      errors.push(error);
-    }
-    try {
-      if (receiver) {
-        await new Promise<void>((resolve, reject) => receiver.close((error) => (error ? reject(error) : resolve())));
       }
     } catch (error) {
       errors.push(error);

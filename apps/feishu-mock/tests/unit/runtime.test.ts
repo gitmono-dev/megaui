@@ -124,7 +124,8 @@ describe("mock CLI runtime (FSM-01)", () => {
     const runtime = JSON.parse(readFileSync(line.runtimeFile, "utf8")) as MockRuntime;
     expect(runtime.schemaVersion).toBe(MOCK_RUNTIME_SCHEMA_VERSION);
     expect(runtime.baseUrl).toBe(line.baseUrl);
-    expect(runtime.callbackUrl).toBe("http://127.0.0.1:3000/api/integrations/feishu/events");
+    // FSL-140: the mock sends no callbacks, so the runtime carries no callback url.
+    expect(runtime).not.toHaveProperty("callbackUrl");
     expect(runtime.appId).toBe(MOCK_APP_ID);
     expect(runtime.tenantKey).toBe(MOCK_TENANT_KEY);
     for (const secret of [
@@ -147,7 +148,6 @@ describe("mock CLI runtime (FSM-01)", () => {
     ] as const) {
       expect(readyLine).not.toContain(runtime[secret]);
     }
-    expect(readyLine).not.toContain(runtime.callbackUrl);
     child.kill("SIGTERM");
   });
 
@@ -295,7 +295,7 @@ describe("mock CLI runtime (FSM-01)", () => {
     }
   });
 
-  it("does not echo a rejected callback url to stderr", async () => {
+  it("refuses the retired callback url key without echoing its value (FSL-140)", async () => {
     const secret = "super-secret-password";
     const { child, ready, stderr } = startCli({
       FEISHU_SIMULATOR_ENABLED: "1",
@@ -306,7 +306,7 @@ describe("mock CLI runtime (FSM-01)", () => {
     ready.catch(() => undefined);
     const code = await waitForExit(child);
     expect(code).not.toBe(0);
-    expect(stderr()).toContain("simulator_callback_url_invalid");
+    expect(stderr()).toContain("simulator_unknown_key");
     expect(stderr()).not.toContain(secret);
   });
 
@@ -405,7 +405,6 @@ describe("mock CLI runtime (FSM-01)", () => {
       const runtime = {
         schemaVersion: MOCK_RUNTIME_SCHEMA_VERSION,
         baseUrl: "http://127.0.0.1:19400",
-        callbackUrl: "http://127.0.0.1:3000/api/integrations/feishu/events",
         appId: MOCK_APP_ID,
         tenantKey: MOCK_TENANT_KEY,
         ...createRunSecrets(),

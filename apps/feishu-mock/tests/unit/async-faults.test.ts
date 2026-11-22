@@ -166,7 +166,9 @@ describe("asynchronous fault admission and cancellation (FSM-19)", () => {
     const result = await pending;
     expect(Date.now() - started).toBeLessThan(MOCK_FAULT_TIMEOUT_DELAY_MS);
     expect("status" in result && result.status).toBe(504);
-    expect(listener!.state.events).toEqual([]);
+    // The cancelled delivery left nothing behind, and the state keeps no event ledger (FSL-140).
+    expect(await inboxSize()).toBe(0);
+    expect(listener!.state).not.toHaveProperty("events");
   }, 15_000);
 
   it("applies the timeout fault to every provider target", async () => {

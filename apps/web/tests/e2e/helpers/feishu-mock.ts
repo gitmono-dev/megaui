@@ -1,13 +1,11 @@
 /**
  * FSM-15：复用 CLI 启动夹具。
  *
- * 直接以冻结的 Node/tsx/IPC 协议启动真实 CLI：listener 与缺省自有 callback
- * receiver 都由 port0 实际分配；调用方可传入已知 Web 的 loopback 事件 URL，
- * 此时不创建也不关闭任何调用方接收端。参数只映射到唯一的
- * `FEISHU_SIMULATOR_CALLBACK_URL`，目标最终由 CLI 侧 FSM-22 校验并固定。
+ * 直接以冻结的 Node/tsx/IPC 协议启动真实 CLI：listener 由 port0 实际分配。
+ * FSL-140 起 Mock 不再发送回调，夹具不再创建 callback receiver，也不再设置
+ * `FEISHU_SIMULATOR_CALLBACK_URL`（该键已退场，CLI 以 `simulator_unknown_key` 拒绝）。
  */
 import { spawn, type ChildProcess } from "node:child_process";
-import { createServer, type Server } from "node:http";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
@@ -30,14 +28,12 @@ function findRepoRoot(): string {
 
 const REPO_ROOT = findRepoRoot();
 const CLI_ENTRY = resolve(REPO_ROOT, "apps/feishu-mock/src/index.ts");
-const CALLBACK_PATH = "/api/integrations/feishu/events";
 const STARTUP_BUDGET_MS = 15_000;
 const STOP_GRACE_MS = 3_000;
 
 export interface FeishuMockRuntimeReceipt {
   schemaVersion: number;
   baseUrl: string;
-  callbackUrl: string;
   appId: string;
   tenantKey: string;
   adminToken: string;
@@ -54,8 +50,8 @@ export interface StartedFeishuMock {
   /**
    * Puts the run back into its synthetic initial state.
    *
-   * The reset cancels the callbacks of the previous generation before it
-   * answers, so the caller may only clear the receiver afterwards.
+   * The reset cancels the in-flight tasks of the previous generation before it
+   * answers.
    */
   reset(): Promise<void>;
   /** Releases everything this slice created, in one path for success and failure. */
@@ -80,21 +76,16 @@ export class FeishuMockStartError extends Error {
 /**
  * Starts the real CLI.
  *
- * Only the frozen simulator keys reach the child, the listener and the own
- * callback receiver are both allocated on port 0, and the ready line, the
- * runtime file and the health probe have to agree within the startup budget.
+ * Only the frozen simulator keys reach the child, the listener is allocated
+ * on port 0, and the ready line, the runtime file and the health probe have to
+ * agree within the startup budget.
  */
-export async function startFeishuMock(
-  options: { callbackUrl?: string } = {},
-): Promise<StartedFeishuMock> {
-  const receiver = options.callbackUrl === undefined ? await startReceiver() : undefined;
-  const callbackUrl = options.callbackUrl ?? receiver?.url;
+export async function startFeishuMock(): Promise<StartedFeishuMock> {
   const env: NodeJS.ProcessEnv = {
     FEISHU_SIMULATOR_ENABLED: "1",
     NODE_ENV: "test",
     FEISHU_SIMULATOR_PORT: "0",
   };
-  if (callbackUrl !== undefined) env.FEISHU_SIMULATOR_CALLBACK_URL = callbackUrl;
 
   const child = spawn(process.execPath, ["--import", "tsx", CLI_ENTRY], {
     cwd: REPO_ROOT,
@@ -123,34 +114,17 @@ export async function startFeishuMock(
       if (stopped) return;
       stopped = true;
       try {
-        // The old callbacks are cancelled by the reset before the receiver is
-        // cleared; a failed reset must not be hidden by the cleanup.
+        // A failed reset must not be hidden by the cleanup.
         await reset();
       } finally {
-        await closeReceiver(receiver);
         await stopProcess(child);
       }
     };
     return { baseUrl: ready.baseUrl, runtime, runtimeFile: ready.runtimeFile, pid: child.pid, reset, stop };
   } catch (error) {
     await stopProcess(child);
-    await closeReceiver(receiver);
     throw error;
   }
-}
-
-async function startReceiver(): Promise<{ url: string; server: Server }> {
-  const server = createServer((request, response) => {
-    request.resume();
-    request.on("end", () => {
-      response.statusCode = 200;
-      response.end("{}");
-    });
-  });
-  await new Promise<void>((resolvePromise) => server.listen(0, "127.0.0.1", () => resolvePromise()));
-  const address = server.address();
-  const port = typeof address === "object" && address !== null ? address.port : 0;
-  return { url: `http://127.0.0.1:${port}${CALLBACK_PATH}`, server };
 }
 
 function waitForReady(child: ChildProcess): Promise<ReadyLine> {
@@ -231,14 +205,6 @@ async function stopProcess(child: ChildProcess): Promise<void> {
     // A killed flag is not an exit; the teardown has to fail loudly.
     throw new FeishuMockStartError("mock_start_exited", "cli did not exit after SIGKILL");
   }
-}
-
-async function closeReceiver(receiver: { server: Server } | undefined): Promise<void> {
-  if (receiver === undefined) return;
-  await new Promise<void>((resolvePromise) => {
-    receiver.server.close(() => resolvePromise());
-    receiver.server.closeAllConnections?.();
-  });
 }
 
 function within(promise: Promise<void>, ms: number): Promise<boolean> {

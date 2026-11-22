@@ -27,12 +27,11 @@ import {
   type MockHttpError,
 } from "./http";
 import { MockLifecycle } from "./lifecycle";
-import { MockCallbackSender, type MockCallbackApp } from "./callbacks";
 import { MockCursorStore } from "./directory";
 import { MockFaultStore } from "./faults";
 import { MockMessageStore } from "./messages";
 import { handleProviderRequest, MockTokenStore, MOCK_PROVIDER_PREFIX } from "./provider";
-import { createMockState, MOCK_APP_ID, MOCK_TENANT_KEY, resetMockState, type MockState } from "./state";
+import { createMockState, MOCK_APP_ID, resetMockState, type MockState } from "./state";
 
 export interface MockListener {
   baseUrl: string;
@@ -56,9 +55,12 @@ export interface MockListenerOptions {
    * it.
    */
   appSecret?: string;
-  /** This run's verification token, written into every callback envelope. */
+  /**
+   * Accepted for compatibility with existing callers and ignored: the mock
+   * sends no callbacks since FSL-140.
+   */
   verificationToken?: string;
-  /** This run's encrypt key, used for the callback wire. */
+  /** Accepted for compatibility with existing callers and ignored (FSL-140). */
   encryptKey?: string;
 }
 
@@ -104,27 +106,7 @@ export async function startMockListener(
   const faults = new MockFaultStore(state);
   // The fault queue is a store as well, so a reset empties it.
   lifecycle.registerStore({ name: "provider-faults", reset: () => faults.reset() });
-  // Callbacks go to the frozen callback url with this run's credentials; a run
-  // started without an app secret cannot sign anything, so the control routes
-  // that need it answer the frozen callback failure.
-  const callbackApp: MockCallbackApp =
-    options.appSecret === undefined
-      ? { appId: MOCK_APP_ID, tenantKey: MOCK_TENANT_KEY, verificationToken: "", encryptKey: "" }
-      : {
-          appId: MOCK_APP_ID,
-          tenantKey: MOCK_TENANT_KEY,
-          verificationToken: options.verificationToken ?? "",
-          encryptKey: options.encryptKey ?? options.appSecret,
-        };
-  const callbackSender = new MockCallbackSender({
-    destination: config.callbackUrl,
-    app: callbackApp,
-    state,
-    lifecycle,
-  });
-  const controlCallbacks =
-    options.appSecret === undefined ? undefined : { app: callbackApp, sender: callbackSender };
-  const controlDeps = { callbacks: controlCallbacks, faults };
+  const controlDeps = { faults };
   const states = new WeakMap<Socket, SocketState>();
   const server = createServer((request, response) => {
     const socketState = states.get(request.socket);

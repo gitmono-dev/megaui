@@ -81,7 +81,6 @@ describe("mock run lifecycle (FSM-08)", () => {
     listener = await startMockListener(CONFIG, { adminToken: ADMIN_TOKEN });
     const state = listener.state;
     state.users = [];
-    state.events.push({ eventId: "e1", eventType: "im.message.receive_v1", delivered: true });
     state.inboxes.set("ou_mock_alice", [{ messageId: "m1", receiveId: "ou_mock_alice", msgType: "text", content: "{}", createTime: "1000000" }]);
 
     const response = await call(listener.baseUrl, "/__mock/reset", {
@@ -98,8 +97,9 @@ describe("mock run lifecycle (FSM-08)", () => {
       SYNTHETIC_USERS.map((user) => user.open_id),
     );
     expect(state.users[0]?.department_ids).toEqual([MOCK_DEPARTMENT_ENGINEERING]);
-    expect(state.events).toEqual([]);
     expect(state.inboxes.size).toBe(0);
+    // FSL-140: the state keeps no event ledger, before or after a reset.
+    expect(state).not.toHaveProperty("events");
   });
 
   it("keeps the run configuration across a reset", async () => {

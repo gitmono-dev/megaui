@@ -1,7 +1,9 @@
-import { request, type IncomingHttpHeaders } from "node:http";
+import { subscribe, unsubscribe } from "node:diagnostics_channel";
+import { request, type ClientRequest, type IncomingHttpHeaders } from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { resolveMockConfig } from "../../src/config";
+import { MOCK_CONTROL_DELIVERED_PATHS } from "../../src/control";
 import { startMockListener, type MockListener } from "../../src/server";
 import {
   createMockState,
@@ -150,7 +152,8 @@ describe("mock control plane (FSM-07)", () => {
     expect(response.status).toBe(200);
     const payload = JSON.parse(response.body) as { code: number; data: Record<string, unknown> };
     expect(payload.code).toBe(0);
-    expect(Object.keys(payload.data).sort()).toEqual(["events", "faults", "inboxes", "users"]);
+    // FSL-140: the event ledger is gone from the state view.
+    expect(Object.keys(payload.data).sort()).toEqual(["faults", "inboxes", "users"]);
     const user = (payload.data.users as Record<string, unknown>[])[0] ?? {};
     expect(Object.keys(user).sort()).toEqual([
       "department_ids",
@@ -238,5 +241,249 @@ describe("mock control plane (FSM-07)", () => {
     });
     expect(unknown.status).toBe(404);
     expect(JSON.parse(unknown.body)).toEqual({ code: 4, msg: "not_found" });
+  });
+});
+
+const APP_SECRET = "mock-app-secret-for-the-control-plane";
+
+interface StateView {
+  users: { open_id: string; status: Record<string, boolean> }[];
+  inboxes: Record<string, unknown[]>;
+  faults: unknown[];
+}
+
+async function stateView(baseUrl: string): Promise<StateView> {
+  const response = await call(baseUrl, "/__mock/state", { headers: admin() });
+  expect(response.status).toBe(200);
+  return (JSON.parse(response.body) as { data: StateView }).data;
+}
+
+/**
+ * Records every outgoing HTTP request this process starts, through node:http
+ * and through fetch, so a test can prove the mock itself sends nothing.
+ */
+function recordOutgoing(): { targets: string[]; stop: () => void } {
+  const targets: string[] = [];
+  const onHttp = (message: unknown): void => {
+    const outgoing = (message as { request: ClientRequest }).request;
+    targets.push(`${outgoing.method} ${String(outgoing.getHeader("host"))}${outgoing.path}`);
+  };
+  const onFetch = (message: unknown): void => {
+    const outgoing = (message as { request: { method: string; origin: string; path: string } }).request;
+    targets.push(`${outgoing.method} ${outgoing.origin}${outgoing.path}`);
+  };
+  subscribe("http.client.request.start", onHttp);
+  subscribe("undici:request:create", onFetch);
+  return {
+    targets,
+    stop: () => {
+      unsubscribe("http.client.request.start", onHttp);
+      unsubscribe("undici:request:create", onFetch);
+    },
+  };
+}
+
+describe("control routes after the callback removal (FSL-140)", () => {
+  it("AC2 delivers exactly state, reset, faults and the member status control", async () => {
+    expect([...MOCK_CONTROL_DELIVERED_PATHS].sort()).toEqual([
+      "/__mock/faults",
+      "/__mock/reset",
+      "/__mock/state",
+      "/__mock/users/",
+    ]);
+    listener = await startMockListener(CONFIG, { adminToken: ADMIN_TOKEN, appSecret: APP_SECRET });
+    expect((await call(listener.baseUrl, "/__mock/state", { headers: admin() })).status).toBe(200);
+    const reset = await call(listener.baseUrl, "/__mock/reset", { method: "POST", headers: admin(), body: "{}" });
+    expect(reset.status).toBe(200);
+    const fault = await call(listener.baseUrl, "/__mock/faults", {
+      method: "POST",
+      headers: admin(),
+      body: JSON.stringify({ target: "token", kind: "500", count: 1 }),
+    });
+    expect(fault.status).toBe(200);
+    const patched = await call(listener.baseUrl, "/__mock/users/ou_mock_dave", {
+      method: "PATCH",
+      headers: admin(),
+      body: JSON.stringify({ status: "active" }),
+    });
+    expect(patched.status).toBe(200);
+  });
+
+  it("AC2 answers the frozen 404 for message injection, callback verification and replay", async () => {
+    listener = await startMockListener(CONFIG, {
+      adminToken: ADMIN_TOKEN,
+      appSecret: APP_SECRET,
+      verificationToken: "vt",
+      encryptKey: "ek",
+    });
+    const before = await stateView(listener.baseUrl);
+    const retired: [string, string][] = [
+      ["/__mock/messages", JSON.stringify({ openId: "ou_mock_alice", text: "hello" })],
+      ["/__mock/verify-callback", JSON.stringify({ encrypted: false })],
+      ["/__mock/replay", JSON.stringify({ eventId: "evt_1" })],
+    ];
+    for (const [path, body] of retired) {
+      for (const method of ["POST", "GET"]) {
+        const response = await call(listener.baseUrl, path, {
+          method,
+          headers: admin(),
+          body: method === "POST" ? body : undefined,
+        });
+        expect(response.status, `${method} ${path}`).toBe(404);
+        expect(JSON.parse(response.body), `${method} ${path}`).toEqual({ code: 4, msg: "not_found" });
+      }
+    }
+    expect(await stateView(listener.baseUrl)).toEqual(before);
+  });
+
+  it("AC3 PATCH changes only the target member's status", async () => {
+    listener = await startMockListener(CONFIG, { adminToken: ADMIN_TOKEN, appSecret: APP_SECRET });
+    const before = await stateView(listener.baseUrl);
+    const response = await call(listener.baseUrl, "/__mock/users/ou_mock_dave", {
+      method: "PATCH",
+      headers: admin(),
+      body: JSON.stringify({ status: "suspended" }),
+    });
+    expect(response.status).toBe(200);
+    const payload = JSON.parse(response.body) as { code: number; data: Record<string, unknown> };
+    expect(payload.code).toBe(0);
+    // The receipt carries the member and nothing about events or deliveries.
+    expect(Object.keys(payload.data)).toEqual(["user"]);
+    expect(payload.data.user).toMatchObject({ open_id: "ou_mock_dave", status: statusFlags("suspended") });
+
+    const after = await stateView(listener.baseUrl);
+    const expected = before.users.map((user) =>
+      user.open_id === "ou_mock_dave" ? { ...user, status: statusFlags("suspended") } : user,
+    );
+    expect(after.users).toEqual(expected);
+    expect(after.inboxes).toEqual(before.inboxes);
+    expect(after.faults).toEqual(before.faults);
+
+    for (const status of ["resigned", "active"] as const) {
+      const next = await call(listener.baseUrl, "/__mock/users/ou_mock_dave", {
+        method: "PATCH",
+        headers: admin(),
+        body: JSON.stringify({ status }),
+      });
+      expect(next.status).toBe(200);
+      const view = await stateView(listener.baseUrl);
+      expect(view.users.find((user) => user.open_id === "ou_mock_dave")?.status).toEqual(statusFlags(status));
+      expect(view.users.filter((user) => user.open_id !== "ou_mock_dave")).toEqual(
+        before.users.filter((user) => user.open_id !== "ou_mock_dave"),
+      );
+    }
+  });
+
+  it("AC3 PATCH works without callback credentials and the reset restores the status", async () => {
+    listener = await startMockListener(CONFIG, { adminToken: ADMIN_TOKEN });
+    const response = await call(listener.baseUrl, "/__mock/users/ou_mock_bob", {
+      method: "PATCH",
+      headers: admin(),
+      body: JSON.stringify({ status: "resigned" }),
+    });
+    expect(response.status).toBe(200);
+    expect(listener.state.users.find((user) => user.open_id === "ou_mock_bob")?.status).toEqual(statusFlags("resigned"));
+    await call(listener.baseUrl, "/__mock/reset", { method: "POST", headers: admin(), body: "{}" });
+    expect(listener.state.users.find((user) => user.open_id === "ou_mock_bob")?.status).toEqual(statusFlags("active"));
+  });
+
+  it("AC4 PATCH sends no callback and records no event", async () => {
+    listener = await startMockListener(CONFIG, {
+      adminToken: ADMIN_TOKEN,
+      appSecret: APP_SECRET,
+      verificationToken: "vt",
+      encryptKey: "ek",
+    });
+    const own = `127.0.0.1:${listener.port}`;
+    const outgoing = recordOutgoing();
+    try {
+      for (const status of ["suspended", "resigned", "active"]) {
+        const response = await call(listener.baseUrl, "/__mock/users/ou_mock_carol", {
+          method: "PATCH",
+          headers: admin(),
+          body: JSON.stringify({ status }),
+        });
+        expect(response.status).toBe(200);
+      }
+      // Give a stray asynchronous delivery the chance to start.
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
+    } finally {
+      outgoing.stop();
+    }
+    // The only requests started in this process are the test's own calls to the listener.
+    expect(outgoing.targets.length).toBeGreaterThan(0);
+    for (const target of outgoing.targets) {
+      expect(target).toMatch(new RegExp(`^PATCH ${own.replace(/\./g, "\\.")}/__mock/users/ou_mock_carol$`));
+    }
+    const view = await stateView(listener.baseUrl);
+    expect(Object.keys(view).sort()).toEqual(["faults", "inboxes", "users"]);
+    expect(listener.state).not.toHaveProperty("events");
+  });
+
+  it("answers the frozen 404 for every other method on the member path and changes nothing", async () => {
+    listener = await startMockListener(CONFIG, { adminToken: ADMIN_TOKEN, appSecret: APP_SECRET });
+    const before = await stateView(listener.baseUrl);
+    for (const method of ["DELETE", "GET", "POST", "PUT"]) {
+      const response = await call(listener.baseUrl, "/__mock/users/ou_mock_carol", {
+        method,
+        headers: admin(),
+        body: method === "GET" || method === "DELETE" ? undefined : JSON.stringify({ status: "resigned" }),
+      });
+      expect(response.status, method).toBe(404);
+      expect(JSON.parse(response.body), method).toEqual({ code: 4, msg: "not_found" });
+    }
+    const bare = await call(listener.baseUrl, "/__mock/users", {
+      method: "PATCH",
+      headers: admin(),
+      body: JSON.stringify({ status: "resigned" }),
+    });
+    expect(bare.status).toBe(404);
+    expect(JSON.parse(bare.body)).toEqual({ code: 4, msg: "not_found" });
+    expect(await stateView(listener.baseUrl)).toEqual(before);
+    expect(listener.state.users.map((user) => user.open_id)).toContain("ou_mock_carol");
+  });
+
+  it("refuses an unknown member, an invalid status, an unknown field and a missing admin bearer", async () => {
+    listener = await startMockListener(CONFIG, { adminToken: ADMIN_TOKEN, appSecret: APP_SECRET });
+    const before = await stateView(listener.baseUrl);
+    const unknown = await call(listener.baseUrl, "/__mock/users/ou_mock_unknown", {
+      method: "PATCH",
+      headers: admin(),
+      body: JSON.stringify({ status: "suspended" }),
+    });
+    expect(unknown.status).toBe(404);
+    expect(JSON.parse(unknown.body)).toEqual({ code: 4, msg: "mock_user_not_found" });
+
+    const malformed = await call(listener.baseUrl, "/__mock/users/%E0%A4%A", {
+      method: "PATCH",
+      headers: admin(),
+      body: JSON.stringify({ status: "suspended" }),
+    });
+    expect(malformed.status).toBe(404);
+    expect(JSON.parse(malformed.body)).toEqual({ code: 4, msg: "mock_user_not_found" });
+
+    const invalid = await call(listener.baseUrl, "/__mock/users/ou_mock_alice", {
+      method: "PATCH",
+      headers: admin(),
+      body: JSON.stringify({ status: "deleted" }),
+    });
+    expect(invalid.status).toBe(400);
+    expect(JSON.parse(invalid.body)).toEqual({ code: 1, msg: "mock_status_invalid" });
+
+    const extra = await call(listener.baseUrl, "/__mock/users/ou_mock_alice", {
+      method: "PATCH",
+      headers: admin(),
+      body: JSON.stringify({ status: "suspended", notify: true }),
+    });
+    expect(extra.status).toBe(400);
+
+    const guest = await call(listener.baseUrl, "/__mock/users/ou_mock_alice", {
+      method: "PATCH",
+      body: JSON.stringify({ status: "suspended" }),
+    });
+    expect(guest.status).toBe(401);
+    expect(JSON.parse(guest.body)).toEqual({ code: 2, msg: "mock_admin_token_missing" });
+
+    expect(await stateView(listener.baseUrl)).toEqual(before);
   });
 });
