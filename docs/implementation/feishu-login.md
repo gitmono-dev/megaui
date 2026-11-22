@@ -396,7 +396,7 @@ Web（`apps/web/lib/auth.ts`，FSL-150）只在 `resolveAuthMode`（见「配置
 503 时验证码已在校验事务内消费（同一验证码再次提交返回 401），首次登录的用户与绑定也已随事务提交：用户重新请求验证码（同一 flow 即可）后以新验证码登录，校验事务找到该绑定，不再建号。
 
 
-`packages/auth/src/feishu-login/verify.test.ts` 以 `createAuth` 加一次性 PG、预置用户与绑定构造，验证码经签发存储的 `reserve` / `activate` 写入，经 `auth.handler` 断言：正确验证码返回 200；响应设置会话 Cookie 且以该 Cookie 调用 `get-session` 得到绑定用户；`feishu_login_sessions` 恰有该会话一行；会话的四个企业字段为空、有效期为 8 小时；已消费的验证码再次提交返回 401 `{ "status": "invalid" }`；错码返回 401 且该行 `failed_attempts` 逐次加 1；第 5 次错码后该行为 `void` 且四个敏感字段为空，此后正确验证码返回 401；已过期的验证码返回 401 且该行既不被消费也不计数；无 flow Cookie 与该 flow 无验证码时返回同一 401；无绑定且同邮箱本地用户已存在（建号冲突）时返回 409 `{ "status": "account_conflict" }`、验证码行为 `consumed`（FSL-152）；同一验证码的两个并发正确请求恰好一个返回 200、只签发一个会话；格式非法时返回 400；未传入 `verify` 选项时 verify 为 404。`packages/database/src/feishu-login-store.integration.test.ts` 断言消费后该行为 `consumed`、四个敏感字段为空且其余各列不变；错码只使 `failed_attempts` 加 1、其余各列不变，第 5 次错码在其余各列不变的前提下置为 `void` 并清空四个敏感字段，之后正确与错误验证码都不改变该行；已达上限的 `active` 行、已过期、已消费、非最新行（含锁定之后才出现更新的预约行）与无绑定（未传入 `newUserId`）时该行不变（已过期的 `active` 行另断言事务内各语句返回的结果中四个敏感字段均为空）；另以在读取邮箱、open_id 与姓名的语句之前于同一事务内使本行到期的方式，断言该语句不返回行、结果为 401 对应的 `invalid`。并发用例使用两个连接池：第一个连接在锁定并比较之后、消费之前暂停，断言另一连接池的连接在锁定语句上等待行锁，放行后恰好一方消费、另一方为 `invalid` 且不计数；另有十个同时提交恰好一个消费、七个同时提交的错码使该行停在 5 次并作废。
+`packages/auth/src/feishu-login/verify.test.ts` 以 `createAuth` 加一次性 PG、预置用户与绑定构造，验证码经签发存储的 `reserve` / `activate` 写入，经 `auth.handler` 断言：正确验证码返回 200；响应设置会话 Cookie 且以该 Cookie 调用 `get-session` 得到绑定用户；`feishu_login_sessions` 恰有该会话一行；会话有效期为 8 小时，且 `session` 表已没有四个企业列（经 `information_schema.columns` 断言列集合，FSL-168）；已消费的验证码再次提交返回 401 `{ "status": "invalid" }`；错码返回 401 且该行 `failed_attempts` 逐次加 1；第 5 次错码后该行为 `void` 且四个敏感字段为空，此后正确验证码返回 401；已过期的验证码返回 401 且该行既不被消费也不计数；无 flow Cookie 与该 flow 无验证码时返回同一 401；无绑定且同邮箱本地用户已存在（建号冲突）时返回 409 `{ "status": "account_conflict" }`、验证码行为 `consumed`（FSL-152）；同一验证码的两个并发正确请求恰好一个返回 200、只签发一个会话；格式非法时返回 400；未传入 `verify` 选项时 verify 为 404。`packages/database/src/feishu-login-store.integration.test.ts` 断言消费后该行为 `consumed`、四个敏感字段为空且其余各列不变；错码只使 `failed_attempts` 加 1、其余各列不变，第 5 次错码在其余各列不变的前提下置为 `void` 并清空四个敏感字段，之后正确与错误验证码都不改变该行；已达上限的 `active` 行、已过期、已消费、非最新行（含锁定之后才出现更新的预约行）与无绑定（未传入 `newUserId`）时该行不变（已过期的 `active` 行另断言事务内各语句返回的结果中四个敏感字段均为空）；另以在读取邮箱、open_id 与姓名的语句之前于同一事务内使本行到期的方式，断言该语句不返回行、结果为 401 对应的 `invalid`。并发用例使用两个连接池：第一个连接在锁定并比较之后、消费之前暂停，断言另一连接池的连接在锁定语句上等待行锁，放行后恰好一方消费、另一方为 `invalid` 且不计数；另有十个同时提交恰好一个消费、七个同时提交的错码使该行停在 5 次并作废。
 
 ### 建号
 
@@ -493,7 +493,7 @@ Mega2 经 `GET /api/auth/get-session` 读取当前会话，并按 `WebsiteAuthUs
 
 ## 公开资料
 
-成员、聊天、cls、文档评论、文档、议题、发布七个共享服务经 `packages/engine/src/services/public-profile.ts` 的 `resolvePublicProfiles` 取用户的公开资料行（`id`、`username`、`displayName`、可选的 `avatarUrl`、`avatarInitials`、`avatarColor`）。对在 `feishu_identities` 中有绑定（任一应用）的用户，该行按以下规则生成（FSL-153），且不论该用户是否另有企业资料都按此规则：
+成员、聊天、cls、文档评论、文档、议题、发布七个共享服务经 `packages/engine/src/services/public-profile.ts` 的 `resolvePublicProfiles` 取用户的公开资料行（`id`、`username`、`displayName`、可选的 `avatarUrl`、`avatarInitials`、`avatarColor`）。对在 `feishu_identities` 中有绑定（任一应用）的用户，该行按以下规则生成（FSL-153）：
 
 - `username` 为用户 ID（不透明，不从邮箱派生）。
 - `displayName`：记 N 为 `user.name` 转小写、L 为登录邮箱（`user.email`）最后一个 `@` 之前的完整本地部分转小写；N 含 `@` 或 N 含子串 L 时为用户 ID，否则为按原样存储的 `user.name`（不去除首尾空白；通讯录姓名为空字符串时显示名同样为空字符串）。只比较完整本地部分，不比较域名或本地部分的片段：姓名 `Chen Qi` 对登录邮箱 `chen.qi@corp.example` 保留，姓名 `Zhang.San Ops` 对 `zhang.san@corp.example` 改为用户 ID。
@@ -505,9 +505,9 @@ Mega2 经 `GET /api/auth/get-session` 读取当前会话，并按 `WebsiteAuthUs
 
 没有飞书绑定的用户一律按 legacy 规则：以邮箱第一个 `@` 前的前缀为用户名、以去除首尾空白后的 `user.name` 为显示名（为空时取用户名），`user.image` 非空时输出 `avatarUrl`，`avatarColor` 恒为 `#64748b`。
 
-**旧企业用户的变化（FSL-136）：** 公开资料查询不再联表 `enterprise_profile`（也不读取其它企业表）。仍有企业资料行的旧企业用户（只存在于 dev/test，自 FSL-132 起已不能登录）因此改按上述 legacy 规则投影：用户名由企业登录名 `login_name` 改为其兼容邮箱 `u_<hash>@identity.invalid` 的不透明前缀 `u_<hash>`，显示名由企业资料的显示名改为去除首尾空白后的 `user.name`（为空时取该前缀）；修改企业资料（显示名、通知邮箱）或企业身份状态不再影响公开资料。对同一时点的数据库状态，legacy 用户与飞书用户的公开资料按与此前相同的规则生成；公开资料行的字段不扩大。原先第二次读取邮箱的查询随企业联表一并删除，此前该查询带来的并发情形不再存在：两次读取之间用户被删除时，旧实现仍返回首次读取的行（飞书用户的显示名回退为用户 ID），现在一次查询读到该用户即按其邮箱生成、读不到即不返回该用户（调用方按未知历史作者处理）；两次读取之间邮箱或姓名改变时也不再混合两个时点的数据。
+**旧企业用户的变化（FSL-136）：** 公开资料查询不再联表 `enterprise_profile`（也不读取其它企业表）。仍有企业资料行的旧企业用户（只存在于 dev/test，自 FSL-132 起已不能登录）因此改按上述 legacy 规则投影：用户名由企业登录名 `login_name` 改为其兼容邮箱 `u_<hash>@identity.invalid` 的不透明前缀 `u_<hash>`，显示名由企业资料的显示名改为去除首尾空白后的 `user.name`（为空时取该前缀）；修改企业资料（显示名、通知邮箱）或企业身份状态不再影响公开资料。自 FSL-168 起企业表已删除（见「数据」的「企业表已删除」），这些用户的 `user` 行与兼容邮箱保留，仍按 legacy 规则投影。对同一时点的数据库状态，legacy 用户与飞书用户的公开资料按与此前相同的规则生成；公开资料行的字段不扩大。原先第二次读取邮箱的查询随企业联表一并删除，此前该查询带来的并发情形不再存在：两次读取之间用户被删除时，旧实现仍返回首次读取的行（飞书用户的显示名回退为用户 ID），现在一次查询读到该用户即按其邮箱生成、读不到即不返回该用户（调用方按未知历史作者处理）；两次读取之间邮箱或姓名改变时也不再混合两个时点的数据。
 
-`packages/engine/src/services/public-profile.test.ts` 以一次性 PG 断言公开资料行的全部字段（`toEqual`，飞书用户另断言无 `avatarUrl`）：飞书用户分姓名与邮箱无关、姓名等于邮箱、姓名含完整本地部分（大小写不同）、姓名只含域名片段（保留，且 `user.image` 非空时仍无 `avatarUrl`）、姓名只含本地部分的片段（保留）五种，另有用户 ID 偶然包含本地部分（用户名仍为用户 ID）、首字符拼出本地部分（缩写为 `A`、姓名保留）、本地部分为 `u` 且姓名为空（缩写为空字符串）、本地部分含于 `#64748b`（颜色为 `#525252`）、本地部分为单个字母且等于用户 ID 的首字符（显示名为用户 ID、缩写为其首字符）、姓名带首尾空白（原样保留）、姓名为空字符串与另有企业资料的飞书用户各一例，并断言这些行中（最后一种取用户 ID 首字符的情形除外）不等于用户 ID 的字段值不含 `@` 与（不区分大小写的）完整本地部分；legacy 用户一例，断言与此前的规则一致；兼容邮箱、另有企业资料行的旧企业用户一例，断言其按 legacy 规则投影（用户名为兼容邮箱前缀、显示名为去除首尾空白后的 `user.name`，不含企业登录名与资料显示名）；把 `enterprise_profile` 临时改名使其不可访问后再次解析，断言结果与改名前逐项相等（FSL-136）；另经议题服务创建议题，断言作者等于同一公开资料行。同目录的 `public-profile-content.test.ts`（文档、文档评论、议题、议题评论、cl、cl 评论的作者）与 `public-profile-social.test.ts`（频道成员、聊天消息、发布、私聊对象）断言旧企业用户在这些服务中的公开资料为兼容邮箱前缀与 `user.name`，并对上述每个投影（社交测试另含企业身份停用后的投影）断言不含企业登录名、资料显示名与兼容邮箱域名；前者另断言修改企业资料的显示名与通知邮箱后作者资料不变，后者另断言企业身份被停用后历史消息与发布的作者资料不变。
+`packages/engine/src/services/public-profile.test.ts` 以一次性 PG 断言公开资料行的全部字段（`toEqual`，飞书用户另断言无 `avatarUrl`）：飞书用户分姓名与邮箱无关、姓名等于邮箱、姓名含完整本地部分（大小写不同）、姓名只含域名片段（保留，且 `user.image` 非空时仍无 `avatarUrl`）、姓名只含本地部分的片段（保留）五种，另有用户 ID 偶然包含本地部分（用户名仍为用户 ID）、首字符拼出本地部分（缩写为 `A`、姓名保留）、本地部分为 `u` 且姓名为空（缩写为空字符串）、本地部分含于 `#64748b`（颜色为 `#525252`）、本地部分为单个字母且等于用户 ID 的首字符（显示名为用户 ID、缩写为其首字符）、姓名带首尾空白（原样保留）与姓名为空字符串各一例，并断言这些行中（取用户 ID 首字符的情形除外）不等于用户 ID 的字段值不含 `@` 与（不区分大小写的）完整本地部分；legacy 用户一例，断言与此前的规则一致；另经议题服务创建议题，断言作者等于同一公开资料行。同目录的 `public-profile-content.test.ts`（文档、文档评论、议题、议题评论、cl、cl 评论的作者）与 `public-profile-social.test.ts`（频道成员、聊天消息、发布、私聊对象）断言这些服务中的作者与成员为同一 legacy 公开资料行（用户名为邮箱前缀、显示名为 `user.name`），且不含 `@` 与 `email` 字段。FSL-168 删除了这三个测试中的企业资料样例行与旧企业用户用例（企业表已不存在）。
 
 ## 协作服务
 
@@ -525,6 +525,21 @@ collab-server（`apps/collab-server`）只按普通协作票据校验连接（FS
 ## 数据
 
 `feishu_login_codes` 的邮箱、open_id、姓名与验证码 HMAC 只在 `active` 期间保存（FSL-119 的双向 CHECK），消费、作废时在同一语句中清空；未使用而过期的行与超过保留期的行由到期清理处理（FSL-146）。`feishu_login_key_check` 保存 HMAC 密钥与应用 ID 的指纹，request 与 verify 以它做密钥一致性检查（FSL-159、FSL-161，见下文）。**当前状态：** 飞书模式的 Web 在 `apps/web/instrumentation.ts` 的 `register()` 中启动调度器，并等待它的第一次执行结束（FSL-150，见「HTTP 接口」的「启用条件」）；其它模式不启动调度器。
+
+### 企业表已删除
+
+前滚迁移 `packages/database/drizzle/0021_absurd_loa.sql`（FSL-168，由 `drizzle-kit generate` 生成）删除旧企业模式的数据库结构，在一个迁移事务内依次：
+
+1. 删除 `session` 的企业 CHECK、两个企业外键（指向企业授予表与企业身份表）、企业授予唯一索引，再删除 `session` 的 4 个企业列（企业授予 ID、企业身份 ID、`auth_epoch`、`auth_method`）；
+2. 删除全部 20 张企业表（表名以 `enterprise` 加下划线开头；`enterprise_email` 是飞书通讯录的字段名，不是表，不受影响）及其索引与约束。
+
+生成器输出的语句顺序是先删表后删 `session` 外键，而删表的 `CASCADE` 已连带删除这两个外键，随后的 `DROP CONSTRAINT` 因此失败；该迁移文件只把同一组生成语句改为上述顺序（文件头注释说明），语句本身未改。schema 中的企业表定义（`packages/database/src/schema/auth/enterprise-*.ts`）与 `session` 的 4 个企业字段同时删除，`@megaui/database` 不再导出任何企业表。
+
+**保留：** 飞书登录的四张表（`feishu_login_codes`、`feishu_identities`、`feishu_login_sessions`、`feishu_login_key_check`）、`user`、`session`、`account`、`verification` 与其它非企业表及其行数据不变；`session` 行只少了 4 个企业列。旧企业登录签发、尚未过期的会话行因此留作普通会话行，但它没有 `feishu_login_sessions` 标记行，飞书模式下视为未登录（见「会话」）。
+
+**不可恢复：** 企业表中的全部数据（企业身份、资料、策略、授予、配对与挑战、通知、事件、任务、撤销、隔离与目录快照等）随迁移删除，不能恢复。迁移只前滚：没有回滚迁移；推送并在 dev/test 应用后只以新的前向修复迁移恢复，不以 revert 提交撤回。回到本迁移之前的镜像须先从迁移前的数据库备份恢复（旧镜像依赖这些表与列）；production / canary 从未激活旧企业模式，只有 dev/test 部署受影响，可直接重建（ADR-FSL-13）。
+
+`packages/database/src/schema/auth/drop-enterprise.test.ts` 使用一次性 PG，先只应用本迁移之前的迁移并写入样例行（企业策略、身份、挑战、授予与资料各一行，一个带企业字段的会话、一个 legacy 会话与一个带 `feishu_login_sessions` 标记的会话，飞书四表、`user`、`account`、`verification` 与 mega 表各若干行），断言：在本迁移的全部语句之后注入 SQL 故障时，20 张企业表、`session` 的企业列与全部行都不变，迁移记录不含本迁移；随后完整迁移集前滚应用、本迁移只记录一次；迁移后不存在任何企业表或其索引等关系，`session` 列集合恰为 better-auth 与 admin 插件的 9 列，企业外键、唯一索引与 CHECK 都不存在；非企业表集合、其约束与索引除 `session` 的企业约束与索引外都不变，各非企业表的行（`session` 行去掉 4 个企业列后）逐行相等，飞书会话标记仍指向原会话；迁移文件中 `session` 的语句都在 `DROP TABLE` 之前，本迁移的 snapshot 恰为上一 snapshot 去掉企业表与 `session` 企业结构。`packages/database/src/migrate.test.ts` 的显式表清单不再含企业表，并断言数据库中没有清单之外的表、`session` 没有企业列。
 
 ### 到期清理
 

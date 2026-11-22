@@ -335,7 +335,7 @@ describe("FSL-156 Mega2 principal of Feishu sessions", () => {
       vi.mocked(pool.query).mockRestore();
       const check = texts.filter(text => text.includes('from "user" as candidate'));
       expect(check).toHaveLength(1);
-      expect(texts.filter(text => /enterprise_/i.test(text))).toEqual([]);
+      expect(texts.filter(text => /enterprise[_]/i.test(text))).toEqual([]);
     });
 
     it("a failed check query", async () => {

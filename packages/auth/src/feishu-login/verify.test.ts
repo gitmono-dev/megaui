@@ -127,8 +127,7 @@ function sessionCookie(response: Response): string | undefined {
 
 async function sessionRows(): Promise<Array<Record<string, unknown>>> {
   return (await database.pool.query(
-    `select id, user_id, expires_at, enterprise_grant_id, enterprise_identity_id, auth_epoch, auth_method
-       from session order by created_at`,
+    "select id, user_id, expires_at from session order by created_at",
   )).rows;
 }
 
@@ -218,13 +217,15 @@ describe("feishu login verify (FSL-124 success path, FSL-151 failure path and co
     expect((await verify(auth, { code: CODE }, flow)).status).toBe(200);
     const after = Date.now();
     const [session] = await sessionRows();
-    expect(session).toMatchObject({
-      user_id: USER_ID,
-      enterprise_grant_id: null,
-      enterprise_identity_id: null,
-      auth_epoch: null,
-      auth_method: null,
-    });
+    expect(session).toMatchObject({ user_id: USER_ID });
+    // FSL-168 dropped the four enterprise session columns: the issued row cannot carry any of them.
+    const columns = (await database.pool.query<{ column_name: string }>(
+      `select column_name from information_schema.columns
+        where table_schema = 'public' and table_name = 'session' order by column_name`,
+    )).rows.map(row => row.column_name);
+    expect(columns).toEqual(["created_at", "expires_at", "id", "impersonated_by", "ip_address", "token",
+      "updated_at", "user_agent", "user_id"]);
+    expect(columns.filter(name => name.startsWith("enterprise") || name.startsWith("auth"))).toEqual([]);
     const expiresAt = new Date(session!.expires_at as string).getTime();
     expect(expiresAt).toBeGreaterThanOrEqual(before + FEISHU_LOGIN_SESSION_TTL_SECONDS * 1000 - 1000);
     expect(expiresAt).toBeLessThanOrEqual(after + FEISHU_LOGIN_SESSION_TTL_SECONDS * 1000 + 1000);

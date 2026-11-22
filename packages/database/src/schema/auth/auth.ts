@@ -16,11 +16,9 @@
 // - Kept `session.impersonatedBy`: better-auth `admin` plugin session
 //   field (upstream keeps that plugin; PK-06 does not remove it).
 // - `session.token` UNIQUE is unchanged vs upstream (already present).
-import { sql, type InferInsertModel, type InferSelectModel } from "drizzle-orm";
-import { check, integer, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { type InferInsertModel, type InferSelectModel } from "drizzle-orm";
+import { pgTable, text, timestamp } from "drizzle-orm/pg-core";
 import { user } from "./user";
-import { enterpriseLoginGrants } from "./enterprise-grant";
-import { enterpriseIdentity } from "./enterprise-identity";
 
 export const account = pgTable("account", {
   id: text("id").primaryKey(),
@@ -65,26 +63,9 @@ export const session = pgTable("session", {
   userId: text("user_id")
     .notNull()
     .references(() => user.id, { onDelete: "cascade" }),
-  /** Server-only enterprise login metadata; legacy sessions leave these null. */
-  enterpriseGrantId: uuid("enterprise_grant_id")
-    .references(() => enterpriseLoginGrants.id, { onDelete: "restrict" }),
-  enterpriseIdentityId: text("enterprise_identity_id")
-    .references(() => enterpriseIdentity.id, { onDelete: "restrict" }),
-  authEpoch: integer("auth_epoch"),
-  authMethod: text("auth_method"),
   // better-auth `admin` plugin field (kept — see PK-06 task card).
   impersonatedBy: text("impersonated_by"),
-}, table => ({
-  enterpriseGrant: uniqueIndex("session_enterprise_grant_uidx").on(table.enterpriseGrantId),
-  enterpriseMetadata: check("session_enterprise_metadata_check", sql`(
-    (${table.enterpriseGrantId} is null and ${table.enterpriseIdentityId} is null
-      and ${table.authEpoch} is null and ${table.authMethod} is null)
-    or (${table.enterpriseGrantId} is not null and ${table.enterpriseIdentityId} is not null
-      and ${table.authEpoch} is not null and ${table.authEpoch} >= 0
-      and ${table.authMethod} is not null and char_length(${table.authMethod}) between 1 and 64
-      and ${table.authMethod} ~ '^[A-Za-z0-9._:-]+$')
-  )`),
-}));
+});
 
 export const verification = pgTable("verification", {
   id: text("id").primaryKey(),

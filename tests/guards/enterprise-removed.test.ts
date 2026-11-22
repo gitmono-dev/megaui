@@ -398,3 +398,63 @@ describe("FSL-139: database enterprise code removed", () => {
     }
   });
 });
+
+describe("FSL-168: enterprise schema and tables dropped", () => {
+  const SCHEMA = "packages/database/src/schema/auth";
+  const DELETED_SCHEMA = ["actor-inventory", "actor-reservations", "delivery", "directory", "events", "grant",
+    "identity", "jobs", "login", "notifications", "operations", "policy", "profile", "revocations"];
+  const DELETED_TESTS = ["actor-inventory", "actor-reservations", "directory", "events", "grant", "jobs", "login",
+    "notifications", "operations", "pairing-cleanup-index", "schema"];
+
+  // The card's deletions: the 14 enterprise schema files and their tests are gone.
+  const deletedPaths = [
+    ...DELETED_SCHEMA.map(name => ["write set", `${SCHEMA}/enterprise-${name}.ts`] as const),
+    ...DELETED_TESTS.map(name => ["write set", `${SCHEMA}/enterprise-${name}.test.ts`] as const),
+  ];
+
+  it.each(deletedPaths)("%s: %s does not exist", (_ac, path) => {
+    expect(existsSync(join(ROOT, path)), path).toBe(false);
+  });
+
+  it("write set: schema/auth holds no enterprise-*.ts and its barrel re-exports no enterprise module", () => {
+    expect(matching(SCHEMA, /^enterprise-.*\.ts$/)).toEqual([]);
+    expect(readFileSync(join(ROOT, SCHEMA, "index.ts"), "utf8")).not.toMatch(/enterprise/i);
+  });
+
+  // AC1 (source side): the card's zero-hit guard, run exactly as written in the card. The
+  // pattern is passed verbatim as one argument, without a shell.
+  const PATTERN = "enterprise_(?!email)";
+  const TARGETS = ["packages/database/src", "packages/engine/src", "apps"];
+  const guardArgs = ["-P", "-n", PATTERN, ...TARGETS, "--glob", "!**/node_modules/**", "--glob", "!**/*.tsbuildinfo",
+    "--glob", "!**/.next/**", "--glob", "!**/drizzle/**"];
+
+  it("AC1: the rg guard over the database code, engine and apps finds no enterprise table name (exit 1)", () => {
+    const result = rg(guardArgs, ROOT);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toBe("");
+    expect(result.status).toBe(1);
+  });
+
+  it("AC1: the same rg guard misses enterprise_email, hits enterprise_policy (test files included) and skips migrations", () => {
+    const fixture = mkdtempSync(join(tmpdir(), "megaui-enterprise-removed-"));
+    try {
+      for (const directory of ["packages/database/src/schema/auth", "packages/database/drizzle", "packages/engine/src",
+        "apps/web/lib", "apps/web/.next", "packages/engine/node_modules/x"]) {
+        mkdirSync(join(fixture, directory), { recursive: true });
+      }
+      writeFileSync(join(fixture, "apps/web/lib/a.ts"), "const column = 'enterprise_email'\n");
+      writeFileSync(join(fixture, "packages/database/drizzle/0004_x.sql"), "CREATE TABLE \"enterprise_policy\" ();\n");
+      writeFileSync(join(fixture, "apps/web/.next/b.js"), "select 1 from enterprise_policy\n");
+      writeFileSync(join(fixture, "apps/web/tsconfig.tsbuildinfo"), "enterprise_policy\n");
+      writeFileSync(join(fixture, "packages/engine/node_modules/x/index.ts"), "enterprise_policy\n");
+      expect(rg(guardArgs, fixture).status).toBe(1);
+      writeFileSync(join(fixture, "packages/database/src/schema/auth/c.test.ts"), "await pool.query('select 1 from enterprise_policy')\n");
+      const hit = rg(guardArgs, fixture);
+      expect(hit.status).toBe(0);
+      expect(hit.stdout).toContain("packages/database/src/schema/auth/c.test.ts");
+      expect(hit.stdout).not.toContain("enterprise_email");
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+});

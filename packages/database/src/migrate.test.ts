@@ -30,26 +30,6 @@ import {
  */
 const EXPECTED_PUBLIC_TABLES = [
   "account",
-  "enterprise_actor_inventory",
-  "enterprise_actor_reservations",
-  "enterprise_admin_operations",
-  "enterprise_batch_checkpoints",
-  "enterprise_challenges",
-  "enterprise_directory_identity_watermarks",
-  "enterprise_directory_snapshots",
-  "enterprise_directory_watermarks",
-  "enterprise_dm_deliveries",
-  "enterprise_event_inbox",
-  "enterprise_identity",
-  "enterprise_jobs",
-  "enterprise_login_budgets",
-  "enterprise_login_grants",
-  "enterprise_notification_outbox",
-  "enterprise_pairings",
-  "enterprise_policy",
-  "enterprise_profile",
-  "enterprise_quarantine",
-  "enterprise_revocations",
   "feishu_identities",
   "feishu_login_codes",
   "feishu_login_key_check",
@@ -77,6 +57,19 @@ const EXPECTED_PUBLIC_TABLES = [
   "user",
   "verification",
 ] as const;
+
+/** The columns of `session` after FSL-168, sorted. */
+const SESSION_COLUMNS = [
+  "created_at",
+  "expires_at",
+  "id",
+  "impersonated_by",
+  "ip_address",
+  "token",
+  "updated_at",
+  "user_agent",
+  "user_id",
+];
 
 const dockerAvailable = await isDockerAvailable();
 
@@ -118,7 +111,11 @@ describe.skipIf(!dockerAvailable)(
       expect(tables).toEqual([...tables].sort());
     });
 
-    it("preserves a legacy session row while exposing nullable enterprise metadata", async () => {
+    it("creates no table outside the explicit manifest (FSL-168: the enterprise tables are dropped)", async () => {
+      expect(await readPublicTables(pool)).toEqual([...EXPECTED_PUBLIC_TABLES]);
+    });
+
+    it("preserves a legacy session row on re-migration; session has no enterprise columns (FSL-168)", async () => {
       await pool.query(
         `insert into "user" (id, name, email, email_verified)
          values ('fs32-legacy-user', 'FS32 Legacy', 'fs32-legacy@example.test', false)
@@ -129,18 +126,19 @@ describe.skipIf(!dockerAvailable)(
          values ('fs32-legacy-session', '2030-01-01T00:00:00Z', 'fs32-legacy-token', 'fs32-legacy-user')
          on conflict (id) do nothing`,
       );
-      const before = (await pool.query(
-        `select id, expires_at, token, user_id, enterprise_grant_id,
-                enterprise_identity_id, auth_epoch, auth_method
-           from session where id='fs32-legacy-session'`,
-      )).rows;
+      const before = (await pool.query(`select * from session where id='fs32-legacy-session'`)).rows;
+      expect(before).toHaveLength(1);
       await isolated.migrate();
-      const after = (await pool.query(
-        `select id, expires_at, token, user_id, enterprise_grant_id,
-                enterprise_identity_id, auth_epoch, auth_method
-           from session where id='fs32-legacy-session'`,
-      )).rows;
+      const after = (await pool.query(`select * from session where id='fs32-legacy-session'`)).rows;
       expect(after).toEqual(before);
+      // The row carries exactly the better-auth and admin-plugin columns: the four enterprise
+      // columns were dropped by FSL-168.
+      expect(Object.keys(after[0] as object).sort()).toEqual(SESSION_COLUMNS);
+      const columns = await pool.query<{ column_name: string }>(
+        `select column_name from information_schema.columns
+          where table_schema = 'public' and table_name = 'session' order by column_name`,
+      );
+      expect(columns.rows.map((row) => row.column_name)).toEqual(SESSION_COLUMNS);
     });
 
     it("detects a table the manifest expects but the database lacks", async () => {
@@ -192,17 +190,6 @@ describe.skipIf(!dockerAvailable)(
       if (!index) throw new Error("unreachable: length asserted above");
       expect(index.indexdef).toContain("USING gin");
       expect(index.indexdef).toContain("text_search");
-    });
-
-    it("keeps both the original and scoped pairing retention indexes (FS-91)", async () => {
-      const indexes = await pool.query<{ indexname: string; indexdef: string }>(
-        `select indexname,indexdef from pg_indexes where schemaname='public' and tablename='enterprise_pairings'
-          and indexname in ('enterprise_pairings_retain_until_idx','enterprise_pairings_scope_retention_idx') order by indexname`,
-      );
-      expect(indexes.rows).toEqual([
-        { indexname: "enterprise_pairings_retain_until_idx", indexdef: "CREATE INDEX enterprise_pairings_retain_until_idx ON public.enterprise_pairings USING btree (retain_until)" },
-        { indexname: "enterprise_pairings_scope_retention_idx", indexdef: "CREATE INDEX enterprise_pairings_scope_retention_idx ON public.enterprise_pairings USING btree (scope, deployment_role, retain_until, id)" },
-      ]);
     });
 
     it("creates the four Feishu login code indexes (FSL-163)", async () => {

@@ -1,5 +1,5 @@
-// megaui-only (FS-22, FSL-136): content authors' public profiles never read enterprise profiles; a former
-// enterprise author is projected by the legacy rule from its compatibility email and `user.name`.
+// megaui-only (FS-22, FSL-136, FSL-168): content authors carry the public profile across docs, comments,
+// issues and CLs; the legacy rule projects the email prefix and `user.name`, never the email itself.
 import { createDatabaseClient, type DatabaseClient } from "@megaui/database";
 import { createIsolatedPostgres, type IsolatedPostgres } from "@megaui/database/test-support";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -14,12 +14,10 @@ import { createIssuesService } from "./issues";
 import { fallbackPublicProfile, resolvePublicProfiles } from "./public-profile";
 
 const EMPTY_BODY = "{\"root\":{\"children\":[]}}";
-const ENTERPRISE_USER_ID = USERS.tianjing.id;
+const AUTHOR_ID = USERS.tianjing.id;
 const LEGACY_USER_ID = USERS.eleanor.id;
-// Shape of a compatibility key (`u_<base32 sha256>@identity.invalid`) written for enterprise users.
-const COMPAT_PREFIX = "u_7lllnvvumnhhvmxyydkl3k2pyddmsi5egyn4yfwg5wkvggceqbaq";
 
-describe("content public profiles ignore enterprise profiles (FS-22, FSL-136)", () => {
+describe("content public profiles (FS-22, FSL-136)", () => {
   let isolated: IsolatedPostgres;
   let client: DatabaseClient;
 
@@ -28,16 +26,6 @@ describe("content public profiles ignore enterprise profiles (FS-22, FSL-136)", 
     await isolated.migrate();
     client = createDatabaseClient({ connectionString: isolated.databaseUrl });
     await seedMegaDatabase(client.db);
-    await client.pool.query('update "user" set email = $2 where id = $1', [
-      ENTERPRISE_USER_ID,
-      `${COMPAT_PREFIX}@identity.invalid`,
-    ]);
-    await client.pool.query(
-      `insert into enterprise_profile
-         (user_id, tenant_key, login_name, backend_username, display_name, notification_email)
-       values ($1, 'fs22-tenant', 'directory.alice', 'mgu_fs22_alice', 'Directory Alice', 'alice@notify.test')`,
-      [ENTERPRISE_USER_ID],
-    );
   }, 120_000);
 
   afterAll(async () => {
@@ -47,7 +35,7 @@ describe("content public profiles ignore enterprise profiles (FS-22, FSL-136)", 
     if (errors.length > 0) throw new AggregateError(errors, "FS-22 fixture teardown failed");
   }, 120_000);
 
-  it("uses the opaque compatibility prefix, not login_name, across docs, comments, issues, and CLs", async () => {
+  it("uses the same public profile across docs, comments, issues, and CLs", async () => {
     const docs = createDocsService(
       client.db,
       createAclService(client.db),
@@ -57,55 +45,28 @@ describe("content public profiles ignore enterprise profiles (FS-22, FSL-136)", 
     const issues = createIssuesService(client.db);
     const cls = createClsService(client.db);
 
-    const doc = await docs.createDoc({ title: "FS-22 profile doc", body: EMPTY_BODY }, ENTERPRISE_USER_ID);
-    const docComment = await docs.addDocComment(doc.id, "Profile comment", ENTERPRISE_USER_ID);
+    const doc = await docs.createDoc({ title: "FS-22 profile doc", body: EMPTY_BODY }, AUTHOR_ID);
+    const docComment = await docs.addDocComment(doc.id, "Profile comment", AUTHOR_ID);
     const issue = await issues.createIssue(
       { title: "FS-22 profile issue", packageId: "pkg_engine", priority: "P2" },
-      ENTERPRISE_USER_ID,
+      AUTHOR_ID,
     );
-    const issueComment = await issues.addIssueComment(issue.number, "Profile issue comment", ENTERPRISE_USER_ID);
+    const issueComment = await issues.addIssueComment(issue.number, "Profile issue comment", AUTHOR_ID);
     const cl = await cls.createCL(
       { title: "FS-22 profile CL", packageId: "pkg_engine", branch: "fs22-profile" },
-      ENTERPRISE_USER_ID,
+      AUTHOR_ID,
     );
-    const clComment = await cls.addCLComment(cl.number, "Profile CL comment", ENTERPRISE_USER_ID);
+    const clComment = await cls.addCLComment(cl.number, "Profile CL comment", AUTHOR_ID);
 
     const projections = [doc.author, docComment.author, issue.author, issueComment.author, cl.author, clComment.author];
     for (const projection of projections) {
-      expect(projection.id).toBe(ENTERPRISE_USER_ID);
-      expect(projection.username).toBe(COMPAT_PREFIX);
+      expect(projection.id).toBe(AUTHOR_ID);
+      expect(projection.username).toBe(USERS.tianjing.username);
       expect(projection.displayName).toBe(USERS.tianjing.displayName);
-      expect(JSON.stringify(projection)).not.toContain("identity.invalid");
-      expect(JSON.stringify(projection)).not.toContain("directory.alice");
-      expect(JSON.stringify(projection)).not.toContain("Directory Alice");
+      expect(JSON.stringify(projection)).not.toContain("@");
       expect(projection).not.toHaveProperty("email");
-      expect(projection).not.toHaveProperty("notificationEmail");
-      expect(projection).not.toHaveProperty("backendUsername");
     }
-  });
-
-  it("keeps the author profile unchanged when enterprise notification or display data changes", async () => {
-    const docs = createDocsService(
-      client.db,
-      createAclService(client.db),
-      createBlocksRepo(client.db),
-      createLinksRepo(client.db),
-    );
-    const created = await docs.createDoc({ title: "FS-22 stable author", body: EMPTY_BODY }, ENTERPRISE_USER_ID);
-    const before = await docs.getDoc(created.id, ENTERPRISE_USER_ID);
-
-    await client.pool.query(
-      `update enterprise_profile
-          set notification_email = 'replacement@notify.test', display_name = 'Renamed Alice'
-        where user_id = $1`,
-      [ENTERPRISE_USER_ID],
-    );
-    const after = await docs.getDoc(created.id, ENTERPRISE_USER_ID);
-
-    expect(after.author).toEqual(before.author);
-    expect(after.author.username).toBe(COMPAT_PREFIX);
-    expect(after.author.displayName).toBe(USERS.tianjing.displayName);
-    expect(after.id).toBe(before.id);
+    expect(new Set(projections.map(projection => JSON.stringify(projection))).size).toBe(1);
   });
 
   it("preserves legacy display fallback and unknown historical author ids", async () => {

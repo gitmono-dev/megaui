@@ -68,7 +68,7 @@ describe("auth schema matches better-auth 1.x expected fields (PK-04 AC2)", () =
     });
   });
 
-  it("session: better-auth fields + enterprise server-only metadata", () => {
+  it("session: exactly the better-auth core fields + admin-plugin impersonatedBy (FSL-168: no enterprise metadata)", () => {
     const shape = shapeOf(session);
     expect(Object.keys(shape).sort()).toEqual(
       [
@@ -80,10 +80,6 @@ describe("auth schema matches better-auth 1.x expected fields (PK-04 AC2)", () =
         "ipAddress",
         "userAgent",
         "userId",
-        "enterpriseGrantId",
-        "enterpriseIdentityId",
-        "authEpoch",
-        "authMethod",
         "impersonatedBy",
       ].sort(),
     );
@@ -96,10 +92,6 @@ describe("auth schema matches better-auth 1.x expected fields (PK-04 AC2)", () =
       ipAddress: { dataType: "string", notNull: false },
       userAgent: { dataType: "string", notNull: false },
       userId: { dataType: "string", notNull: true },
-      enterpriseGrantId: { dataType: "string", notNull: false },
-      enterpriseIdentityId: { dataType: "string", notNull: false },
-      authEpoch: { dataType: "number", notNull: false },
-      authMethod: { dataType: "string", notNull: false },
       impersonatedBy: { dataType: "string", notNull: false },
     });
   });
@@ -190,10 +182,6 @@ interface ExpectedSession {
   ipAddress: string | null;
   userAgent: string | null;
   userId: string;
-  enterpriseGrantId: string | null;
-  enterpriseIdentityId: string | null;
-  authEpoch: number | null;
-  authMethod: string | null;
   impersonatedBy: string | null;
 }
 
