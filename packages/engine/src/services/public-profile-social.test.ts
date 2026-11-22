@@ -3,10 +3,10 @@
 import { createDatabaseClient, type DatabaseClient } from "@megaui/database";
 import { createIsolatedPostgres, type IsolatedPostgres } from "@megaui/database/test-support";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { seedMegaDatabase } from "../../seed";
-import { USERS } from "../../testing/fixtures";
-import { createChatDomain } from "../chat";
-import { createReleasesService } from "../releases";
+import { seedMegaDatabase } from "../seed";
+import { USERS } from "../testing/fixtures";
+import { createChatDomain } from "./chat";
+import { createReleasesService } from "./releases";
 
 const ALICE = USERS.tianjing.id;
 const BOB = USERS.eleanor.id;

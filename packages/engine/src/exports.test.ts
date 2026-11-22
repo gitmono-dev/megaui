@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const packageJson = JSON.parse(
   readFileSync(path.resolve(here, "../package.json"), "utf8"),
-) as { exports: Record<string, string>; dependencies: Record<string, string> };
+) as { exports: Record<string, string>; scripts: Record<string, string>; dependencies: Record<string, string> };
 
 describe("package exports and ADR-ARCH-01 deps (EG-01)", () => {
   it("exposes fixtures only on the /testing subpath", () => {
@@ -41,17 +41,39 @@ describe("package exports and ADR-ARCH-01 deps (EG-01)", () => {
         "@megaui/content",
         "@megaui/core",
         "@megaui/database",
-        // FS-31: the enterprise login notification sender lives in @megaui/email.
+        // No source import since FSL-137 removed its only user, the enterprise login
+        // notification sender; dropping the entry rewrites pnpm-lock.yaml (CMD-10), which
+        // that card does not own.
         "@megaui/email",
         "drizzle-orm",
-        // FS-80: the admin CLI and enterprise worker open PostgreSQL directly.
+        // The Feishu login issuer and code cleanup run on a `pg` Pool.
         "pg",
+        // The `seed` script runs through tsx.
         "tsx",
         "zod",
       ].sort(),
     );
     expect(names).not.toContain("@megaui/ui");
     expect(names).not.toContain("@megaui/web");
+  });
+
+  // FSL-137 AC8: the enterprise services, worker and admin CLI are gone, and so is their API.
+  it("exports no enterprise API from the root barrel", async () => {
+    const source = readFileSync(path.resolve(here, "index.ts"), "utf8");
+    expect(source).not.toMatch(/services\/enterprise|workers\/|cli\//);
+    expect(source).not.toMatch(/EnterpriseOffboarding/);
+    const root = await import("./index");
+    expect(Object.keys(root).filter(name => /enterprise/i.test(name))).toEqual([]);
+    for (const name of ["acceptVerifiedEvent", "createDurableVerifiedEventEffects", "VERIFIED_EVENT_TYPES",
+      "createPostgresAuthenticationEligibilityReader", "FEISHU_DIRECTORY_USER_PATH", "SingleMemberDirectoryReader",
+      "CollabRevokeError"]) {
+      expect(name in root, name).toBe(false);
+    }
+  });
+
+  it("has no enterprise worker or admin CLI scripts", () => {
+    expect(Object.keys(packageJson.scripts).filter(name => /^enterprise:/.test(name))).toEqual([]);
+    expect(Object.values(packageJson.scripts).filter(command => /src\/(workers|cli)\//.test(command))).toEqual([]);
   });
 
   it("does not let the root barrel resolve fixture files via require.resolve", () => {

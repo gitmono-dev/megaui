@@ -23,7 +23,7 @@ import {
   feishuLoginFlowLockKey,
 } from "@megaui/database";
 import { createIsolatedPostgres, type IsolatedPostgres } from "@megaui/database/test-support";
-import { FEISHU_MESSAGE_PATH } from "../enterprise/feishu/message";
+import { FEISHU_MESSAGE_PATH } from "../feishu/message";
 import {
   createFeishuLoginIssuer,
   feishuLoginTenantKey,

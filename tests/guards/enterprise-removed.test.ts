@@ -193,3 +193,69 @@ describe("FSL-134: collab enterprise metadata removed", () => {
     }
   });
 });
+
+describe("FSL-137: engine enterprise services, worker and admin CLI removed", () => {
+  // AC5-AC7 and the card's other deletions: these exact paths are gone.
+  const deletedPaths = [
+    ["AC5", "packages/engine/src/services/enterprise"],
+    ["AC6", "packages/engine/src/workers/enterprise.ts"],
+    ["AC6", "packages/engine/src/workers/enterprise-config.ts"],
+    ["AC6", "packages/engine/src/workers/enterprise-pairing.ts"],
+    ["AC6", "packages/engine/src/workers/enterprise-pairing.test.ts"],
+    ["AC6", "packages/engine/src/workers/enterprise-runtime.test.ts"],
+    ["AC7", "packages/engine/src/cli"],
+    ["write set", "tests/guards/admin-write-verbs.test.ts"],
+    ["write set", "packages/email/src/templates/enterprise-login.ts"],
+    ["write set", "packages/email/src/templates/enterprise-login.test.ts"],
+  ] as const;
+
+  it.each(deletedPaths)("%s: %s does not exist", (_ac, path) => {
+    expect(existsSync(join(ROOT, path)), path).toBe(false);
+  });
+
+  it("AC6: packages/engine/src/workers holds no enterprise*.ts", () => {
+    expect(matching("packages/engine/src/workers", /^enterprise.*\.ts$/)).toEqual([]);
+  });
+
+  it("AC1, AC3: the Feishu client and the public profile module live at their new paths", () => {
+    for (const name of ["http", "token", "message", "types", "contact"]) {
+      expect(existsSync(join(ROOT, `packages/engine/src/services/feishu/${name}.ts`)), name).toBe(true);
+    }
+    expect(existsSync(join(ROOT, "packages/engine/src/services/public-profile.ts"))).toBe(true);
+  });
+
+  // AC13: the card's zero-hit guard, run exactly as written in the card.
+  const PATTERN = "services/enterprise|sendEnterpriseLoginNotificationEmail|workers/enterprise|cli/(admin-|enterprise-admin)|enterprise:(worker|admin|approve)";
+  const TARGETS = ["packages", "apps", "scripts", "tests", "package.json"];
+  const guardArgs = ["-n", PATTERN, ...TARGETS, "--glob", "!**/node_modules/**", "--glob", "!**/*.tsbuildinfo",
+    "--glob", "!**/.next/**", "--glob", "!**/*.test.ts", "--glob", "!**/*.spec.ts", "--glob", "!**/tests/**"];
+
+  it("AC13: the rg guard over packages, apps, scripts, tests and package.json finds nothing (exit 1)", () => {
+    const result = rg(guardArgs, ROOT);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toBe("");
+    expect(result.status).toBe(1);
+  });
+
+  it("AC13: the same rg guard reports a planted hit (exit 0) and ignores tests (exit 1)", () => {
+    const fixture = mkdtempSync(join(tmpdir(), "megaui-enterprise-removed-"));
+    try {
+      for (const directory of ["packages/engine/src/services", "apps/web/lib", "scripts", "tests/guards",
+        "packages/engine/node_modules/x"]) {
+        mkdirSync(join(fixture, directory), { recursive: true });
+      }
+      writeFileSync(join(fixture, "package.json"), "{\"scripts\": {\"seed\": \"tsx ./src/seed.ts\"}}\n");
+      writeFileSync(join(fixture, "packages/engine/src/services/a.test.ts"), "import './enterprise/events'\n");
+      writeFileSync(join(fixture, "apps/web/lib/b.spec.ts"), "sender.sendEnterpriseLoginNotificationEmail()\n");
+      writeFileSync(join(fixture, "tests/guards/c.ts"), "const path = 'src/workers/enterprise.ts'\n");
+      writeFileSync(join(fixture, "packages/engine/node_modules/x/index.ts"), "import './cli/admin-env'\n");
+      expect(rg(guardArgs, fixture).status).toBe(1);
+      writeFileSync(join(fixture, "scripts/run.sh"), "pnpm --filter @megaui/engine run enterprise:worker\n");
+      const hit = rg(guardArgs, fixture);
+      expect(hit.status).toBe(0);
+      expect(hit.stdout).toContain("scripts/run.sh");
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+});

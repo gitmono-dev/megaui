@@ -72,7 +72,7 @@ import { parsePagination } from "../../context";
 import { isEmptyCommentBody, normalizeCommentBodyJson, plainTextFromCommentBody } from "../cls/comment-body";
 import { BODY_FORMAT_VERSION_BLOCK_TREE } from "../docs/body-format";
 import { assertReleaseAssetKeyOwnership } from "./asset-key";
-import { fallbackPublicProfile, resolvePublicProfiles } from "../enterprise/public-profile";
+import { fallbackPublicProfile, resolvePublicProfiles } from "../public-profile";
 import type {
   AddReleaseAssetInput,
   CreateDraftReleaseInput,

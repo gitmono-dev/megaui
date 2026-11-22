@@ -5,7 +5,7 @@
 // `revisions.ts` never diverge on how a bare user id becomes a `User`.
 import type { Database } from "@megaui/database";
 import type { User } from "@megaui/core";
-import { fallbackPublicProfile, resolvePublicProfiles } from "../enterprise/public-profile";
+import { fallbackPublicProfile, resolvePublicProfiles } from "../public-profile";
 
 export function fallbackUser(id: string): User {
   return fallbackPublicProfile(id);

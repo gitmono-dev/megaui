@@ -83,14 +83,14 @@ import {
   FEISHU_BACKOFF_BASE_MS,
   FEISHU_OPERATION_BUDGET_MS,
   FeishuTransport,
-} from "../enterprise/feishu/http";
+} from "../feishu/http";
 import {
   FEISHU_MESSAGE_PATH,
   FeishuMessageClient,
   type FeishuMessageResult,
-} from "../enterprise/feishu/message";
-import { FeishuTokenManager } from "../enterprise/feishu/token";
-import type { FeishuTenantCredentials } from "../enterprise/feishu/types";
+} from "../feishu/message";
+import { FeishuTokenManager } from "../feishu/token";
+import type { FeishuTenantCredentials } from "../feishu/types";
 import { FeishuContactClient } from "../feishu/contact";
 
 /** The stable log keys of the issue flow. */

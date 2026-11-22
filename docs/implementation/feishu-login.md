@@ -55,6 +55,18 @@ provider 键的错误与必填键的错误一并报告，排在必填键之后�
 
 按邮箱查找成员、读取成员在职状态，都通过 `packages/engine/src/services/feishu/contact.ts` 的 `FeishuContactClient`（FSL-117）完成。两个请求都使用飞书开放平台 Directory v1 接口。不使用 Contact v3，原因有两点：真实租户实测中，Contact v3 的 `users/batch_get_id` 查不到登记在 `enterprise_email` 中的企业邮箱；`users/:open_id` 在当前权限下不返回 `status`（见 `feishu-live-contract-lookup.md`、`feishu-live-contract-member.md`）。
 
+飞书客户端的全部模块都位于 `packages/engine/src/services/feishu/`（FSL-137 起；此前传输层、token 与私聊发送位于已删除的企业服务目录）：
+
+| 模块 | 内容 |
+|---|---|
+| `http.ts` | 传输层 `FeishuTransport` 与 `FeishuTransportError`（固定源、重试基线） |
+| `token.ts` | `tenant_access_token` 的 `FeishuTokenManager` |
+| `message.ts` | 发送验证码私聊的 `FeishuMessageClient` |
+| `types.ts` | 飞书租户凭据等共用类型 |
+| `contact.ts` | Directory v1 查询与成员读取的 `FeishuContactClient` |
+
+`contact.ts` 以同目录相对路径（`./http` 等）、`packages/engine/src/services/feishu-login/issue.ts` 以相邻目录相对路径（`../feishu/http` 等）导入这些模块；对应测试 `http.test.ts`、`token.test.ts`、`message.test.ts`、`contact.test.ts` 与两个真实租户复测文件也在该目录。
+
 ### 请求
 
 两个请求共用同一组 `required_fields`：
@@ -118,7 +130,7 @@ work_info.staff_status
 
 ### 发送验证码私聊
 
-验证码通过 `packages/engine/src/services/enterprise/feishu/message.ts` 的 `FeishuMessageClient` 发送：`POST /open-apis/im/v1/messages?receive_id_type=open_id`，请求体为 `{ receive_id, msg_type: "text", content, uuid }`，同一次投递的重试复用同一 `uuid` 与同一载荷。
+验证码通过 `packages/engine/src/services/feishu/message.ts` 的 `FeishuMessageClient` 发送：`POST /open-apis/im/v1/messages?receive_id_type=open_id`，请求体为 `{ receive_id, msg_type: "text", content, uuid }`，同一次投递的重试复用同一 `uuid` 与同一载荷。
 
 发送成功判据（FSL-170，按 `feishu-live-contract-message.md` Q4 的实测）：传输层放行的 2xx 响应（传输层只对 `response.ok` 的响应解析业务体，客户端不再单独检查状态码）同时满足以下三条，即判为 `accepted`，`messageId` 取 `data.message_id`：
 
@@ -287,7 +299,7 @@ FSL-145 的用例以代理收到的全部请求数断言飞书调用次数：同
 
 FSL-154 起上述用例中断言已授予或正在等待的咨询锁集合的，按新的锁顺序包含 flow 锁（预约先持有 flow 锁与邮箱锁、再等待全局锁）。`packages/engine/src/services/feishu-login/flow-binding.integration.test.ts`（FSL-154）同样使用一次性 PG、真实 `apps/feishu-mock` 进程与记录代理，以 `consumeFeishuLoginCode` 判定验证码是否有效（本套件不建绑定、也不传入 `newUserId`，因此不建号：有效的验证码返回 `unbound` 且事务回滚、不改变该行）：同一 flow 中 A 的验证码有效后，B 的 `reserve` 提交即令其无效，B 分别为命中、未命中、被冷却拒绝与被预算拒绝（后两者不写新行）；A 激活已提交、代理暂扣 A 的私聊期间插入 B，断言 A 的私聊随后仍送达而其验证码无效；代理暂扣 A 的按邮箱搜索期间 B 被冷却拒绝或获准，断言 A 不发私聊；两个连接并发与受控交错（B 在 A 激活持有的 flow 锁上等待）后该 flow 至多一行 `active` 且为序号最大的行；`reserve` 期间代理未收到请求、飞书调用期间没有已授予的咨询锁；前次请求为命中、未命中、多人时后一次 `reserve` 的作废语句影响行数都为 1，本 flow 预置 1000 行历史记录时只有序号最大的一行产生新版本（`xmin`），`created_at` 相同或倒序时按 `flow_seq` 作废，在 flow 锁上等待后提交的预约取得更大的 `flow_seq`；命中、未命中、多人、不在职与飞书调用失败五种结果下，预约、开始发码与写回事务取得的咨询锁序列（flow → 邮箱 → 全局，flow → 邮箱）与加锁语句都相同。
 
-`packages/engine/src/services/enterprise/feishu/http.test.ts` 以脚本化的 `fetch` 固定传输层现有的重试基线（默认 3 次、暂时性失败重试、永久性失败不重试），并断言 `maxAttempts: 1` 对 5xx、429、连接中断与超时都只发起一次 HTTP 请求；FSL-160 另断言已过截止时间时不调用 `fetch` 并抛出 `transport_deadline`、单次尝试的计时器恰为 `min(传输预算, deadline − 当前时间)`（含传输层重试的第二次尝试）、截止时间之后不再重试，以及不传 `deadline` 时重试与预算不变。`token.test.ts` 以本地 HTTP 服务断言已过截止时间的调用不发请求、两个截止时间不同的调用共享一次刷新时较早截止者在其截止时间以 `transport_deadline` 返回而共享刷新照常完成、刷新请求的单次超时受首个调用方截止时间约束，以及不传 `deadline` 的调用方照旧共享并等待同一次刷新。
+`packages/engine/src/services/feishu/http.test.ts` 以脚本化的 `fetch` 固定传输层现有的重试基线（默认 3 次、暂时性失败重试、永久性失败不重试），并断言 `maxAttempts: 1` 对 5xx、429、连接中断与超时都只发起一次 HTTP 请求；FSL-160 另断言已过截止时间时不调用 `fetch` 并抛出 `transport_deadline`、单次尝试的计时器恰为 `min(传输预算, deadline − 当前时间)`（含传输层重试的第二次尝试）、截止时间之后不再重试，以及不传 `deadline` 时重试与预算不变。`token.test.ts` 以本地 HTTP 服务断言已过截止时间的调用不发请求、两个截止时间不同的调用共享一次刷新时较早截止者在其截止时间以 `transport_deadline` 返回而共享刷新照常完成、刷新请求的单次超时受首个调用方截止时间约束，以及不传 `deadline` 的调用方照旧共享并等待同一次刷新。
 
 ## HTTP 接口
 
@@ -481,7 +493,7 @@ Mega2 经 `GET /api/auth/get-session` 读取当前会话，并按 `WebsiteAuthUs
 
 ## 公开资料
 
-成员、聊天、cls、文档评论、文档、议题、发布七个共享服务经 `packages/engine/src/services/enterprise/public-profile.ts` 的 `resolvePublicProfiles` 取用户的公开资料行（`id`、`username`、`displayName`、可选的 `avatarUrl`、`avatarInitials`、`avatarColor`）。对在 `feishu_identities` 中有绑定（任一应用）的用户，该行按以下规则生成（FSL-153），且不论该用户是否另有企业资料都按此规则：
+成员、聊天、cls、文档评论、文档、议题、发布七个共享服务经 `packages/engine/src/services/public-profile.ts` 的 `resolvePublicProfiles` 取用户的公开资料行（`id`、`username`、`displayName`、可选的 `avatarUrl`、`avatarInitials`、`avatarColor`）。对在 `feishu_identities` 中有绑定（任一应用）的用户，该行按以下规则生成（FSL-153），且不论该用户是否另有企业资料都按此规则：
 
 - `username` 为用户 ID（不透明，不从邮箱派生）。
 - `displayName`：记 N 为 `user.name` 转小写、L 为登录邮箱（`user.email`）最后一个 `@` 之前的完整本地部分转小写；N 含 `@` 或 N 含子串 L 时为用户 ID，否则为按原样存储的 `user.name`（不去除首尾空白；通讯录姓名为空字符串时显示名同样为空字符串）。只比较完整本地部分，不比较域名或本地部分的片段：姓名 `Chen Qi` 对登录邮箱 `chen.qi@corp.example` 保留，姓名 `Zhang.San Ops` 对 `zhang.san@corp.example` 改为用户 ID。
@@ -495,7 +507,7 @@ Mega2 经 `GET /api/auth/get-session` 读取当前会话，并按 `WebsiteAuthUs
 
 **旧企业用户的变化（FSL-136）：** 公开资料查询不再联表 `enterprise_profile`（也不读取其它企业表）。仍有企业资料行的旧企业用户（只存在于 dev/test，自 FSL-132 起已不能登录）因此改按上述 legacy 规则投影：用户名由企业登录名 `login_name` 改为其兼容邮箱 `u_<hash>@identity.invalid` 的不透明前缀 `u_<hash>`，显示名由企业资料的显示名改为去除首尾空白后的 `user.name`（为空时取该前缀）；修改企业资料（显示名、通知邮箱）或企业身份状态不再影响公开资料。对同一时点的数据库状态，legacy 用户与飞书用户的公开资料按与此前相同的规则生成；公开资料行的字段不扩大。原先第二次读取邮箱的查询随企业联表一并删除，此前该查询带来的并发情形不再存在：两次读取之间用户被删除时，旧实现仍返回首次读取的行（飞书用户的显示名回退为用户 ID），现在一次查询读到该用户即按其邮箱生成、读不到即不返回该用户（调用方按未知历史作者处理）；两次读取之间邮箱或姓名改变时也不再混合两个时点的数据。
 
-`packages/engine/src/services/enterprise/public-profile.test.ts` 以一次性 PG 断言公开资料行的全部字段（`toEqual`，飞书用户另断言无 `avatarUrl`）：飞书用户分姓名与邮箱无关、姓名等于邮箱、姓名含完整本地部分（大小写不同）、姓名只含域名片段（保留，且 `user.image` 非空时仍无 `avatarUrl`）、姓名只含本地部分的片段（保留）五种，另有用户 ID 偶然包含本地部分（用户名仍为用户 ID）、首字符拼出本地部分（缩写为 `A`、姓名保留）、本地部分为 `u` 且姓名为空（缩写为空字符串）、本地部分含于 `#64748b`（颜色为 `#525252`）、本地部分为单个字母且等于用户 ID 的首字符（显示名为用户 ID、缩写为其首字符）、姓名带首尾空白（原样保留）、姓名为空字符串与另有企业资料的飞书用户各一例，并断言这些行中（最后一种取用户 ID 首字符的情形除外）不等于用户 ID 的字段值不含 `@` 与（不区分大小写的）完整本地部分；legacy 用户一例，断言与此前的规则一致；兼容邮箱、另有企业资料行的旧企业用户一例，断言其按 legacy 规则投影（用户名为兼容邮箱前缀、显示名为去除首尾空白后的 `user.name`，不含企业登录名与资料显示名）；把 `enterprise_profile` 临时改名使其不可访问后再次解析，断言结果与改名前逐项相等（FSL-136）；另经议题服务创建议题，断言作者等于同一公开资料行。同目录的 `public-profile-content.test.ts`（文档、文档评论、议题、议题评论、cl、cl 评论的作者）与 `public-profile-social.test.ts`（频道成员、聊天消息、发布、私聊对象）断言旧企业用户在这些服务中的公开资料为兼容邮箱前缀与 `user.name`，并对上述每个投影（社交测试另含企业身份停用后的投影）断言不含企业登录名、资料显示名与兼容邮箱域名；前者另断言修改企业资料的显示名与通知邮箱后作者资料不变，后者另断言企业身份被停用后历史消息与发布的作者资料不变。
+`packages/engine/src/services/public-profile.test.ts` 以一次性 PG 断言公开资料行的全部字段（`toEqual`，飞书用户另断言无 `avatarUrl`）：飞书用户分姓名与邮箱无关、姓名等于邮箱、姓名含完整本地部分（大小写不同）、姓名只含域名片段（保留，且 `user.image` 非空时仍无 `avatarUrl`）、姓名只含本地部分的片段（保留）五种，另有用户 ID 偶然包含本地部分（用户名仍为用户 ID）、首字符拼出本地部分（缩写为 `A`、姓名保留）、本地部分为 `u` 且姓名为空（缩写为空字符串）、本地部分含于 `#64748b`（颜色为 `#525252`）、本地部分为单个字母且等于用户 ID 的首字符（显示名为用户 ID、缩写为其首字符）、姓名带首尾空白（原样保留）、姓名为空字符串与另有企业资料的飞书用户各一例，并断言这些行中（最后一种取用户 ID 首字符的情形除外）不等于用户 ID 的字段值不含 `@` 与（不区分大小写的）完整本地部分；legacy 用户一例，断言与此前的规则一致；兼容邮箱、另有企业资料行的旧企业用户一例，断言其按 legacy 规则投影（用户名为兼容邮箱前缀、显示名为去除首尾空白后的 `user.name`，不含企业登录名与资料显示名）；把 `enterprise_profile` 临时改名使其不可访问后再次解析，断言结果与改名前逐项相等（FSL-136）；另经议题服务创建议题，断言作者等于同一公开资料行。同目录的 `public-profile-content.test.ts`（文档、文档评论、议题、议题评论、cl、cl 评论的作者）与 `public-profile-social.test.ts`（频道成员、聊天消息、发布、私聊对象）断言旧企业用户在这些服务中的公开资料为兼容邮箱前缀与 `user.name`，并对上述每个投影（社交测试另含企业身份停用后的投影）断言不含企业登录名、资料显示名与兼容邮箱域名；前者另断言修改企业资料的显示名与通知邮箱后作者资料不变，后者另断言企业身份被停用后历史消息与发布的作者资料不变。
 
 ## 协作服务
 

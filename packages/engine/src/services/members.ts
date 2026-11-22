@@ -25,7 +25,7 @@ import {
   MegaNotFoundError,
   MegaUnauthorizedError,
 } from "../errors";
-import { fallbackPublicProfile, resolvePublicProfiles } from "./enterprise/public-profile";
+import { fallbackPublicProfile, resolvePublicProfiles } from "./public-profile";
 
 export type ChannelAccessDecision = {
   allow: boolean;

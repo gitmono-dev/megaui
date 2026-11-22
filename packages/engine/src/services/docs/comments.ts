@@ -22,7 +22,7 @@ import {
 import { and, asc, count, eq, isNull } from "drizzle-orm";
 import { MegaBadRequestError, MegaNotFoundError, MegaUnauthorizedError } from "../../errors";
 import type { AclService } from "../acl";
-import { fallbackPublicProfile, resolvePublicProfiles } from "../enterprise/public-profile";
+import { fallbackPublicProfile, resolvePublicProfiles } from "../public-profile";
 
 function newCommentId(prefix: string): string {
   return `${prefix}_${randomUUID().replace(/-/g, "").slice(0, 20)}`;

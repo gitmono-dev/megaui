@@ -14,9 +14,6 @@
     "build": "tsc --noEmit",
     "lint": "eslint .",
     "seed": "tsx ./src/seed.ts",
-    "enterprise:worker": "tsx ./src/workers/enterprise.ts",
-    "enterprise:admin": "tsx ./src/cli/enterprise-admin.ts",
-    "enterprise:approve": "tsx ./src/cli/approval-authority.ts",
     "bench:search": "vitest run --root ../.. packages/engine/src/services/search/cjk.test.ts -t bench:search"
   },
   "dependencies": {

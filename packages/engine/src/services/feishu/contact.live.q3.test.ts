@@ -6,8 +6,8 @@
 import { OFFICIAL_FEISHU_ORIGIN } from "@megaui/core";
 import { describe, expect, it } from "vitest";
 
-import { FeishuTransport, FeishuTransportError } from "../enterprise/feishu/http";
-import { FeishuTokenManager } from "../enterprise/feishu/token";
+import { FeishuTransport, FeishuTransportError } from "./http";
+import { FeishuTokenManager } from "./token";
 import { FeishuContactClient } from "./contact";
 
 const enabled = process.env.FEISHU_LIVE_CONTRACT === "1";

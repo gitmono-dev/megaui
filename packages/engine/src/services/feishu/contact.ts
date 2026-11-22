@@ -21,9 +21,9 @@
  * so nothing is requested once it has passed (`transport_deadline`). Without
  * options nothing changes.
  */
-import type { FeishuTransport } from "../enterprise/feishu/http";
-import type { FeishuTokenManager, FeishuTokenRequestOptions } from "../enterprise/feishu/token";
-import type { FeishuTenantCredentials } from "../enterprise/feishu/types";
+import type { FeishuTransport } from "./http";
+import type { FeishuTokenManager, FeishuTokenRequestOptions } from "./token";
+import type { FeishuTenantCredentials } from "./types";
 
 /** Directory v1 search, with open_id as the employee id type. */
 export const FEISHU_DIRECTORY_SEARCH_PATH =

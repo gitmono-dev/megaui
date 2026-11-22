@@ -26,10 +26,6 @@ export { createEmailSender, EmailSender, type EmailSenderConfig, type SendEmailO
 export { generateVerificationEmail, type VerificationEmailParams } from "./templates/verification";
 export { generateResetPasswordEmail, type ResetPasswordEmailParams } from "./templates/reset-password";
 export {
-  generateEnterpriseLoginEmail,
-  type EnterpriseLoginNotificationParams,
-} from "./templates/enterprise-login";
-export {
   generateProductNotificationEmail,
   isProductEventType,
   PRODUCT_EVENT_TYPES,

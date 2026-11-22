@@ -4,7 +4,7 @@
 // public-profile projection, never the compatibility email.
 import type { Database } from "@megaui/database";
 import type { User } from "@megaui/core";
-import { fallbackPublicProfile, resolvePublicProfiles } from "../enterprise/public-profile";
+import { fallbackPublicProfile, resolvePublicProfiles } from "../public-profile";
 
 export const placeholderUser = fallbackPublicProfile;
 

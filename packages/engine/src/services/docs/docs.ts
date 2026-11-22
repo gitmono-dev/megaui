@@ -47,7 +47,7 @@ import {
   MegaUnauthorizedError,
 } from "../../errors";
 import type { AclService } from "../acl";
-import { fallbackPublicProfile, resolvePublicProfiles } from "../enterprise/public-profile";
+import { fallbackPublicProfile, resolvePublicProfiles } from "../public-profile";
 import { replaceBlocksForSourceOnTx, type BlocksRepo } from "./blocks";
 import {
   BODY_FORMAT_VERSION_BLOCK_TREE,

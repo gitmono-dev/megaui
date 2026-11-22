@@ -116,4 +116,32 @@ describe("EmailSender (PK-07 — explicit config, no brand default)", () => {
     expect(result).toEqual({ ok: false, code: "invalid_payload", message: "payload.issueLink is required" });
     expect(testProvider.getAll()).toHaveLength(0);
   });
+
+  it("rejects compatibility addresses before invoking the provider", async () => {
+    const testProvider = createTestEmailProvider();
+    const sender = createEmailSender({
+      defaultFrom: "hello@deploy.example.com",
+      provider: { kind: "test", provider: testProvider },
+    });
+
+    await expect(sender.sendEmail({
+      to: "User <u_abc@identity.invalid>", subject: "blocked", html: "<p>blocked</p>",
+    })).rejects.toThrow(/COMPATIBILITY_ADDRESS_REJECTED/);
+    expect(testProvider.getAll()).toHaveLength(0);
+  });
+});
+
+describe("@megaui/email exports no enterprise API (FSL-137 AC9)", () => {
+  it("has no enterprise login notification sender on EmailSender", () => {
+    const sender = createEmailSender({ defaultFrom: "hello@deploy.example.com", provider: { kind: "test" } });
+    expect("sendEnterpriseLoginNotificationEmail" in sender).toBe(false);
+    const methods = Object.getOwnPropertyNames(Object.getPrototypeOf(sender));
+    expect(methods.filter(name => /enterprise/i.test(name))).toEqual([]);
+  });
+
+  it("has no enterprise export on the package root", async () => {
+    const root = await import("./index");
+    expect("generateEnterpriseLoginEmail" in root).toBe(false);
+    expect(Object.keys(root).filter(name => /enterprise/i.test(name))).toEqual([]);
+  });
 });

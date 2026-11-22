@@ -13,10 +13,6 @@ import {
   type ProductNotificationParams,
   type ProductNotificationResult,
 } from "./templates/product-notifications";
-import {
-  generateEnterpriseLoginEmail,
-  type EnterpriseLoginNotificationParams,
-} from "./templates/enterprise-login";
 import { generateResetPasswordEmail, type ResetPasswordEmailParams } from "./templates/reset-password";
 import { generateVerificationEmail, type VerificationEmailParams } from "./templates/verification";
 import type { EmailOptions, EmailProviderClient, EmailResponse } from "./types";
@@ -57,15 +53,6 @@ export class EmailSender {
       throw new Error("EMAIL_COMPATIBILITY_ADDRESS_REJECTED");
     }
     return this.provider.send({ ...options, from: options.from || this.defaultFrom });
-  }
-
-  async sendEnterpriseLoginNotificationEmail(
-    to: string,
-    params: EnterpriseLoginNotificationParams,
-    options: Omit<SendEmailOptions, "to" | "subject" | "html"> = {},
-  ): Promise<EmailResponse> {
-    const { subject, html } = generateEnterpriseLoginEmail(params);
-    return this.sendEmail({ to, subject, html, ...options });
   }
 
   async sendVerificationEmail(

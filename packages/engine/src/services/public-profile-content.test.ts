@@ -3,14 +3,14 @@
 import { createDatabaseClient, type DatabaseClient } from "@megaui/database";
 import { createIsolatedPostgres, type IsolatedPostgres } from "@megaui/database/test-support";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { seedMegaDatabase } from "../../seed";
-import { USERS } from "../../testing/fixtures";
-import { createClsService } from "../cls";
-import { createAclService } from "../acl";
-import { createBlocksRepo } from "../docs/blocks";
-import { createLinksRepo } from "../docs/links";
-import { createDocsService } from "../docs/docs";
-import { createIssuesService } from "../issues";
+import { seedMegaDatabase } from "../seed";
+import { USERS } from "../testing/fixtures";
+import { createClsService } from "./cls";
+import { createAclService } from "./acl";
+import { createBlocksRepo } from "./docs/blocks";
+import { createLinksRepo } from "./docs/links";
+import { createDocsService } from "./docs/docs";
+import { createIssuesService } from "./issues";
 import { fallbackPublicProfile, resolvePublicProfiles } from "./public-profile";
 
 const EMPTY_BODY = "{\"root\":{\"children\":[]}}";

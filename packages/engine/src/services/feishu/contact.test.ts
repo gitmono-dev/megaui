@@ -1,7 +1,7 @@
 // megaui-only (FSL-117): unit tests for the Directory v1 member lookup client.
 import { describe, expect, it } from "vitest";
 
-import { FeishuTransport, FeishuTransportError } from "../enterprise/feishu/http";
+import { FeishuTransport, FeishuTransportError } from "./http";
 import {
   FEISHU_CONTACT_INVALID_RESPONSE,
   FeishuContactClient,

@@ -5,8 +5,8 @@ import type { User } from "@megaui/core";
 import { createDatabaseClient, type DatabaseClient } from "@megaui/database";
 import { createIsolatedPostgres, type IsolatedPostgres } from "@megaui/database/test-support";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { seedMegaDatabase } from "../../seed";
-import { createIssuesService } from "../issues";
+import { seedMegaDatabase } from "../seed";
+import { createIssuesService } from "./issues";
 import { resolvePublicProfiles } from "./public-profile";
 
 const APP_ID = "cli_fsl153_app";

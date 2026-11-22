@@ -76,7 +76,7 @@ import {
 } from "../../errors";
 import { parsePagination } from "../../context";
 import { parseReactionRows, projectReactions, toggleReactionRow } from "../chat/reactions";
-import { fallbackPublicProfile, resolvePublicProfiles } from "../enterprise/public-profile";
+import { fallbackPublicProfile, resolvePublicProfiles } from "../public-profile";
 import type { CreateIssueInput, IssueTransitionAction, ListIssuesInput, ListIssuesResult } from "./types";
 
 /** Advisory-lock namespace serializing `mega_issues.number` allocation. */
