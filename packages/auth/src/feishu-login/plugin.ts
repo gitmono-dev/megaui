@@ -1,4 +1,4 @@
-// megaui:packages/auth/src/enterprise-otp/plugin.ts@24a8551 (megaui-only FSL-123, FSL-124: the feishuLogin Better Auth plugin)
+// megaui-only (FSL-123, FSL-124: the feishuLogin Better Auth plugin; 原参照见 docs/implementation/feishu-login.md「来源」)
 /**
  * FSL-123, FSL-124: the `feishuLogin` Better Auth plugin (ADR-FSL-11 「入口」「请求」「校验」).
  *

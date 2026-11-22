@@ -92,3 +92,55 @@ describe("FSL-132: Web enterprise wiring removed", () => {
     }
   });
 });
+
+describe("FSL-133: the @megaui/auth enterprise plugin removed", () => {
+  // AC3: the directory and every file it held are gone.
+  const deletedPaths = [
+    "packages/auth/src/enterprise-otp",
+    ...["code", "consume", "crypto", "input", "plugin", "policy", "public-session-client", "public-session", "request",
+      "status", "types", "verify"].map(name => `packages/auth/src/enterprise-otp/${name}.ts`),
+    ...["code", "input", "plugin", "request"].map(name => `packages/auth/src/enterprise-otp/${name}.test.ts`),
+    ...["consume", "verify"].map(name => `packages/auth/src/enterprise-otp/${name}.integration.test.ts`),
+  ];
+
+  it.each(deletedPaths.map(path => ["AC3", path] as const))("%s: %s does not exist", (_ac, path) => {
+    expect(existsSync(join(ROOT, path)), path).toBe(false);
+  });
+
+  it("AC1: the code generator lives in packages/auth/src/feishu-login/code.ts", () => {
+    expect(existsSync(join(ROOT, "packages/auth/src/feishu-login/code.ts"))).toBe(true);
+  });
+
+  // AC11: the card's zero-hit guard, run exactly as written in the card.
+  const PATTERN = "enterprise-otp|enterprisePairing|enterpriseSession|enterpriseOperationPolicy";
+  const guardArgs = ["-n", PATTERN, "packages/auth/src", "apps", "--glob", "!**/node_modules/**", "--glob", "!**/.next/**",
+    "--glob", "!**/*.tsbuildinfo", "--glob", "!**/*.test.ts", "--glob", "!**/*.spec.ts", "--glob", "!**/tests/**"];
+
+  it("AC11: the rg guard over packages/auth/src and apps finds nothing (exit 1)", () => {
+    const result = rg(guardArgs, ROOT);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toBe("");
+    expect(result.status).toBe(1);
+  });
+
+  it("AC11: the same rg guard reports a planted hit (exit 0) and ignores tests (exit 1)", () => {
+    const fixture = mkdtempSync(join(tmpdir(), "megaui-enterprise-removed-"));
+    try {
+      const auth = join(fixture, "packages/auth/src");
+      const web = join(fixture, "apps/web");
+      mkdirSync(join(auth, "feishu-login"), { recursive: true });
+      mkdirSync(join(web, "tests/unit"), { recursive: true });
+      mkdirSync(join(web, "node_modules/x"), { recursive: true });
+      writeFileSync(join(auth, "feishu-login/a.test.ts"), "import './enterprise-otp/code'\n");
+      writeFileSync(join(web, "tests/unit/b.ts"), "const enterprisePairing = true\n");
+      writeFileSync(join(web, "node_modules/x/index.ts"), "enterpriseSession\n");
+      expect(rg(guardArgs, fixture).status).toBe(1);
+      writeFileSync(join(auth, "c.ts"), "export const enterpriseOperationPolicy = 1\n");
+      const hit = rg(guardArgs, fixture);
+      expect(hit.status).toBe(0);
+      expect(hit.stdout).toContain("packages/auth/src/c.ts");
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+});

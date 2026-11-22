@@ -1,4 +1,4 @@
-// megaui:packages/auth/src/enterprise-otp/verify.ts@24a8551 (megaui-only FSL-124, FSL-151, FSL-125, FSL-152, FSL-169, FSL-161: the verify endpoint of the Feishu login)
+// megaui-only (FSL-124, FSL-151, FSL-125, FSL-152, FSL-169, FSL-161: the verify endpoint of the Feishu login; 原参照见 docs/implementation/feishu-login.md「来源」)
 /**
  * FSL-124 (success path), FSL-151 (failure path and concurrency), FSL-125 (first-login account
  * creation), FSL-152 (its conflict, rollback and concurrency) and FSL-169 (the compensation of a
@@ -69,7 +69,7 @@ import {
   type DatabaseClient,
 } from "@megaui/database";
 
-import { ENTERPRISE_OTP_ALPHABET, ENTERPRISE_OTP_LENGTH } from "../enterprise-otp/code";
+import { FEISHU_LOGIN_CODE_ALPHABET, FEISHU_LOGIN_CODE_LENGTH } from "./code";
 import { feishuLoginFlowHash, readFeishuLoginFlowCookie } from "./cookie";
 import {
   FEISHU_LOGIN_KEY_MISMATCH,
@@ -161,8 +161,8 @@ export function feishuLoginOpenIdHmac(key: Uint8Array, appId: string, openId: st
 export function normalizeFeishuLoginCode(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const code = value.trim().toUpperCase();
-  if (code.length !== ENTERPRISE_OTP_LENGTH) return null;
-  for (const char of code) if (!ENTERPRISE_OTP_ALPHABET.includes(char)) return null;
+  if (code.length !== FEISHU_LOGIN_CODE_LENGTH) return null;
+  for (const char of code) if (!FEISHU_LOGIN_CODE_ALPHABET.includes(char)) return null;
   return code;
 }
 

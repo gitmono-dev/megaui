@@ -1,4 +1,4 @@
-// megaui:packages/auth/src/enterprise-otp/policy.ts@ac1f445 (megaui-only FSL-127: the Feishu-mode operation allowlist)
+// megaui-only (FSL-127: the Feishu-mode operation allowlist; 原参照见 docs/implementation/feishu-login.md「来源」)
 //
 // Diff vs the enterprise operation policy (GC-03): no persistent mode — `createAuth` registers this
 // policy exactly when it receives the `feishuLogin` option, and then does not register the

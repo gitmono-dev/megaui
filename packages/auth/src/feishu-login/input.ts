@@ -1,4 +1,4 @@
-// megaui:packages/auth/src/enterprise-otp/input.ts@24a8551 (megaui-only FSL-123: email admission of the Feishu login request)
+// megaui-only (FSL-123: email admission of the Feishu login request; 原参照见 docs/implementation/feishu-login.md「来源」)
 /**
  * FSL-123: the only email syntax the Feishu login request admits (ADR-FSL-11 「请求」).
  *

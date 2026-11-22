@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   createAuth,
-  generateEnterpriseOtpCode,
+  generateFeishuLoginCode,
   resolveSocialProvidersFromEnv,
   type Auth,
 } from "@megaui/auth";
@@ -75,7 +75,7 @@ export function createFeishuWebAuth(options: FeishuWebAuthOptions = {}): Auth {
     otpHmacKey: config.otpHmacKey,
     trustedSiteUrl: secrets.betterAuthUrl,
     target: config.target,
-    generateCode: generateEnterpriseOtpCode,
+    generateCode: generateFeishuLoginCode,
   });
   return createAuth({
     appName: secrets.appName,

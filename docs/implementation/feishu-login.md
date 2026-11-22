@@ -155,7 +155,7 @@ work_info.staff_status
 - 服务只用 `FEISHU_APP_ID`、`FEISHU_APP_SECRET`、`ENTERPRISE_OTP_HMAC_KEY`（解码后的 32 字节）与 `BETTER_AUTH_URL` 构造，另传入 FSL-148 选出的冻结 provider 目标与数据库连接池。
 - 现有凭据类型与消息客户端要求的 `tenantKey` 取内部标签 `app:<FEISHU_APP_ID>`（`feishuLoginTenantKey`），只作 token 缓存键，从不发送给飞书，也不写入任何表。
 - 私聊文案中的可信站点取 `BETTER_AUTH_URL`。
-- 验证码生成器以构造参数 `generateCode` 注入：engine 不依赖 `@megaui/auth`，Web 注入 `@megaui/auth` 的 8 位 CSPRNG 生成器 `generateEnterpriseOtpCode`（FSL-150），测试注入同一生成器。
+- 验证码生成器以构造参数 `generateCode` 注入：engine 不依赖 `@megaui/auth`，Web 注入 `@megaui/auth` 的 8 位 CSPRNG 生成器 `generateFeishuLoginCode`（`packages/auth/src/feishu-login/code.ts`，FSL-150；FSL-133 起使用此名，生成规则不变），测试注入同一生成器。
 - 服务构造的 `FeishuTransport`（token、通讯录查询与私聊发送共用）一律 `maxAttempts: 1`（FSL-149）：每次传输层请求（`request()`）恰好一次 HTTP 请求，传输层不再重试；私聊的重试只由本服务按下文「发送结果」控制，查询阶段的瞬时失败按 provider 失败作废本行，用户可在冷却后重新请求。可选构造参数 `attemptTimeoutMs`（单次 HTTP 尝试的超时，默认 `FEISHU_OPERATION_BUDGET_MS` 即 20 秒）与 `retryBackoffMs`（服务重试的退避基数，默认 250 毫秒，第 n 次重试前等待基数 × 2^(n−1)）只供测试缩短等待。
 - `FeishuTransport` 的 `maxAttempts` 是可选参数（正整数，默认 `FEISHU_MAX_ATTEMPTS` = 3，非正整数在构造时以 `INVALID_FEISHU_TRANSPORT_MAX_ATTEMPTS` 拒绝），未传入的现有调用行为不变。
 - 可选构造参数 `now`（毫秒时钟，默认单调时钟 `performance.timeOrigin + performance.now()`，不随系统时间调整跳变）同时用于发码截止时间、传输层与 token 缓存（FSL-160），只供测试注入时钟越过截止时间。
@@ -293,11 +293,13 @@ FSL-154 起上述用例中断言已授予或正在等待的咨询锁集合的，
 
 飞书登录的 HTTP 端点由 `@megaui/auth` 的 better-auth 插件 `feishuLogin`（`packages/auth/src/feishu-login/`，插件 ID `megaui-feishu-login`）提供。`createAuth` 只在收到 `feishuLogin` 选项（`{ issue: { reserve, deliver }, log?, verify? }`；`issue` 缺少任一端口时构造即抛出 `INVALID_FEISHU_LOGIN_PLUGIN_CONFIG`）时注册该插件，未传入时两个端点都不存在（404）；verify 端点另外只在选项含 `verify`（`{ pool, appId, otpHmacKey, log? }`：数据库连接池、`FEISHU_APP_ID`、解码后的 32 字节 `ENTERPRISE_OTP_HMAC_KEY` 与只接收稳定日志键的 `log`（默认 `console.warn`，FSL-152），缺少应用 ID、密钥不是 32 字节或 `log` 不是函数时构造即抛出 `INVALID_FEISHU_LOGIN_PLUGIN_CONFIG`）时注册，否则为 404。Web 只在飞书模式下传入该选项（含 `verify`），见下文「启用条件」。
 
+**旧企业接口已删除（FSL-133）：** `@megaui/auth` 中旧的企业认证插件（`/api/auth/enterprise/*`：配对请求、配对状态、企业 OTP 校验与公开会话投影）及其客户端（`createAuthClient` 上的企业命名空间与把 `/get-session` 改写到企业会话投影的客户端插件）已删除，`createAuth` 不再接受企业配置项，会话也不再声明企业附加字段。任何模式下 `/api/auth/enterprise/*` 都不再有端点，返回 404。飞书登录的验证码生成器与常量迁至 `packages/auth/src/feishu-login/code.ts`，以 `generateFeishuLoginCode`、`FEISHU_LOGIN_CODE_ALPHABET`、`FEISHU_LOGIN_CODE_LENGTH` 导出（生成规则不变）；verify 以同一字母表与长度判定输入。
+
 ### 启用条件
 
 Web（`apps/web/lib/auth.ts`，FSL-150）只在 `resolveAuthMode`（见「配置」）的结果为 `enterprise` + `feishu` 时（`isFeishuWebMode`）启用飞书登录：
 
-- **认证实例：** `getAuth()` 返回飞书模式的认证实例（`createFeishuWebAuth`）。它以 `readFeishuLoginConfig(process.env)` 的应用 ID、应用密钥、HMAC 密钥与 provider 目标，以 `BETTER_AUTH_URL` 作为私聊中的可信站点，以 `@megaui/auth` 的 `generateEnterpriseOtpCode` 作为验证码生成器，在 `DATABASE_URL` 上的共享连接池上构造 engine 的签发服务（`createFeishuLoginIssuer`），再以 `feishuLogin: { issue: { reserve, deliver }, log, verify: { pool, appId, otpHmacKey, log } }` 传给 `createAuth`：request 与 verify 两个端点、操作白名单（见「操作白名单」）与密钥一致性检查因此都注册。不传入任何现有企业配置项（`enterprisePairing`、`enterpriseOperationPolicy`、`enterpriseSession`），也不传入社交登录 provider。插件与 verify 的 `log` 只经 `console.warn` 输出稳定日志键；签发服务的日志键沿用 engine 默认的 `console.info`。实例在同一 JS 模块实例内缓存，认证密钥与地址、邮件配置、`NODE_ENV` 或飞书登录的键变化时重新构造。配置无效时 `getAuth()` 以 `INVALID_FEISHU_LOGIN_CONFIG` 抛错。
+- **认证实例：** `getAuth()` 返回飞书模式的认证实例（`createFeishuWebAuth`）。它以 `readFeishuLoginConfig(process.env)` 的应用 ID、应用密钥、HMAC 密钥与 provider 目标，以 `BETTER_AUTH_URL` 作为私聊中的可信站点，以 `@megaui/auth` 的 `generateFeishuLoginCode` 作为验证码生成器，在 `DATABASE_URL` 上的共享连接池上构造 engine 的签发服务（`createFeishuLoginIssuer`），再以 `feishuLogin: { issue: { reserve, deliver }, log, verify: { pool, appId, otpHmacKey, log } }` 传给 `createAuth`：request 与 verify 两个端点、操作白名单（见「操作白名单」）与密钥一致性检查因此都注册。不传入社交登录 provider（`createAuth` 自 FSL-133 起已没有企业配置项）。插件与 verify 的 `log` 只经 `console.warn` 输出稳定日志键；签发服务的日志键沿用 engine 默认的 `console.info`。实例在同一 JS 模块实例内缓存，认证密钥与地址、邮件配置、`NODE_ENV` 或飞书登录的键变化时重新构造。配置无效时 `getAuth()` 以 `INVALID_FEISHU_LOGIN_CONFIG` 抛错。
 - **中间件：** `/api/auth/*` 在「会话」所述的 `/get-session`、`/sign-out` 之外放行 `/feishu-login/request` 与 `/feishu-login/verify`，同样按路径逐字匹配，变体返回 404。
 - **启动钩子：** `apps/web/instrumentation.ts` 的 `register()`（Node 运行时；Next 在处理任何请求之前等待它）先以 `assertWebAuthMode` 调用 `resolveAuthMode`，被拒绝的组合以其 `AuthModeError` 拒绝启动（FSL-132，见「配置」）；飞书模式下再调用 `startFeishuWebRuntime`：先以 `readFeishuLoginConfig` 校验配置（无效时 `register()` 以 `INVALID_FEISHU_LOGIN_CONFIG` 拒绝、不启动清理），再以共享连接池（`@megaui/database` 默认连接超时 5 秒）调用 `startFeishuLoginCleanup` 并等待它的第一次执行结束（成功或失败，见「数据」的「到期清理」）。它不构造认证实例，因此第一次清理不依赖惰性的 `getAuth()`。同一 JS 模块实例中再次调用时等待已有的启动，不启动第二个调度。启动钩子不安装任何信号处理器，清理定时器 `unref()`，关闭沿用 Next 的默认行为。
 - **其它模式：** `legacy`（`AUTH_PROVIDER` 未设置或为 `local`）下 `getAuth()` 返回 legacy 认证实例（`prepareWebAuth`：邮箱密码与已配置的社交登录，不传入任何企业配置项；输入变化时重新构造），`register()` 不注册插件、不启动清理。`resolveAuthMode` 拒绝的组合（自 FSL-132 起包括 `maintenance` 与未设置 `AUTH_PROVIDER` 的 `enterprise`）由 `register()` 拒绝启动。两个端点在 `legacy` 下由 better-auth 返回 404，在被拒绝的组合下由中间件返回 404 `{ "error": "NOT_FOUND" }`。
@@ -435,16 +437,16 @@ FSL-169 的用例（同在 `signup.test.ts`，以测试数据库中的触发器�
 
 ## 操作白名单
 
-`createAuth` 收到 `feishuLogin` 选项时，在全部插件之前注册飞书模式的 better-auth 操作策略（`packages/auth/src/feishu-login/policy.ts`，插件 ID `megaui-feishu-login-operation-policy`，FSL-127），并且不注册现有企业操作策略（`packages/auth/src/enterprise-otp/policy.ts`）：同时传入 `enterpriseOperationPolicy` 时它同样不注册，其 `resolveMode` 不被调用。未传入 `feishuLogin` 时不注册本策略，行为与本卡之前相同。
+`createAuth` 收到 `feishuLogin` 选项时，在全部插件之前注册飞书模式的 better-auth 操作策略（`packages/auth/src/feishu-login/policy.ts`，插件 ID `megaui-feishu-login-operation-policy`，FSL-127）。未传入 `feishuLogin` 时不注册本策略。
 
-- **白名单：** 只有 `/feishu-login/request`、`/feishu-login/verify`、`/get-session` 与 `/sign-out` 四个操作可达（verify 仍只在选项含 `verify` 时注册，见「HTTP 接口」）。认证实例上的其余全部端点一律拒绝，包括邮箱密码注册与登录、社交登录、找回与重置密码、admin 插件的接口（含 `/admin/create-user`）、旧 `/enterprise/*`（同时传入企业配置项、这些端点因此存在时同样拒绝），以及之后加入的插件新增的端点（判定只看路径，不依赖端点清单）。
+- **白名单：** 只有 `/feishu-login/request`、`/feishu-login/verify`、`/get-session` 与 `/sign-out` 四个操作可达（verify 仍只在选项含 `verify` 时注册，见「HTTP 接口」）。认证实例上的其余全部端点一律拒绝，包括邮箱密码注册与登录、社交登录、找回与重置密码、admin 插件的接口（含 `/admin/create-user`）、旧 `/enterprise/*` 路径（FSL-133 起已没有这些端点，经 HTTP 同样返回 404），以及之后加入的插件新增的端点（判定只看路径，不依赖端点清单）。
 - **HTTP：** 策略的 `onRequest` 先于其它插件的 `onRequest`、也先于路由匹配执行。它取请求 URL 经 WHATWG URL 解析后的 pathname（better-auth 路由所用的同一个值，不解码百分号编码），去掉认证实例上下文中 `baseURL`（better-auth 补全默认路径后的值）的路径部分（即路由去掉的同一前缀，Web 挂载下为 `/api/auth`）后，与四个操作逐字比较；查询串不参与比较。尾斜杠、重复斜杠、含百分号编码的字符（如 `%2F`、`%67et-session`），以及操作部分或前缀部分的大小写不同，都不等于四个操作之一，返回 404 `{ "error": "NOT_FOUND" }`（带 `Cache-Control: no-store`），请求不到达任何端点。URL 解析本身会规范化的写法（点段 `/./`、`/../` 及其编码形式 `%2e`，以及反斜杠）在比较之前已被解析消去，按解析后的路径判定。better-auth 自身的限流（只在生产环境启用）在全部插件的 `onRequest` 之前执行，因此生产环境中超出限流的请求先得到 429，同样不到达端点。
 - **直接调用：** 策略的 `before` 钩子匹配全部端点，比较被调用端点自身的路径：服务端代码经 `auth.api.*` 调用四个操作之外的端点时抛出 better-auth `APIError`（`NOT_FOUND`，消息 `AUTH_OPERATION_NOT_FOUND`），端点处理函数不执行。
 - **范围：** 本策略只限制该认证实例的 better-auth 操作；Web 中间件对 `/api/auth/*` 的放行范围见「会话」（FSL-126）。
 
 **当前状态：** 飞书模式下 Web 向 `createAuth` 传入 `feishuLogin` 选项（FSL-150，见「HTTP 接口」的「启用条件」），本策略在飞书模式的认证实例上生效；其它模式不传入该选项，不注册本策略。
 
-`packages/auth/src/feishu-login/policy.test.ts` 以 `createAuth` 加飞书登录配置构造（`issue` 端口为替身；`verify` 选项的连接池为替身，只应答密钥一致性检查的查询），分两种构造各跑一遍：只传飞书登录配置，以及另外同时传入 `enterprisePairing` 与 `enterpriseOperationPolicy`（`resolveMode` 恒为 `enterprise`）。断言：策略排在插件列表首位、企业操作策略未注册且 `resolveMode` 未被调用，未传入 `feishuLogin` 时不注册本策略；四个操作经 HTTP 与 `auth.api` 都可达（request 返回 202 且调用 `reserve`，无 flow Cookie 的 verify 在密钥检查后返回 401 `invalid`，无会话的 `get-session` 返回 200 `null`，`sign-out` 返回 200）；`/sign-up/email`、`/sign-in/email`、`/sign-in/social`、`/admin/create-user` 与 `/enterprise/request`（只传飞书登录配置时该端点不存在，经 HTTP 同样返回 404），以及实例上其余每个端点，经 HTTP 返回上述 404、经 `auth.api` 抛出 `NOT_FOUND`，签发端口、连接池、配对端口与邮件发送均未被调用；四个路径的尾斜杠、大小写、百分号编码与重复斜杠变体，以及 `/api/auth` 前缀的大小写、编码、尾斜杠与重复斜杠变体，都返回 404。
+`packages/auth/src/feishu-login/policy.test.ts` 以 `createAuth` 加飞书登录配置构造（`issue` 端口为替身；`verify` 选项的连接池为替身，只应答密钥一致性检查的查询）。断言：策略排在插件列表首位，未传入 `feishuLogin` 时不注册本策略；四个操作经 HTTP 与 `auth.api` 都可达（request 返回 202 且调用 `reserve`，无 flow Cookie 的 verify 在密钥检查后返回 401 `invalid`，无会话的 `get-session` 返回 200 `null`，`sign-out` 返回 200）；`/sign-up/email`、`/sign-in/email`、`/sign-in/social`、`/admin/create-user` 与 `/enterprise/request`（该端点不存在，经 HTTP 同样返回 404，实例上也没有任何 `/enterprise/*` 端点），以及实例上其余每个端点，经 HTTP 返回上述 404、经 `auth.api` 抛出 `NOT_FOUND`，签发端口、连接池与邮件发送均未被调用；四个路径的尾斜杠、大小写、百分号编码与重复斜杠变体，以及 `/api/auth` 前缀的大小写、编码、尾斜杠与重复斜杠变体，都返回 404。
 
 ## 会话
 
@@ -558,3 +560,17 @@ collab-server（`apps/collab-server`）在飞书模式下的连接校验（FSL-1
 **当前状态：** 飞书模式下 Web 向插件传入 `verify` 选项（FSL-150，见「HTTP 接口」的「启用条件」），request 与 verify 因此运行该检查；其它模式不注册插件，不运行该检查。
 
 `packages/auth/src/feishu-login/key-check.test.ts` 以 `createAuth` 加一次性 PG 构造，断言：`feishuLoginKeyFingerprint` 与独立计算的 HMAC 相同；`ensureKeyCheck` 首次写入、之后返回已存值且不覆盖、拒绝非法输入、8 个并发首次调用都返回唯一写入的值；首次 request（或首次 verify）写入当前指纹，且表中的值不等于、不包含密钥的十六进制或 base64 编码；指纹一致时 request 返回 202 并写入预约；已存指纹来自其它密钥或其它应用 ID 时，已知、未知邮箱与带 flow Cookie 的 request 都返回相同的 503 `unavailable`、不设置 Cookie、不调用 `reserve` 与 `deliver`、不写入任何验证码行，且只输出 `FEISHU_LOGIN_KEY_MISMATCH`；不一致与预约失败同时出现时返回 `unavailable` 而非 `retry`，production 限流配置下超限后返回 429，非法输入仍返回 400；检查失败（连接池不可达）时 request 与 verify 都返回 503 `unavailable`；更换密钥或应用 ID 后，verify 对正确与错误验证码都返回 503 `unavailable`，验证码行的状态、`failed_attempts` 与四个敏感字段不变（仍为 `active`、`failed_attempts` 为 0），没有用户、绑定或会话；一致结果在实例内保留、不一致结果每次重新检查。AC7 分别以「换新密钥」与「换新 `FEISHU_APP_ID`」：先以原配置完成首次建号，再改变配置并以 Mock 通讯录使该成员的邮箱改变，request 返回 503 且不预约，以改变后配置写入的验证码 verify 也返回 503，`user` 与 `feishu_identities` 行数不变；对照用例删除指纹后同一验证码返回 200 且 `user` 增为 2 行，说明该检查拦下的正是重复建号。
+
+## 来源
+
+自 `packages/auth/src/enterprise-otp/` 迁来或以其为来源的飞书登录文件（FSL-133），首行改为 `// megaui-only (<卡号说明>; 原参照见 docs/implementation/feishu-login.md「来源」)`，原首行（参照源标注，GC-03）逐字移入下表。`code.ts` 由 FSL-133 自 `packages/auth/src/enterprise-otp/code.ts` 迁入（只改名，生成规则不变）；其余文件路径不变。`packages/auth/src/provenance.test.ts` 以固定期望值断言这些文件的首行，以及下表每行与原首行逐字一致。
+
+| 文件 | 原首行（FSL-133 之前，逐字） |
+|---|---|
+| `packages/auth/src/feishu-login/plugin.ts` | `// megaui:packages/auth/src/enterprise-otp/plugin.ts@24a8551 (megaui-only FSL-123, FSL-124: the feishuLogin Better Auth plugin)` |
+| `packages/auth/src/feishu-login/request.ts` | `// megaui:packages/auth/src/enterprise-otp/request.ts@24a8551 (megaui-only FSL-123, FSL-154, FSL-161: the request contract of the Feishu login)` |
+| `packages/auth/src/feishu-login/verify.ts` | `// megaui:packages/auth/src/enterprise-otp/verify.ts@24a8551 (megaui-only FSL-124, FSL-151, FSL-125, FSL-152, FSL-169, FSL-161: the verify endpoint of the Feishu login)` |
+| `packages/auth/src/feishu-login/policy.ts` | `// megaui:packages/auth/src/enterprise-otp/policy.ts@ac1f445 (megaui-only FSL-127: the Feishu-mode operation allowlist)` |
+| `packages/auth/src/feishu-login/cookie.ts` | `// megaui:packages/auth/src/enterprise-otp/plugin.ts@24a8551 (megaui-only FSL-123: the Feishu login flow cookie)` |
+| `packages/auth/src/feishu-login/input.ts` | `// megaui:packages/auth/src/enterprise-otp/input.ts@24a8551 (megaui-only FSL-123: email admission of the Feishu login request)` |
+| `packages/auth/src/feishu-login/code.ts` | `// megaui-only (FS-35): CSPRNG generation and the single canonical OTP predicate.` |

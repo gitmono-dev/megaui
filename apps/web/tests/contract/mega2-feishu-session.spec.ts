@@ -15,7 +15,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { NextRequest } from "next/server";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createAuth, ENTERPRISE_OTP_ALPHABET, ENTERPRISE_OTP_LENGTH, FEISHU_LOGIN_FLOW_COOKIE } from "@megaui/auth";
+import { createAuth, FEISHU_LOGIN_CODE_ALPHABET, FEISHU_LOGIN_CODE_LENGTH, FEISHU_LOGIN_FLOW_COOKIE } from "@megaui/auth";
 import {
   closeDatabaseClient,
   createDatabaseClient,
@@ -106,11 +106,11 @@ interface Member {
 let codeCounter = 0;
 function nextCode(): string {
   // A distinct code of the verify alphabet for every login.
-  const alphabet = ENTERPRISE_OTP_ALPHABET;
+  const alphabet = FEISHU_LOGIN_CODE_ALPHABET;
   codeCounter += 1;
   let value = codeCounter;
   let code = "";
-  for (let index = 0; index < ENTERPRISE_OTP_LENGTH; index += 1) {
+  for (let index = 0; index < FEISHU_LOGIN_CODE_LENGTH; index += 1) {
     code += alphabet[value % alphabet.length];
     value = Math.floor(value / alphabet.length);
   }

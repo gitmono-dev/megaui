@@ -325,7 +325,7 @@ describe("FSL-154: a flow is bound to its latest request (real Mock HTTP and Pos
     // borrows the module by its source path (outside this package's rootDir, TS6059).
     // eslint-disable-next-line @typescript-eslint/ban-ts-comment
     // @ts-ignore TS6059 only: the borrowed module is outside the engine rootDir.
-    generateCode = (await import("../../../../auth/src/enterprise-otp/code")).generateEnterpriseOtpCode;
+    generateCode = (await import("../../../../auth/src/feishu-login/code")).generateFeishuLoginCode;
     receiver = createServer((request, response) => {
       request.resume();
       request.on("end", () => response.end("{}"));

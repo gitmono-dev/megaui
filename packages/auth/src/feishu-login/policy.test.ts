@@ -13,10 +13,7 @@ import {
 
 const ORIGIN = "http://127.0.0.1:3000";
 const BASE = `${ORIGIN}/api/auth`;
-const ENTERPRISE_POLICY_ID = "megaui-enterprise-operation-policy";
 const VALID_CODE = "A2B3C4D5";
-
-type Fixture = "feishu only" | "feishu with enterprise options";
 
 /**
  * A pool stub for the verify option: the key-check query echoes the instance's own fingerprint
@@ -33,13 +30,10 @@ function stubPool() {
   return { query, connect };
 }
 
-function build(fixture: Fixture = "feishu only") {
+function build() {
   const issue = { reserve: vi.fn(async () => ({ reserved: true })), deliver: vi.fn(async () => undefined) };
   const pool = stubPool();
   const email = { sendVerificationEmail: vi.fn(), sendResetPasswordEmail: vi.fn() };
-  const pairingPort = vi.fn(async () => ({ kind: "accepted" as const, status: 202 as const,
-    body: { pairingId: "00000000-0000-0000-0000-000000000001", pairingToken: "A".repeat(43), expiresIn: 120 as const, resendAfter: 60 as const } }));
-  const resolveMode = vi.fn(() => "enterprise" as const);
   const auth = createAuth({
     appName: "megaui-test",
     secret: "test-secret-at-least-32-characters-long",
@@ -52,16 +46,8 @@ function build(fixture: Fixture = "feishu only") {
       log: () => undefined,
       verify: { pool: pool as never, appId: "cli_fsl127_app", otpHmacKey: new Uint8Array(32).fill(7), log: () => undefined },
     },
-    // The worst case: a caller that also passes every enterprise option. In enterprise mode the
-    // enterprise policy would reject `/feishu-login/*`; it must not be registered at all.
-    ...(fixture === "feishu with enterprise options"
-      ? {
-          enterprisePairing: { pairingPort, resolveTransport: () => ({ peerAddress: "192.0.2.1" }) },
-          enterpriseOperationPolicy: { resolveMode, httpBasePath: "/api/auth" },
-        }
-      : {}),
   });
-  return { auth, issue, pool, email, pairingPort, resolveMode };
+  return { auth, issue, pool, email };
 }
 
 type Built = ReturnType<typeof build>;
@@ -86,7 +72,6 @@ function expectNothingRan(built: Built): void {
   expect(built.issue.deliver).not.toHaveBeenCalled();
   expect(built.pool.query).not.toHaveBeenCalled();
   expect(built.pool.connect).not.toHaveBeenCalled();
-  expect(built.pairingPort).not.toHaveBeenCalled();
   expect(built.email.sendVerificationEmail).not.toHaveBeenCalled();
   expect(built.email.sendResetPasswordEmail).not.toHaveBeenCalled();
 }
@@ -122,8 +107,6 @@ const NAMED_DENIALS = [
   { path: "/enterprise/request", body: { alias: "alice" } },
 ] as const;
 
-const FIXTURES: Fixture[] = ["feishu only", "feishu with enterprise options"];
-
 describe("feishu login operation allowlist (FSL-127)", () => {
   it("lists exactly the four operations and matches them exactly", () => {
     expect([...FEISHU_LOGIN_AUTH_OPERATIONS]).toEqual(["/feishu-login/request", "/feishu-login/verify", "/get-session", "/sign-out"]);
@@ -133,7 +116,7 @@ describe("feishu login operation allowlist (FSL-127)", () => {
     }
   });
 
-  it("is registered first only with the feishuLogin option, which also leaves the enterprise policy out", async () => {
+  it("is registered first only with the feishuLogin option", async () => {
     const withoutFeishu = createAuth({
       appName: "megaui-test",
       secret: "test-secret-at-least-32-characters-long",
@@ -141,28 +124,21 @@ describe("feishu login operation allowlist (FSL-127)", () => {
       db: {} as never,
       email: { sendVerificationEmail: vi.fn(), sendResetPasswordEmail: vi.fn() } as never,
       nodeEnv: "test",
-      enterpriseOperationPolicy: { resolveMode: () => "legacy", httpBasePath: "/api/auth" },
     });
     const withoutIds = withoutFeishu.options.plugins?.map(plugin => plugin.id) ?? [];
     expect(withoutIds).not.toContain(FEISHU_LOGIN_OPERATION_POLICY_ID);
-    expect(withoutIds).toContain(ENTERPRISE_POLICY_ID);
 
-    for (const fixture of FIXTURES) {
-      const built = build(fixture);
-      const ids = built.auth.options.plugins?.map(plugin => plugin.id) ?? [];
-      expect(ids[0]).toBe(FEISHU_LOGIN_OPERATION_POLICY_ID);
-      expect(ids).toContain(FEISHU_LOGIN_PLUGIN_ID);
-      expect(ids).not.toContain(ENTERPRISE_POLICY_ID);
-      // The enterprise policy would reject `/feishu-login/request` in enterprise mode; it is not consulted.
-      expect((await http(built.auth, "POST", "/feishu-login/request", { email: "alice@example.com" })).status).toBe(202);
-      expect(built.resolveMode).not.toHaveBeenCalled();
-    }
+    const built = build();
+    const ids = built.auth.options.plugins?.map(plugin => plugin.id) ?? [];
+    expect(ids[0]).toBe(FEISHU_LOGIN_OPERATION_POLICY_ID);
+    expect(ids).toContain(FEISHU_LOGIN_PLUGIN_ID);
+    expect((await http(built.auth, "POST", "/feishu-login/request", { email: "alice@example.com" })).status).toBe(202);
     expect(createFeishuLoginOperationPolicy().id).toBe(FEISHU_LOGIN_OPERATION_POLICY_ID);
   });
 
-  describe.each(FIXTURES)("%s", (fixture) => {
+  describe("feishu only", () => {
     it("AC1: allows /feishu-login/request over HTTP and through auth.api", async () => {
-      const built = build(fixture);
+      const built = build();
       const response = await http(built.auth, "POST", "/feishu-login/request", { email: "alice@example.com" });
       expect(response.status).toBe(202);
       expect(await response.json()).toEqual({ status: "accepted" });
@@ -179,7 +155,7 @@ describe("feishu login operation allowlist (FSL-127)", () => {
     });
 
     it("AC2: allows /feishu-login/verify over HTTP and through auth.api", async () => {
-      const built = build(fixture);
+      const built = build();
       // No flow cookie: the endpoint runs its key check and answers 401 invalid.
       const response = await http(built.auth, "POST", "/feishu-login/verify", { code: VALID_CODE });
       expect(response.status).toBe(401);
@@ -196,7 +172,7 @@ describe("feishu login operation allowlist (FSL-127)", () => {
     });
 
     it("AC3: allows /get-session over HTTP and through auth.api", async () => {
-      const built = build(fixture);
+      const built = build();
       const response = await http(built.auth, "GET", "/get-session");
       expect(response.status).toBe(200);
       expect(await response.json()).toBeNull();
@@ -214,7 +190,7 @@ describe("feishu login operation allowlist (FSL-127)", () => {
     });
 
     it("AC4: allows /sign-out over HTTP and through auth.api", async () => {
-      const built = build(fixture);
+      const built = build();
       const response = await http(built.auth, "POST", "/sign-out");
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ success: true });
@@ -225,7 +201,7 @@ describe("feishu login operation allowlist (FSL-127)", () => {
     });
 
     it("AC5: rejects every other operation over HTTP", async () => {
-      const built = build(fixture);
+      const built = build();
       for (const { path, body } of NAMED_DENIALS) {
         await expectDenied(await http(built.auth, "POST", path, body));
       }
@@ -242,10 +218,10 @@ describe("feishu login operation allowlist (FSL-127)", () => {
     });
 
     it("AC6: rejects every other operation through a direct auth.api call", async () => {
-      const built = build(fixture);
+      const built = build();
       for (const { path, body } of NAMED_DENIALS) {
-        if (fixture === "feishu only" && path.startsWith("/enterprise/")) {
-          // Without the enterprise options there is no `/enterprise/*` endpoint to call at all.
+        if (path.startsWith("/enterprise/")) {
+          // There is no `/enterprise/*` endpoint to call at all (FSL-133); over HTTP it is a 404 (AC5).
           expect(apiEndpoints(built.auth).some(([, endpoint]) => endpoint.path === path)).toBe(false);
           continue;
         }
@@ -265,7 +241,7 @@ describe("feishu login operation allowlist (FSL-127)", () => {
     });
 
     it("AC7: rejects trailing-slash, case and encoded variants of the four paths", async () => {
-      const built = build(fixture);
+      const built = build();
       const variants: Array<[string, string]> = [
         ["POST", "/feishu-login/request/"],
         ["POST", "/Feishu-Login/Request"],

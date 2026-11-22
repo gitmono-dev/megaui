@@ -254,7 +254,7 @@ describe("Feishu login code issue main flow with real Mock HTTP and PostgreSQL (
     // package's `rootDir` (TS6059); the module is typed by the annotation of `generateCode`.
     // eslint-disable-next-line @typescript-eslint/ban-ts-comment
     // @ts-ignore TS6059 only: the borrowed module is outside the engine rootDir.
-    generateCode = (await import("../../../../auth/src/enterprise-otp/code")).generateEnterpriseOtpCode;
+    generateCode = (await import("../../../../auth/src/feishu-login/code")).generateFeishuLoginCode;
     // Member status writes emit a callback; a local receiver keeps them inside this run.
     receiver = createServer((request, response) => {
       request.resume();

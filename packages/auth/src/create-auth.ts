@@ -36,17 +36,6 @@ import {
   assertAllowedUserImageUrl,
   UserImageValidationError,
 } from "./user-image-url";
-import { createEnterprisePairingPlugin } from "./enterprise-otp/plugin";
-import type { EnterprisePairingPort, EnterprisePairingTransport, EnterpriseOtpVerifyPort } from "./enterprise-otp/types";
-import type { EnterprisePairingStatusPort } from "./enterprise-otp/status";
-import {
-  createEnterpriseOperationPolicy,
-  type EnterpriseOperationPolicyOptions,
-} from "./enterprise-otp/policy";
-import {
-  createEnterpriseSessionPlugin,
-  type EnterpriseSessionPluginOptions,
-} from "./enterprise-otp/public-session";
 import {
   FEISHU_LOGIN_REQUEST_PATH,
   feishuLogin,
@@ -54,6 +43,9 @@ import {
   type FeishuLoginPluginOptions,
 } from "./feishu-login/plugin";
 import { createFeishuLoginOperationPolicy } from "./feishu-login/policy";
+
+/** The HTTP route prefix the Web mounts the auth handler under (`/api/auth/[...all]`). */
+export const AUTH_ROUTE_PREFIX = "/api/auth";
 
 export interface CreateAuthConfig {
   /** Display name in auth emails / better-auth `appName` (required — no brand default). */
@@ -76,28 +68,14 @@ export interface CreateAuthConfig {
   allowedImagePublicUrlBase?: string;
   /** Override NODE_ENV-driven rate limit / dev hooks. */
   nodeEnv?: string;
-  /** Optional enterprise-only pairing port and the exact Node-entry transport resolver. */
-  enterprisePairing?: {
-    readonly pairingPort: EnterprisePairingPort;
-    readonly statusPort?: EnterprisePairingStatusPort;
-    readonly resolveTransport: (request: Request) => EnterprisePairingTransport | null;
-    readonly verifyPort?: EnterpriseOtpVerifyPort;
-  };
-  /**
-   * Persistent enterprise operation allowlist, applied to HTTP and direct auth.api calls. Not
-   * registered when `feishuLogin` is passed: the Feishu-mode allowlist replaces it (FSL-127).
-   */
-  enterpriseOperationPolicy?: EnterpriseOperationPolicyOptions;
-  /** Public session projection, kept separate from Better Auth's internal session output. */
-  enterpriseSession?: EnterpriseSessionPluginOptions;
   /**
    * FSL-123: the Feishu login request endpoint (`POST /feishu-login/request`). The plugin is
    * registered only when this is passed; Better Auth's per-address rate limit still applies to
    * admissible requests, while invalid inputs answer 400 ahead of it (ADR-FSL-11 order).
    * FSL-127: passing it also registers the Feishu-mode operation allowlist ahead of every other
    * plugin (only `/feishu-login/request`, `/feishu-login/verify`, `/get-session` and `/sign-out`
-   * stay reachable, over HTTP and through direct `auth.api` calls) and leaves
-   * `enterpriseOperationPolicy` unregistered.
+   * stay reachable, over HTTP and through direct `auth.api` calls).
+   * FSL-133: the old enterprise options (pairing, operation policy, session projection) are gone.
    */
   feishuLogin?: FeishuLoginPluginOptions;
 }
@@ -290,17 +268,12 @@ export function createAuth(config: CreateAuthConfig) {
       },
     },
     session: {
-      // Enterprise authorization always re-reads the server-side session and
-      // qualification row. A signed cookie cache would let an old epoch
-      // authorize after revocation, so keep it disabled for every mode.
+      // Every session is re-read server side (the Feishu mode also checks its
+      // `feishu_login_sessions` row, FSL-126). A signed cookie cache would keep a
+      // removed session usable until it expires, so keep it disabled for every mode.
+      // FSL-133: the session declares no additional (enterprise) field.
       cookieCache: {
         enabled: false,
-      },
-      additionalFields: {
-        enterpriseGrantId: { type: "string", required: false, returned: false },
-        enterpriseIdentityId: { type: "string", required: false, returned: false },
-        authEpoch: { type: "number", required: false, returned: false },
-        authMethod: { type: "string", required: false, returned: false },
       },
     },
     plugins: [
@@ -309,11 +282,6 @@ export function createAuth(config: CreateAuthConfig) {
       admin({
         adminRoles: ["admin"],
       }),
-      ...(config.enterpriseOperationPolicy && !config.feishuLogin
-        ? [createEnterpriseOperationPolicy(config.enterpriseOperationPolicy)]
-        : []),
-      ...(config.enterpriseSession ? [createEnterpriseSessionPlugin(config.enterpriseSession)] : []),
-      ...(config.enterprisePairing ? [createEnterprisePairingPlugin(config.enterprisePairing)] : []),
       ...(config.feishuLogin ? [feishuLogin(config.feishuLogin)] : []),
     ],
     rateLimit: {
@@ -327,7 +295,6 @@ export function createAuth(config: CreateAuthConfig) {
           window: 60,
           max: 1,
         },
-        ...(config.enterprisePairing ? { "/enterprise/request": false, "/enterprise/status": false } : {}),
         ...(config.feishuLogin ? { [FEISHU_LOGIN_REQUEST_PATH]: feishuLoginRequestRateLimitRule } : {}),
       },
     },

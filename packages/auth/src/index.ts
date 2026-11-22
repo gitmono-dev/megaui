@@ -1,4 +1,5 @@
 export {
+  AUTH_ROUTE_PREFIX,
   createAuth,
   toNextJsHandler,
   type Auth,
@@ -24,51 +25,10 @@ export {
   type UserImageErrorCode,
 } from "./user-image-url";
 export {
-  ENTERPRISE_OTP_ALPHABET,
-  ENTERPRISE_OTP_LENGTH,
-  generateEnterpriseOtpCode,
-} from "./enterprise-otp/code";
-export { createEnterpriseOtpCrypto } from "./enterprise-otp/crypto";
-export {
-  createEnterpriseOtpConsumer,
-  type EnterpriseOtpConsumer,
-  type EnterpriseOtpConsumerOptions,
-  type EnterpriseOtpConsumeInput,
-} from "./enterprise-otp/consume";
-export { createEnterpriseSession, ENTERPRISE_SESSION_TTL_MS } from "./enterprise-otp/verify";
-export {
-  createEnterprisePairingStatus,
-  type EnterprisePairingStatusPort,
-  type EnterprisePairingStatusPortResult,
-  type EnterprisePairingStatusResult,
-} from "./enterprise-otp/status";
-export type {
-  EnterpriseOtpBinding,
-  EnterpriseOtpCryptoConfig,
-  EnterpriseOtpCrypto,
-  EnterpriseOtpDigest,
-  EnterpriseOtpDelivery,
-  EnterpriseOtpGrant,
-  EnterpriseOtpVerifyPort,
-  EnterpriseOtpVerifyPortResult,
-} from "./enterprise-otp/types";
-export {
-  AUTH_ROUTE_PREFIX,
-  ENTERPRISE_AUTH_OPERATIONS,
-  createEnterpriseOperationPolicy,
-  isEnterpriseAuthOperation,
-  type EnterpriseAuthOperation,
-  type EnterpriseOperationMode,
-  type EnterpriseOperationPolicyOptions,
-} from "./enterprise-otp/policy";
-export {
-  createEnterpriseSessionPlugin,
-  type EnterprisePublicProfile,
-  type EnterprisePublicSession,
-  type EnterprisePublicSessionUser,
-  type EnterpriseSessionAuthority,
-  type EnterpriseSessionPluginOptions,
-} from "./enterprise-otp/public-session";
+  FEISHU_LOGIN_CODE_ALPHABET,
+  FEISHU_LOGIN_CODE_LENGTH,
+  generateFeishuLoginCode,
+} from "./feishu-login/code";
 export {
   FEISHU_LOGIN_PLUGIN_ID,
   FEISHU_LOGIN_REQUEST_PATH,

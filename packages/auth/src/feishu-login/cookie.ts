@@ -1,4 +1,4 @@
-// megaui:packages/auth/src/enterprise-otp/plugin.ts@24a8551 (megaui-only FSL-123: the Feishu login flow cookie)
+// megaui-only (FSL-123: the Feishu login flow cookie; 原参照见 docs/implementation/feishu-login.md「来源」)
 /**
  * FSL-123: the flow cookie of the Feishu login (ADR-FSL-11 「请求」).
  *
