@@ -486,7 +486,7 @@ Mega2 经 `GET /api/auth/get-session` 读取当前会话，并按 `WebsiteAuthUs
 - **显示名字段（FSL-181）：** 飞书会话的投影在 `user` 中多出 `displayName`（见「浏览器显示名」）。Mega2 反序列化 `get-session` 响应的结构体（mega2 `src/api/oauth/model.rs` 的 `WebsiteGetSessionResponse`、`WebsiteSessionJson`、`WebsiteAuthUserJson`）没有 `deny_unknown_fields`，serde 忽略该字段；`into_login_user` 的授权用户名只取 `user.name`，因此主体、冲突核对与管理员判定都不受它影响。
 - **legacy 部署：** legacy actor 仍按 `deriveMega2Actor` 取 `name` 或邮箱前缀，不执行冲突核对（企业 actor 已随 FSL-132、FSL-134 删除）。`AUTH_PROVIDER` 未设置、空白或为 `local`（`legacy` 模式）时不会出现飞书 actor（见「会话」的入口选择），投影与本卡之前相同。
 
-**管理员登记：** Mega2 管理员若需授予飞书用户，在 `.mega_cedar.json` 的管理员列表中登记其 `fs_<用户 ID>`，不登记显示名或邮箱前缀。用户 ID 在该成员首次飞书登录建号后才存在，运维可在 megaui 数据库中按其登录邮箱（小写）查得，例如 `select u.id from "user" as u join feishu_identities as i on i.user_id = u.id where u.email = '<登录邮箱>'`。管理员列表中的 `fs_` 条目只能由运维按已知飞书用户 ID 登记；切换到飞书模式前，以 `rg -n '"fs_' .mega_cedar.json` 核对没有来历不明的 `fs_` 条目（每一条都对应一个已知的飞书用户 ID）。按计划，这一核对同时列入 FSL-142 runbook 的部署步骤。旧企业主体只存在于 dev/test（`DEFER-FS-03`）。
+**管理员登记：** Mega2 管理员若需授予飞书用户，在 `.mega_cedar.json` 的管理员列表中登记其 `fs_<用户 ID>`，不登记显示名或邮箱前缀。用户 ID 在该成员首次飞书登录建号后才存在，运维可在 megaui 数据库中按其登录邮箱（小写）查得，例如 `select u.id from "user" as u join feishu_identities as i on i.user_id = u.id where u.email = '<登录邮箱>'`。管理员列表中的 `fs_` 条目只能由运维按已知飞书用户 ID 登记；切换到飞书模式前，以 `rg -n '"fs_' .mega_cedar.json` 核对没有来历不明的 `fs_` 条目（每一条都对应一个已知的飞书用户 ID）。这一核对同时列入「真实租户部署与验证」的部署步骤（FSL-142）。旧企业主体只存在于 dev/test（`DEFER-FS-03`）。
 
 **当前状态：** 本节的投影由 FSL-156 实现。自 FSL-150 起，飞书模式下的认证实例与飞书登录端点已接线（见「HTTP 接口」的「启用条件」），飞书登录签发的会话按本节投影。下述契约测试仍以替身替换 `getAuth()`，验证的是投影与冲突核对本身；FSL-150 的端到端用例不经过 `get-session` 投影。
 
@@ -635,6 +635,282 @@ collab-server（`apps/collab-server`）只按普通协作票据校验连接（FS
 - **启动钩子：** 飞书模式下 `apps/web/instrumentation.ts` 的 `register()` 在 `assertWebAuthMode` 之后、`startFeishuWebRuntime`（配置校验与第一次清理）之前，以共享连接池执行 `checkRuntimeRoleScope`；拒绝时 `register()` 抛出，Web 不启动，也不启动清理。`DATABASE_URL` 未设置同样按 `unreadable` 判定。`legacy` 与未设置 `AUTH_PROVIDER` 的部署不做该检查。
 
 **测试：** `packages/database/src/role-scope.test.ts` 在一次性 PG 中由非超级用户、无 `CREATEDB` 的迁移角色应用迁移集（表都归它所有），再构造七种登录角色：超级用户、只有 `CREATEDB`、只有当前数据库 `CREATE`、只有 `public` schema `CREATE`、只对非 `public` 的 `drizzle` schema 有 `CREATE`、可 `SET ROLE` 到 `CREATEDB` 角色的成员，以及只获授 DML 与序列 `USAGE` 的运行角色；断言前六种各自恰好命中预期的类别，间接成员与 `NOINHERIT` 成员的受检角色集合同样包含其可切换到的 `CREATEDB` 角色并被拒绝且在 production 下以 `DATABASE_ROLE_SCOPE_REJECTED` 拒绝（消息不含口令、库名、地址与 schema 名），注入的读取失败与不含 `current_user` 的结果在 production 下拒绝，运行角色在 production 下通过、能写表而不能建表；`development` 与 `test` 下前六种与读取失败都只输出一行 `DATABASE_ROLE_SCOPE_WARNING` 并继续，运行角色不输出；未设置、空、`staging` 等其它 `NODE_ENV` 同样只告警。FSL-162 在同一库中再构造七种角色，各自只拥有一样东西：一个非 `public` schema、一张表、一个 collation、一个 text search 配置（后三者位于引导超级用户拥有的 schema 中）、当前数据库，一个可 `SET ROLE` 到表所有者的 `NOINHERIT` 成员，以及迁移角色本身；断言各自恰好命中预期的所有权类别（`NOINHERIT` 成员自身不能改表、`SET ROLE` 后可以），production 下以 `DATABASE_ROLE_SCOPE_REJECTED` 拒绝，`development` 与 `test` 下恰输出一行 `DATABASE_ROLE_SCOPE_WARNING`；捕获的拒绝（消息、字符串形式、栈与序列化字段）与告警逐字等于 `role=<角色名> facts=<类别>`，不含口令、连接串、主机、库名与对象或 schema 名，读取失败的驱动错误（含连接串与口令）不出现在拒绝与告警中，含换行与引号的角色名被转义为单行。`apps/web/tests/unit/feishu-login-wiring.test.ts` 以 production 直接调用 `register()`：超级用户与对 `public` 有 `CREATE` 的角色以 `DATABASE_ROLE_SCOPE_REJECTED` 拒绝，未启动清理、预置的过期行保持 `active`；只获授 DML 与序列 `USAGE` 的角色正常启动、过期行已为 `void`、不输出该告警；`DATABASE_URL` 未设置时以 `DATABASE_ROLE_SCOPE_REJECTED`（`unreadable`）拒绝且未启动清理；`test` 下超级用户只输出告警并继续启动。
+
+## 真实租户部署与验证
+
+本节是 FSL-142 的 runbook：把已推送的 megaui `main` HEAD 部署为连接真实飞书测试租户的 dev/test 环境，再由 FSL-143 按「手工验证」逐步核对，并把脱敏证据记录在 `docs/implementation/feishu-live-validation.md`。各步骤的预期现象取自本文前述各节与当前源码，产品行为仍以源码与测试为准。本节不含任何凭据、租户标识、成员邮箱或姓名：`<…>` 都是占位符，执行时替换为实际值，但实际值不得写回本文或证据。
+
+### 飞书自建应用与权限
+
+测试应用是测试租户中的自建应用（DEP-FSL-01）。Web 只用它的 App ID 与 App Secret 换取 `tenant_access_token`（`POST /open-apis/auth/v3/tenant_access_token/internal`，FSL-164 Q1，无需另开权限），再以该 token 调用下列接口。应用须开通三类权限，名称以 FSL-115、FSL-164、FSL-165 的实测产物为准：
+
+| 类别 | 开放平台中的权限 | 调用 | 依据 |
+|---|---|---|---|
+| Directory v1 搜索员工 | 接口权限 `directory:employee:search`（搜索员工） | `POST /open-apis/directory/v1/employees/search`：按登录邮箱查找唯一成员 | [按邮箱查询](./feishu-live-contract-lookup.md)（FSL-115） |
+| Directory v1 读取员工 | 接口权限 `directory:employee:read`（获取员工信息） | `POST /open-apis/directory/v1/employees/mget`：按 open_id 读取在职状态与姓名 | [token 与成员状态](./feishu-live-contract-member.md)（FSL-164） |
+| 以机器人发消息 | 应用能力「机器人」，以及以应用身份发送单聊消息的权限 | `POST /open-apis/im/v1/messages?receive_id_type=open_id`：私聊验证码 | [首次私聊与消息幂等](./feishu-live-contract-message.md)（FSL-165） |
+
+- **字段权限：** 两个 Directory v1 请求还需要员工字段权限 `directory:employee.base.enterprise_email:read`、`directory:employee.base.email:read`、`directory:employee.base.active_status:read` 与 `directory:employee.base.is_resigned:read`（请求字段见「飞书接口 › 请求」）。请求中的 `work_info.staff_status` 不参与判定，不需要开通其字段权限（实测 `work_info` 为 `{}`）。
+- **发消息权限的标识：** FSL-165 记录了发消息的前置条件（机器人能力、以应用身份发送单聊消息的权限、成员在可用范围内）与调用结果，但没有从开发者后台导出该权限的标识，因此本节不给出标识；执行者在开发者后台确认覆盖上述发消息接口的权限已开通。
+- **发布：** 权限或能力变更后，须创建应用版本并由租户管理员发布才生效（DEP-FSL-01）。
+
+### 可用范围与通讯录权限范围
+
+- **可用范围：** 应用的可用范围必须包含每个参与验证的账号（FSL-143 中为用户本人）。成员在可用范围内是机器人向其发起私聊的前提之一（FSL-165 Q5）；范围外的成员即使被查到，也收不到验证码。
+- **通讯录权限范围：** 以 `tenant_access_token` 调用 Directory v1 时，结果受应用「通讯录权限范围」约束（见「飞书接口 › 所需权限」）。参与者同样须在该范围内；范围外的成员不出现在搜索结果中，request 照常返回 202 而不发码，服务端输出 `FEISHU_LOGIN_NO_TARGET`。
+- **参与者资料：** 登录邮箱须与成员的企业邮箱（`enterprise_email` 非空时只比较它）或个人邮箱（仅在企业邮箱为空字符串时比较）不区分大小写地逐字相等，且成员 `active_status` 为 2（激活）、未离职（见「飞书接口 › 本地精确匹配」与「在职判定」）。
+- **本地账号：** 部署数据库中不得已有与登录邮箱相同的本地用户，否则首次登录返回 409 并显示账号冲突提示（见「HTTP 接口 › 建号」）。
+
+### 根目录 `.env`
+
+凭据只放在 megaui 检出根目录的 `.env` 中。该文件被 `.gitignore` 与 `.libraignore` 忽略，从不提交，权限设为 600。部署从中读取飞书模式的五个键（格式规则见「配置 › 飞书登录的键」）：
+
+| 键 | 取值 |
+|---|---|
+| `AUTH_MODE` | `enterprise` |
+| `AUTH_PROVIDER` | `feishu`；与 `AUTH_MODE=enterprise` 组成飞书模式，缺少它时 Web 与 collab 以 `INVALID_AUTH_PROVIDER` 拒绝启动 |
+| `FEISHU_APP_ID` | 测试应用的 App ID |
+| `FEISHU_APP_SECRET` | 同一应用的 App Secret |
+| `ENTERPRISE_OTP_HMAC_KEY` | 32 个随机字节的规范 base64url 编码（43 个字符、无填充）；首次 request 写入密钥指纹后不可更换（见「数据 › 密钥一致性检查」） |
+
+文件按 shell 语法书写（它由 `source` 执行），含特殊字符的取值用单引号。首次建立时先以 `touch .env; chmod 600 .env` 创建，再写入前四个键；`ENTERPRISE_OTP_HMAC_KEY` 一行由下文的生成命令追加，不手写：
+
+```sh
+AUTH_MODE=enterprise
+AUTH_PROVIDER=feishu
+FEISHU_APP_ID='<测试应用 App ID>'
+FEISHU_APP_SECRET='<测试应用 App Secret>'
+```
+
+追加之后文件多出一行 `ENTERPRISE_OTP_HMAC_KEY='<43 个字符的 base64url 密钥>'`。
+
+- **不写的键：** 不写 `FEISHU_PROVIDER` 与 `FEISHU_SIMULATOR_ORIGIN`。前者未设置时固定使用官方源 `https://open.feishu.cn`；`simulator` 只指向本地 Mock，且在 `NODE_ENV=production` 下以 `INVALID_FEISHU_LOGIN_CONFIG` 拒绝；后者只在 `simulator` 时读取（见「配置 › provider 选择」）。根 `.env` 中供 FSL-117 复测的 `FEISHU_TEST_USER_EMAIL` 不被 Web 或 collab 读取。部署的其余键（见下文「dev/test 部署」第 7 步）不写入根 `.env`，由部署自己的配置提供。
+- **生成 HMAC 密钥：** 在一个新 shell 中、`.env` 权限已为 600 时执行；只在根 `.env` 还没有该键时追加，取值不出现在终端：
+
+  ```sh
+  set -a; source .env; set +a
+  if test -z "${ENTERPRISE_OTP_HMAC_KEY:-}"; then
+    key=$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("base64url"))') &&
+      printf '%s' "$key" | grep -Eq '^[A-Za-z0-9_-]{43}$' &&
+      printf "ENTERPRISE_OTP_HMAC_KEY='%s'\n" "$key" >> .env || echo "HMAC key not generated"
+    unset key
+  fi
+  ```
+
+  生成失败或结果不是 43 个 base64url 字符时不写入文件，并输出 `HMAC key not generated`（`node` 自身失败时其错误信息可能先出现，其中不含密钥）；以这一行判断失败，而不是以整段的退出码判断。`test -z` 不成立（不追加）说明该键已存在：保留原值，不重新生成、不改写（密钥不可轮换）。随后在新 shell 中重新加载，以 `test "${#ENTERPRISE_OTP_HMAC_KEY}" -eq 43` 只核对长度。
+- **加载规则：** 只以 `set -a; source .env; set +a` 加载，在仓库根目录、需要这些键的每个 shell 中重新执行。不使用 `docker run --env-file .env`、dotenv 一类加载器或 `export $(cat .env)`；不 `cat`、`grep` 或复制该文件（包括复制到导出目录、镜像或 `apps/web/.env`）；加载后不执行 `env`、`printenv`、`set -x`、`docker inspect` 等会回显取值的命令。容器只以不带 `=` 的 `-e <键名>` 从已加载的 shell 继承取值，命令行上不出现取值。
+
+### dev/test 部署
+
+REL-02 下最终版本 v0.44.0 发布之前没有含飞书登录的版本镜像（已发布的 v0.43.2 镜像早于飞书登录），因此部署从已推送的 megaui `main` HEAD 的源码构建，不使用任何已发布的 megaui 镜像。按顺序执行，任一命令以非零退出码结束即停止：
+
+1. **确定并记录提交。** 在 megaui 检出根目录读取远端 `main`：
+
+   ```sh
+   out=$(libra ls-remote origin refs/heads/main)
+   test "$(printf '%s\n' "$out" | wc -l)" -eq 1
+   sha=$(printf '%s' "$out" | cut -f1)
+   printf '%s' "$sha" | grep -Eq '^[0-9a-f]{40}$'
+   test "$(libra rev-parse origin/main)" = "$sha" || libra fetch origin
+   test "$(libra rev-parse origin/main)" = "$sha"
+   printf '%s\n' "$sha"
+   ```
+
+   预期：每条检查都通过，最后输出 40 位小写十六进制的完整 SHA。记录该 SHA（FSL-143 AC1）。它就是 FSL-183 的 C 之后的 `origin/main`；FSL-142、FSL-143 的本地文档提交不在其中，也不参与构建。
+2. **导出源码。**
+
+   ```sh
+   set -o pipefail
+   build=$(mktemp -d)
+   trap 'rm -rf "$build"' EXIT
+   libra archive --format=tar "$sha" | tar -x -C "$build"
+   ```
+
+   `pipefail` 使 `libra archive` 失败时整条管道以非零退出码结束。导出目录属于执行部署的这个 shell（ER-14）：它保留到第 5 步迁移与授权结束（第 3 步的镜像构建与第 5 步的迁移都使用它），随后执行 `cd <megaui 检出根目录>; rm -rf "$build"; trap - EXIT` 删除；第 2–5 步任一步失败而停止时同样先执行这一删除；该 shell 在此之前退出（含中断后关闭终端）时由 `EXIT` trap 删除。预期：管道退出码为 0，`$build` 恰为该提交的树；被忽略的文件（根 `.env`、`apps/web/.env` 等）不在其中，也不得复制进去。
+3. **构建。** 在 `$build` 中以发布镜像所用的 Dockerfile 构建（`docker.yml` 发布的是 `apps/web/Dockerfile` 的 `runner` 目标），只打本地标签，不推送：
+
+   ```sh
+   cd "$build"
+   docker build -f apps/web/Dockerfile --target runner --build-arg NEXT_PUBLIC_MEGA_COLLAB_PUBLIC_URL='<浏览器连接协作服务的 WS 地址>' -t megaui-web:"$sha" .
+   docker build -f apps/collab-server/Dockerfile -t megaui-collab:"$sha" .
+   pnpm install --frozen-lockfile
+   ```
+
+   预期：三条命令的退出码都为 0。构建不需要、也不得传入任何飞书键或其它密钥（`NEXT_PUBLIC_*` 在构建时内联进客户端）。`pnpm install`（CMD-00）只为第 5 步的迁移准备 `drizzle-kit`。
+4. **数据库与角色。** 本部署使用独立的 dev/test 数据库与两个登录角色（GC-15，见「数据库角色」）：迁移角色拥有该数据库、其 schema 与全部表；运行角色只获授 DML 与序列 `USAGE`，不是超级用户、没有 `CREATEDB`，对该数据库与其中任一 schema 都没有 `CREATE`，不拥有任何对象，也不能 `SET ROLE` 到迁移角色。以管理员在交互式 `psql` 中执行（角色名与库名都是占位）：
+
+   ```sql
+   create role <迁移角色> login nosuperuser nocreatedb nocreaterole;
+   create role <运行角色> login nosuperuser nocreatedb nocreaterole;
+   \password <迁移角色>
+   \password <运行角色>
+   create database <库名> owner <迁移角色>;
+   ```
+
+   口令只经 `\password` 不回显地输入，不写进 SQL 文本；`psql` 在客户端计算口令摘要后才发送，因此明文口令不进入 `psql` 历史或服务端语句日志（服务端只收到摘要）；不要用 `create role … password '…'` 或 `alter role … password '…'` 写明文口令。再以管理员连接到 `<库名>` 执行：
+
+   ```sql
+   alter schema public owner to <迁移角色>;
+   revoke create on schema public from public;
+   ```
+
+   前一句让迁移角色拥有 `public` schema，以便在其中建表（PostgreSQL 14 及更早版本中它属于引导超级用户，15 起属于 `pg_database_owner`）；后一句撤销所有角色在 `public` 中建对象的默认权限（14 及更早版本默认授予；15 起执行它也无副作用）。不要把运行角色授予迁移角色的成员关系，也不要把迁移角色授予运行角色。
+5. **迁移。** 以迁移角色的连接串执行（`$MIGRATOR_DATABASE_URL` 是执行者只在当前 shell 中设置的连接串，不是应用读取的键，不写入文件或证据）：
+
+   ```sh
+   cd "$build"
+   DATABASE_URL="$MIGRATOR_DATABASE_URL" pnpm --filter @megaui/database db:migrate
+   ```
+
+   预期：退出码为 0；`select count(*) from drizzle.__drizzle_migrations` 等于 `$build/packages/database/drizzle/` 中 `.sql` 文件的个数（本节编写时为 22，最后一个是 FSL-168 的 `0021_absurd_loa.sql`）；`public` 中的表都归迁移角色所有。随后以迁移角色授予运行角色：
+
+   ```sql
+   grant connect on database <库名> to <运行角色>;
+   grant usage on schema public to <运行角色>;
+   grant select, insert, update, delete on all tables in schema public to <运行角色>;
+   grant usage on all sequences in schema public to <运行角色>;
+   ```
+
+   迁移只前滚；之后若再迁移，须重新执行这组授权。Web 从不运行迁移。
+6. **核对 `.mega_cedar.json`。** Mega2 的管理员列表是其 monorepo `main` 根目录的 `/.mega_cedar.json`（见「Mega2 授权主体」的「管理员登记」）。取得该文件的当前副本后，在副本所在目录执行 `rg -n '"fs_' .mega_cedar.json`。预期：退出码为 1（没有 `fs_` 条目）。有输出时，每一条都必须是本部署数据库中已知飞书用户的 `fs_<用户 ID>`（`select u.id from "user" as u join feishu_identities as i on i.user_id = u.id`）；出现来历不明的条目时停止部署，查明并移除后重新核对。新部署尚无飞书用户，只接受退出码 1。只记录退出码与条目数，不记录用户 ID。
+7. **启动 collab 与 Web。** 回到 megaui 检出根目录，在同一 shell 中先加载根 `.env`，再以键名把取值传给容器：
+
+   ```sh
+   set -a; source .env; set +a
+   docker run -d --name megaui-collab <网络与端口参数> -e AUTH_MODE -e AUTH_PROVIDER -e MEGA_COLLAB_INTERNAL_TOKEN megaui-collab:"$sha"
+   DATABASE_URL="$RUNTIME_DATABASE_URL" docker run -d --name megaui-web <网络与端口参数> \
+     -e AUTH_MODE -e AUTH_PROVIDER -e FEISHU_APP_ID -e FEISHU_APP_SECRET -e ENTERPRISE_OTP_HMAC_KEY \
+     -e DATABASE_URL <其余部署键，同样写成 -e 键名> megaui-web:"$sha"
+   ```
+
+   - **collab** 只读取 `AUTH_MODE`、`AUTH_PROVIDER`、`MEGA_COLLAB_INTERNAL_TOKEN` 与可选的 `MEGA_COLLAB_*` 端口参数，不连接数据库，因此不传入任何数据库连接串；不设置只用于本地与 E2E 的 `MEGA_COLLAB_DEV_ALLOW_AUTHENTICATED`。
+   - **Web** 的 `DATABASE_URL` 是运行角色的连接串（`$RUNTIME_DATABASE_URL` 与上文迁移连接串同样只在当前 shell 中设置）。其余部署键由部署配置提供，键名与规则见[配置参考](../configuration.md)：`BETTER_AUTH_URL` 与 `APP_BASE_URL`（浏览器访问 Web 的来源，`BETTER_AUTH_URL` 同时是私聊中的可信站点）、`BETTER_AUTH_SECRET`、`BETTER_AUTH_TRUSTED_ORIGINS`、`EMAIL_PROVIDER` 与 `EMAIL_DEFAULT_FROM` 及所选邮件 provider 的键（飞书模式构造认证实例时同样校验）、`MEGA2_PUBLIC_BASE_URL`、`MEGA_COLLAB_INTERNAL_URL`、与 collab 相同的 `MEGA_COLLAB_INTERNAL_TOKEN`，以及 `S3_*`。不设置 `FEISHU_PROVIDER` 与 `FEISHU_SIMULATOR_ORIGIN`。
+   - **单实例：** 只运行一个 Web 实例，下文按该实例的日志计数。
+   - **站点来源：** flow Cookie 带 `__Host-` 前缀与 `Secure` 属性（见「HTTP 接口 › request」），浏览器只在安全上下文中保存它。站点须以 HTTPS 提供；只在本机验证时可用回环地址（如 `http://127.0.0.1:<端口>`，E2E 即以此在 Chromium 中登录）。否则浏览器不保存 flow Cookie，verify 一律返回 401。
+
+   预期现象：
+
+   - **运行角色检查：** 两个镜像都设置 `NODE_ENV=production`，因此 Web 启动钩子强制执行运行角色检查（FSL-158、FSL-162，见「数据库角色」）。运行角色符合第 4 步时 Web 正常启动，日志中没有 `DATABASE_ROLE_SCOPE_REJECTED` 或 `DATABASE_ROLE_SCOPE_WARNING`。若 `DATABASE_URL` 用的是超级用户、数据库或表的所有者（例如迁移角色）、有 `CREATEDB` 或对任一 schema 有 `CREATE` 的角色，或权限无法读取（含未设置 `DATABASE_URL`），Web 以 `DATABASE_ROLE_SCOPE_REJECTED: role=<角色名> facts=<类别,…>` 拒绝启动（Next 在消息前加启动钩子的错误前缀），也不启动清理；改用第 4 步的运行角色后重新启动。
+   - **非 production 启动：** 以 `next dev` 启动，或 `NODE_ENV` 为 `development`、`test` 及其它取值时，同样的角色只得到一行 `DATABASE_ROLE_SCOPE_WARNING: role=<角色名> facts=<类别,…>`，Web 照常启动。本 runbook 的部署不这样启动；若出现该行，视为第 4 步未完成。mega2 联调栈（CMD-09 的 `--profile web`）中的 `website-next` 以 legacy 模式和 Postgres 超级用户运行，并且从相邻的 megaui 工作区而不是第 2 步的导出目录构建，因此不能直接作为本部署。
+   - **配置错误：** 未设置 `AUTH_PROVIDER` 时 Web 与 collab 以 `INVALID_AUTH_PROVIDER` 拒绝启动；飞书键缺失或非法时 Web 以 `INVALID_FEISHU_LOGIN_CONFIG: <键名, …>` 拒绝启动，错误只列键名。
+   - **启动之后：** Web 的 `GET /api/health` 返回 200；collab 的 `GET /health` 返回 200，且只含 `ok`、`service`、`documents`、`connections`；访客请求 `/zh-CN/signin` 得到 307，转到 `/zh-CN/signin/feishu`，该页显示「使用飞书登录」与工作邮箱输入框，没有密码输入框或注册链接。
+8. **记录。** 记录第 1 步的完整 SHA、镜像标签（`megaui-web:<SHA>`、`megaui-collab:<SHA>`）、Web 与 collab 收到的配置键名（不含取值）与启动时间（UTC）。
+
+### 手工验证
+
+FSL-143 由用户本人在浏览器中按下列编号执行，唯一的例外是第 6 步：它在第 1 步首次登录之后、第 2 步退出之前执行（FSL-143 以首次登录后的观察为证）。先准备：
+
+- **日志计数：** 签发服务的日志键经 `console.info` 输出，每行恰为一个键（见「发码 › 日志键」）。先把时间窗口内的容器日志取到仓库外的临时目录，核对读取成功，再分别计数：
+
+  ```sh
+  (
+    logdir=$(mktemp -d); trap 'rm -rf "$logdir"' EXIT; trap 'exit 130' INT TERM
+    chmod 700 "$logdir"
+    docker logs --since '<开始时间>' --until '<结束时间>' megaui-web > "$logdir/web.log" 2>&1; echo "docker logs rc=$?"
+    grep -cw FEISHU_LOGIN_NO_TARGET "$logdir/web.log"
+    grep -cw FEISHU_LOGIN_SEND_ATTEMPT "$logdir/web.log"
+  )
+  ```
+
+  时间以 `date -u +%Y-%m-%dT%H:%M:%SZ` 取得（UTC）。`docker logs` 的退出码必须为 0（容器不存在、Docker 不可用或读取失败时为非零，此时文件中只有错误信息，计数无效，须修正后重新取日志）；退出码为 0 时文件只含该容器在窗口内的输出。零命中时 `grep -c` 输出 `0`（退出码 1）。命令在子 shell 中运行，临时目录由 `EXIT` trap 在成功、失败与中断时都删除（ER-14）；只记录时间、`docker logs` 的退出码与计数，不保存日志本身。
+- **账号计数：** 以运行角色或迁移角色连接执行，结果只有三个数：
+
+  ```sql
+  select (select count(*) from "user") as users,
+         (select count(*) from feishu_identities) as identities,
+         (select count(*) from feishu_login_sessions) as feishu_sessions;
+  ```
+
+- **请求间隔：** 同一邮箱的两次请求相隔 60 秒以上。60 秒内的再次请求照常返回 202 并进入验证码步骤，但只作废当前验证码、不发新码，服务端输出 `FEISHU_LOGIN_COOLDOWN`（见「冷却与全局预算」）。
+- **退出登录：** 界面没有退出入口。在已登录页面的浏览器控制台执行 `await fetch("/api/auth/sign-out", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }).then(r => r.status)`，预期为 `200`；此后 `/api/auth/get-session` 返回 `null`，访问 `/zh-CN/workspace` 被重定向回飞书登录页。已登录时访问登录页会被重定向到工作区，因此每次登录与「未知邮箱」步骤都从退出状态开始。
+
+#### 1. 首次登录
+
+- **操作：** 记录账号计数基线与开始时间；以访客身份打开 `<站点>/zh-CN/signin`，输入本人的登录邮箱，点「发送验证码」；在飞书中打开该应用机器人的私聊，把验证码输入页面并点「登录」；记录结束时间。
+- **预期：** 请求后页面切换到验证码步骤，显示「如果 <邮箱> 属于本组织成员，登录验证码已通过飞书发送。」；数秒内飞书收到该机器人的一条私聊，正文为「MegaUI 企业登录验证码：<验证码>」，并提示只在可信站点（`BETTER_AUTH_URL`）输入、勿转发；验证码为 8 位，字符取自 `23456789ABCDEFGHJKMNPQRSTUVWXYZ`，激活后 5 分钟有效。提交后进入首页 `/zh-CN`，首页入口指向工作区。`users`、`identities` 与 `feishu_sessions` 各比基线多 1；`feishu_login_key_check` 恰有 1 行（首次 request 写入密钥指纹）。窗口内 `FEISHU_LOGIN_NO_TARGET` 为 0，`FEISHU_LOGIN_SEND_ATTEMPT` 通常为 1：发送结果不确定时，服务以同一 UUID 至多再试 2 次，该计数至多为 3，飞书仍只送达 1 条（见「发送结果」）。
+- **记录：** 时间、三个计数的变化与两个日志键的计数，注明新用户已建立；不记录邮箱、验证码或用户 ID。
+
+#### 2. 退出后再次登录
+
+- **操作：** 按上文退出登录；距上一次请求 60 秒以上后，以同一邮箱请求验证码，并以新收到的验证码登录。
+- **预期：** 退出返回 200，之后 `get-session` 为 `null`；再次收到一条私聊；登录后进入首页。`users` 与 `identities` 与第 1 步结束时相同：verify 按 `feishu_identities` 的绑定找到原用户，不新建用户（见「HTTP 接口 › 建号」的「再次登录」）。`feishu_sessions` 在退出时减 1（会话行删除，来源标记随之级联删除），登录后加 1。
+- **记录：** 两个计数不变的结论与时间。
+
+#### 3. 错误验证码
+
+- **操作：** 退出登录，距上一次请求 60 秒以上后请求验证码；收到私聊后，先提交一个与收到的验证码不同、格式合法的 8 位验证码（例如 `22222222`；恰与收到的相同时换一个），再提交收到的验证码。
+- **预期：** 错码得到 401，页面停留在验证码步骤，显示「验证码无效或已过期。」，不设置会话 Cookie；随后正确的验证码仍可登录（该验证码只错了 1 次，上限为 5 次，见「HTTP 接口 › verify」）。不要连续提交 5 次错码：第 5 次后该验证码作废，须重新请求。
+- **记录：** 页面显示无效提示的结论与时间；不记录任何验证码。
+
+#### 4. 未知邮箱不发码
+
+- **操作：** 退出登录，确认此前的请求都已结束（上一条私聊已收到）；记录开始时间；以测试租户邮箱域名下随机本地部分的地址（`<随机串>@<测试租户邮箱域名>`）请求验证码；此后 3 分钟内不在本部署执行任何其它登录请求（任何人、任何邮箱都不请求）；窗口结束时记录结束时间并按日志计数。
+- **预期：** 页面与已知成员一样切换到验证码步骤，文案相同，没有任何私聊。窗口内 `FEISHU_LOGIN_NO_TARGET` 恰为 1，`FEISHU_LOGIN_SEND_ATTEMPT` 为 0：私聊只经签发服务发送，每次私聊尝试之前必有该键（见「发码 › 主流程」第 4 步）。若出现的是 `FEISHU_LOGIN_PROVIDER_FAILED`，说明查询阶段失败（凭据、权限或应用版本），本步不通过。
+- **记录：** 窗口起止时间与两个计数；不记录该地址或其域名。
+
+#### 5. 注册页 404
+
+- **操作：** `curl -sS -o /dev/null -w '%{http_code}\n' '<站点>/zh-CN/signup'`，并在浏览器中打开同一地址。
+- **预期：** 状态码为 `404`，响应体为 `{"error":"NOT_FOUND"}`，带 `Cache-Control: no-store`：飞书模式下中间件对注册、找回密码与重置密码页都返回 404（见「页面」）。
+- **记录：** 状态码。
+
+#### 6. 工作区显示名（FSL-182）
+
+- **操作：** 第 1 步登录之后（尚未退出）打开 `<站点>/zh-CN/workspace`，观察首页问候、侧栏底部的显示名与头像缩写。
+- **预期：** 记 D 为按 FSL-153 规则得出的显示名（见「公开资料」）：本地姓名（首次登录时取自通讯录 `base_info.name.name.default_value`）转小写后含 `@`，或含登录邮箱的完整本地部分（转小写）时，D 为用户 ID，否则 D 为按原样存储的姓名。浏览器经 `get-session` 投影的 `displayName` 读到 D（见「浏览器显示名」），三项按 FSL-182 的原有表达式分别得出：
+  - **问候：** `sessionDisplayName(D, undefined, profilePrefs.username ?? "朋友")` 代入当前时段的模板 `早上好，{name}`、`下午好，{name}` 或 `晚上好，{name}`。时段按浏览器本地时间：5–11 时为早上，12–17 时为下午，其余为晚上；页面首次渲染、时段确定之前为 `你好，{name}`。
+  - **侧栏显示名：** `sessionDisplayName(D, undefined, profilePrefs.username ?? "当前用户")`。
+  - **头像缩写：** 侧栏显示名经原有的 `getInitials` 的结果：按空白分词，只有一个词时取它的前两个字符，多个词时取首词与末词各自的首字符，再转为大写。飞书用户没有头像图片，侧栏显示该缩写。
+
+  D 去掉首尾空白后非空时（真实成员的通常情形），问候中的名字与侧栏显示名都是去掉首尾空白的 D；D 全为空白时，两者各自取资料偏好的 `username`，没有时取上述本地化回退值。执行者先按 FSL-153 规则判定预期值属于「姓名」还是「用户 ID」，再逐项核对三项。
+- **辅助核对：** 在该页的浏览器控制台执行下列代码。它只输出预期值的类别与三个布尔值，不输出取值，只覆盖 D 非空白的情形：
+
+  ```js
+  (async () => {
+    const { user } = await (await fetch("/api/auth/get-session")).json();
+    const shown = user.displayName.trim();
+    const words = shown.split(/\s+/u).filter(Boolean);
+    const initials = words.length === 0 ? "" : (words.length === 1
+      ? Array.from(words[0]).slice(0, 2)
+      : [Array.from(words[0])[0], Array.from(words.at(-1))[0]]).join("").toUpperCase();
+    const rail = document.querySelector('[data-mega-shell="rail-profile-link"]');
+    const greeting = document.querySelector('[data-mega-home="hero-greeting"]')?.textContent;
+    return {
+      类别: shown === "" ? "回退值" : user.displayName === user.id ? "用户 ID" : "姓名",
+      问候一致: shown !== "" && ["你好", "早上好", "下午好", "晚上好"].some(p => greeting === `${p}，${shown}`),
+      侧栏一致: shown !== "" && rail?.querySelector("span:not([data-mega-atom])")?.textContent?.trim() === shown,
+      头像一致: shown !== "" && rail?.querySelector('[data-mega-atom="shell-avatar"]')?.textContent?.trim() === initials,
+    };
+  })()
+  ```
+
+- **记录：** 预期值的类别（姓名 / 用户 ID / 回退值）、三项各自一致与否的结论与观察时间；不记录姓名、首字母、缩写、邮箱或用户 ID。
+
+结果与预期不符时不在本卡修复：按 ER-10 新建 `FIX-*` 卡，并把 FSL-143 置为 `blocked`。
+
+### 证据脱敏（ER-11）
+
+- **只记录：** 完整 SHA、镜像标签、配置键名、时间（UTC）、HTTP 状态码、稳定日志键及其计数、行数及其变化、命令退出码、预期值类别与一致与否的结论。
+- **不记录：** 任何凭据或其片段（App Secret、HMAC 密钥、`tenant_access_token`、会话 Cookie 与 flow Cookie、数据库连接串与口令）、App ID 与租户标识、完整或部分邮箱（含第 4 步的随机地址与租户邮箱域名）、open_id、message_id、验证码、姓名及其首字母或缩写、用户 ID 与 `fs_<用户 ID>`。
+- **不提交：** 截图、HAR、原始日志或数据库导出；日志只摘录时间与计数。浏览器开发者工具的网络面板会显示 request 与 verify 的请求体（邮箱与验证码），不导出、不复制进证据。
+- **证据卫生门：** 提交前对产物执行计划 ER-04 的证据卫生门 EH-1..EH-4（[plan-20261118](../plan/plan-20261118.md)），每项都必须零命中（退出码 1；退出码 0 或 2 判失败）：
+  - **EH-1 凭据值形态：** `rg -c '(?i)(app_?secret|[a-z_]*access_token|refresh_token)[[:space:]\x22\x27]*[:=][[:space:]\x22\x27]*[A-Za-z0-9._~+/=-]{8,}|bearer[[:space:]]+[A-Za-z0-9._~+/=-]{8,}|t-[A-Za-z0-9]{20,}' <产物>`。
+  - **EH-2 实际凭据字面值：** 在已以 `set -a; source .env; set +a` 加载的 shell 中，先以 `test -n "$FEISHU_APP_SECRET"` 确认非空，再执行 `printf '%s\n' "$FEISHU_APP_SECRET" | rg -F -c -f - <产物>`。
+  - **EH-3 个人数据：** `rg -c '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}|ou_[0-9a-f]{20,}|om_[0-9a-f]{20,}' <产物>`。
+  - **EH-4 验证码字面值：** 在仓库外以 `mktemp -d` 创建临时目录（权限 700），把本次验证收到的每个验证码逐行写入其中的临时文件（权限 600；不打印、不提交），以 `test -s <临时文件>` 确认非空；以含其中一个验证码的临时负例文件执行 `rg -F -c -f <临时文件> <负例>`，必须命中（退出码 0，证明扫描有效），每次扫描后即删除负例；再执行 `rg -F -c -f <临时文件> <产物>`，必须零命中。产物记录扫描时间、负例命中与产物零命中的结果，不含验证码或临时文件内容。
+  - **EH-4 临时文件的生命周期（ER-14 的唯一例外）：** 该临时文件不由 `trap` 自动删除，而是保留到 FSL-143 的 EH-4 完成，随后由执行者删除整个临时目录，并在产物中记录删除时间；执行中断时原样保留，以便恢复后继续扫描；放弃 FSL-143 时立即删除。
+
+### 排障
+
+| 现象 | 日志键或原因 | 处理 |
+|---|---|---|
+| Web 或 collab 不启动 | `INVALID_AUTH_PROVIDER`：未设置 `AUTH_PROVIDER`；`INVALID_FEISHU_LOGIN_CONFIG: <键名, …>`：所列飞书键缺失或非法；`DATABASE_ROLE_SCOPE_REJECTED`：`DATABASE_URL` 的角色不是运行角色 | 修正根 `.env` 或部署配置后重新加载并启动；角色见「dev/test 部署」第 4 步 |
+| 点「发送验证码」后显示「验证码未能发送，请重试。」 | 503：`FEISHU_LOGIN_KEY_MISMATCH`（`ENTERPRISE_OTP_HMAC_KEY` 或 `FEISHU_APP_ID` 与已存指纹不符）或 `FEISHU_LOGIN_RESERVE_FAILED`（数据库预约失败）；429：限流 | 密钥不符时恢复原密钥与原 `FEISHU_APP_ID`，不得清空 `feishu_login_key_check` 或 `feishu_identities`（见「数据 › 密钥一致性检查」）；预约失败时检查数据库连接与运行角色的授权 |
+| 进入验证码步骤，但没有收到私聊 | `FEISHU_LOGIN_COOLDOWN`：60 秒内重复请求；`FEISHU_LOGIN_NO_TARGET`：邮箱与通讯录不逐字相等、成员不在通讯录权限范围内或匹配到多人；`FEISHU_LOGIN_INACTIVE`：成员未激活、冻结或已离职；`FEISHU_LOGIN_PROVIDER_FAILED`：凭据、Directory v1 接口或字段权限未生效（含应用版本未发布）；`FEISHU_LOGIN_SEND_REJECTED`：飞书拒绝私聊（机器人能力、发消息权限或可用范围）；`FEISHU_LOGIN_SEND_UNKNOWN`：送达不确定，验证码在到期前仍有效 | 按日志键核对「飞书自建应用与权限」与「可用范围与通讯录权限范围」；冷却时等 60 秒后重试 |
+| 提交正确验证码仍显示「验证码无效或已过期。」 | 浏览器没有保存 flow Cookie（站点既不是 HTTPS 也不是回环地址）；验证码已过期（激活后 5 分钟）或已被同一 flow 的新请求作废 | 改用 HTTPS 或回环地址；重新请求验证码 |
+| 显示账号冲突提示 | 409，`FEISHU_LOGIN_ACCOUNT_CONFLICT`：数据库中已有同邮箱的本地用户 | 本计划不提供合并入口；改用没有本地账号的部署数据库 |
+| 显示「登录未完成，请重新获取验证码。」 | 503，`FEISHU_LOGIN_SESSION_FAILED`：校验已提交而会话签发失败 | 重新请求验证码后登录，不会重复建号（见「HTTP 接口 › verify」的「会话失败的补偿」） |
+| 工作区首页显示「仪表盘暂时不可用。」与 `MEGA-HOME-LOAD` | 首页数据加载失败，问候不渲染 | 第 6 步无法判定，按环境问题处理并记录 |
 
 ## 来源
 
