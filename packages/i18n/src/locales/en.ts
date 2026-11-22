@@ -137,33 +137,6 @@ export const en = {
           waitButton: "Wait {seconds}s"
         }
       },
-      enterprise: {
-        title: "Sign in with Feishu",
-        description: "Message the Mega bot in your own Feishu chat, then enter the code here.",
-        alias: "Feishu login name",
-        aliasPlaceholder: "Enter your approved login name",
-        request: "Start pairing",
-        requesting: "Starting pairing...",
-        instructions: "Send this command in your private chat with the Mega bot:",
-        commandPrefix: "/login",
-        pending: "Waiting for your private message...",
-        confirmed: "Your message was confirmed. Enter the 8-character code from the bot.",
-        expired: "This pairing expired. Start a new pairing.",
-        code: "8-character code",
-        codePlaceholder: "Letters and numbers only",
-        verify: "Verify and continue",
-        verifying: "Verifying...",
-        resend: "Request another code",
-        resendWait: "Try again in {seconds}s",
-        errors: {
-          INVALID_INPUT: "Enter a valid login name or code.",
-          RATE_LIMITED: "Too many requests. Please wait before trying again.",
-          INVALID_CREDENTIALS: "That code is invalid or expired.",
-          NOT_FOUND: "This pairing is no longer available.",
-          UNAVAILABLE: "Enterprise login is temporarily unavailable.",
-          UNKNOWN_ERROR: "Enterprise login could not be completed. Please try again."
-        }
-      },
       feishu: {
         title: "Sign in with Feishu",
         description: "Enter your work email and we will send a sign-in code to your Feishu.",
@@ -1042,13 +1015,8 @@ export const en = {
         avatarSaveError: "Could not update the avatar.",
         displayName: "Display name",
         displayNameRequired: "Enter a display name (at most 60 characters).",
-        directoryManagedTitle: "Managed by your organization directory",
-        directoryManagedDescription: "Your display name and avatar come from the enterprise directory and cannot be changed here.",
         username: "Username",
         usernameHint: "Set at registration and cannot be changed.",
-        notificationEmail: "Notification email",
-        notificationEmailMissing: "No notification address configured",
-        notificationEmailHint: "Used for workspace notifications and managed by your organization.",
         usernameInvalid: "Usernames use lowercase letters, digits and hyphens (2–31 characters, starting with a letter or digit).",
         email: "Email",
         emailHint: "Managed under Account & security.",
@@ -2266,7 +2234,6 @@ export const en = {
     },
     auth: {
       unauthorized: "Authentication required",
-      maintenance: "Enterprise access is temporarily unavailable for maintenance.",
     },
     mega: {
       badRequest: "Invalid request.",

@@ -43,34 +43,19 @@ const profilePrefsUpdateSchema = z.object({
   clDraftByDefault: z.boolean().optional(),
 });
 
-async function resolveProfilePrefsActor(headers: Headers): Promise<{
-  user: ProfilePrefsUser;
-  enterprise: boolean;
-  backendUsername?: string;
-  notificationEmail?: string | null;
-}> {
+async function resolveProfilePrefsUser(headers: Headers): Promise<ProfilePrefsUser> {
   const actor = await resolveWebActor(headers);
   if (!actor) {
     throw new MegaBadRequestError("Authenticated user required for profile prefs");
   }
-  return {
-    user: { id: actor.userId, email: actor.email ?? null },
-    enterprise: actor.kind === "enterprise",
-    ...(actor.backendUsername ? { backendUsername: actor.backendUsername } : {}),
-    ...(actor.kind === "enterprise" ? { notificationEmail: actor.email ?? null } : {}),
-  };
+  return { id: actor.userId, email: actor.email ?? null };
 }
 
 async function dispatchSettingsGet(context: MegaDispatchContext): Promise<unknown> {
   const { segments, headers } = context;
 
   if (only(segments, ["profile-prefs"])) {
-    const actor = await resolveProfilePrefsActor(headers);
-    return projectProfilePrefs(actor.user, {
-      directoryManaged: actor.enterprise,
-      notificationEmail: actor.notificationEmail,
-      publicUsername: actor.enterprise ? actor.backendUsername : undefined,
-    });
+    return projectProfilePrefs(await resolveProfilePrefsUser(headers));
   }
   if (only(segments, ["user", "notifications"])) {
     return getUserNotificationPreferences(headers);
@@ -85,8 +70,7 @@ async function dispatchSettingsPost(context: MegaDispatchContext): Promise<unkno
   if (only(segments, ["profile-prefs"])) {
     const input = profilePrefsUpdateSchema.parse(body);
     try {
-      const actor = await resolveProfilePrefsActor(headers);
-      return updateProfilePrefs(actor.user, input);
+      return updateProfilePrefs(await resolveProfilePrefsUser(headers), input);
     } catch (error) {
       if (error instanceof TypeError) {
         throw new MegaBadRequestError(error.message);

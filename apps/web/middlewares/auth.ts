@@ -48,37 +48,35 @@ const publicRoutes: PublicRoute[] = [
   { pattern: /^\/api\/auth(\/.*)?$/i },
   // BFF session guard lives in WA-03 route handler (returns Mega envelope 401)
   { pattern: /^\/api\/mega(\/.*)?$/i },
-  // Owned Next lifecycle probes used by the enterprise runtime contract test.
-  { pattern: /^\/api\/owned-runtime(-pages)?$/i },
   // Upload handler owns its multipart-aware session guard and error contract.
   { pattern: /^\/api\/upload$/i },
   // mega2 reverse mail call — bearer auth in WA-05 route (not Better Auth)
   { pattern: /^\/api\/internal\/notifications\/email$/i },
-  // Enterprise collab introspection — its route owns the independent service key.
-  { pattern: /^\/api\/internal\/enterprise\/eligibility$/i, methods: ["POST"] },
-  // Feishu callback verification owns this one exact anonymous POST boundary.
-  {
-    pattern: /^\/api\/integrations\/feishu\/events$/,
-    methods: ["POST"],
-  },
 ];
 
-// Next normalizes a catch-all route's trailing slash before the Better Auth
-// handler sees it. Keep the structural enterprise path check at middleware
-// time as well, so `/enterprise/request/`, duplicate slashes, and encoded
-// path variants cannot become the canonical operation.
-const enterpriseAuthOperations = new Set([
-  "/enterprise/request",
-  "/enterprise/status",
-  "/enterprise/verify",
-  "/enterprise/session",
-  "/get-session",
-  "/sign-out",
-]);
+// FSL-132: the deleted Feishu events callback and enterprise eligibility routes answer
+// 404 to every caller, signed in or not, so a former caller (for example the Feishu
+// console still posting events) learns the route is gone instead of being asked to sign in.
+const retiredRoutes: readonly RegExp[] = [
+  /^\/api\/integrations\/feishu\/events\/?$/i,
+  /^\/api\/internal\/enterprise\/eligibility\/?$/i,
+];
 
+function rejectRetiredRoute(request: NextRequest): NextResponse | undefined {
+  const pathname = request.nextUrl.pathname;
+  if (!retiredRoutes.some(pattern => pattern.test(pathname))) return undefined;
+  return NextResponse.json({ error: "NOT_FOUND" }, { status: 404, headers: { "cache-control": "no-store" } });
+}
+
+// Next normalizes a catch-all route's trailing slash before the Better Auth
+// handler sees it. Outside legacy the allowed operations are matched by exact
+// path at middleware time as well, so trailing slashes, duplicate slashes and
+// encoded path variants cannot become the canonical operation.
+//
 // FSL-126: for an AUTH_MODE / AUTH_PROVIDER pair that `resolveAuthMode`
-// refuses, the anonymous Better Auth surface is only the session read and
-// sign-out; the old enterprise operations are not exposed. `get-session`
+// refuses (from FSL-132 including `maintenance` and `enterprise` without
+// AUTH_PROVIDER), the anonymous Better Auth surface is only the session read
+// and sign-out. `get-session`
 // answers through `resolveWebActor`, so a non-Feishu session reads as null.
 const invalidModeAuthOperations = new Set([
   "/get-session",
@@ -98,12 +96,10 @@ function allowedAuthOperations(): ReadonlySet<string> | undefined {
   const entry = resolveWebSessionEntry();
   if (entry === "feishu") return feishuAuthOperations;
   if (entry === "invalid") return invalidModeAuthOperations;
-  const mode = process.env.AUTH_MODE?.trim() ?? "legacy";
-  if (mode !== "enterprise" && mode !== "maintenance") return undefined;
-  return enterpriseAuthOperations;
+  return undefined;
 }
 
-function rejectEnterpriseAuthPathVariant(request: NextRequest): NextResponse | undefined {
+function rejectAuthPathVariant(request: NextRequest): NextResponse | undefined {
   const allowed = allowedAuthOperations();
   if (!allowed) return undefined;
   const pathname = request.nextUrl.pathname;
@@ -120,8 +116,7 @@ function rejectEnterpriseAuthPathVariant(request: NextRequest): NextResponse | u
 }
 
 function rejectLegacyAuthPage(request: NextRequest): NextResponse | undefined {
-  if (resolveWebSessionEntry() === "existing"
-    && (process.env.AUTH_MODE?.trim() ?? "legacy") !== "enterprise") return undefined;
+  if (resolveWebSessionEntry() === "existing") return undefined;
   const pathname = request.nextUrl.pathname;
   if (!new RegExp(`^/(${localeAlt})/(signup|forgot-password|reset-password)/?$`, "i").test(pathname)) {
     return undefined;
@@ -144,7 +139,9 @@ export async function authMiddleware(
   request: NextRequest,
 ): Promise<NextResponse | undefined> {
   const pathname = request.nextUrl.pathname;
-  const pathVariant = rejectEnterpriseAuthPathVariant(request);
+  const retired = rejectRetiredRoute(request);
+  if (retired) return retired;
+  const pathVariant = rejectAuthPathVariant(request);
   if (pathVariant) return pathVariant;
   const legacyAuthPage = rejectLegacyAuthPage(request);
   if (legacyAuthPage) return legacyAuthPage;

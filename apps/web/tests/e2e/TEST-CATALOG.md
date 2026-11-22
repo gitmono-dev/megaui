@@ -12,20 +12,10 @@
 | Spec | Catalog | Card | Default tier | Live tier (OPS-01 run) |
 |---|---|---|---|---|
 | `navigation-readiness.spec.ts` | [navigation-readiness.md](./catalog/navigation-readiness.md) | FS-92 | owned Next + synthetic session/PG + API stubs | N/A |
-| `enterprise-pairing-request.spec.ts` | [enterprise-pairing-request.md](./catalog/enterprise-pairing-request.md) | FS-73 | owned Next + isolated PG + real Chromium | N/A |
-| `enterprise-harness.spec.ts` | [enterprise-harness.md](./catalog/enterprise-harness.md) | FS-40 | owned Next + isolated PG (enterprise/legacy) | N/A |
 | `feishu-login-page.spec.ts` | [feishu-login-page.md](./catalog/feishu-login-page.md) | FSL-129 | owned Next (Feishu mode) + isolated PG + Feishu Mock + real Chromium | N/A |
 | `feishu-login-verify-errors.spec.ts` | [feishu-login-verify-errors.md](./catalog/feishu-login-verify-errors.md) | FSL-130 | owned Next (Feishu mode) + isolated PG + Feishu Mock + real Chromium | N/A |
 | `feishu-login-resend.spec.ts` | [feishu-login-resend.md](./catalog/feishu-login-resend.md) | FSL-155 | owned Next (Feishu mode) + isolated PG + Feishu Mock + real Chromium | N/A |
 | `feishu-login-entry.spec.ts` | [feishu-login-entry.md](./catalog/feishu-login-entry.md) | FSL-131 | owned Next (Feishu mode) + isolated PG + Feishu Mock + real Chromium | N/A |
-| `enterprise-auth-fixture.spec.ts` | [enterprise-auth-fixture.md](./catalog/enterprise-auth-fixture.md) | FS-89 | owned Next + isolated PG + FSM-05 Mock + real Chromium | N/A |
-| `enterprise-auth.spec.ts` | [enterprise-auth.md](./catalog/enterprise-auth.md) | FS-20 / FS-26 | owned Next + isolated PG + FSM-05 Mock + real Chromium | N/A |
-| `enterprise-offboarding.spec.ts` | [enterprise-offboarding.md](./catalog/enterprise-offboarding.md) | FS-30 / FS-17 / FS-18 | owned Next + isolated PG + FSM-05 Mock + real Chromium | N/A |
-| `enterprise-auth-policy.spec.ts` | [enterprise-auth-policy.md](./catalog/enterprise-auth-policy.md) | FS-19 | owned Next + isolated PG + FSM-05 Mock + real Chromium | N/A |
-| `enterprise-content-profile.spec.ts` | [enterprise-content-profile.md](./catalog/enterprise-content-profile.md) | FS-22 | owned Next + isolated PG + FSM-05 Mock + real Chromium | N/A |
-| `enterprise-social-profile.spec.ts` | [enterprise-social-profile.md](./catalog/enterprise-social-profile.md) | FS-23 | owned Next + isolated PG + FSM-05 Mock + real Chromium | N/A |
-| `enterprise-profile.spec.ts` | [enterprise-profile.md](./catalog/enterprise-profile.md) | FS-24 / FS-59 | owned Next + isolated PG + FSM-05 Mock + real Chromium | N/A |
-| `legacy-auth-fixture.spec.ts` | [legacy-auth-fixture.md](./catalog/legacy-auth-fixture.md) | FS-26 / FS-89 | owned Next + isolated PG + run-labelled SMTP + real Chromium | N/A |
 | `auth-flow.spec.ts` | [auth-flow.md](./catalog/auth-flow.md) | FS-26 / WA-02 | owned Next + isolated PG | ran (compose `:17001`) |
 | `home.spec.ts` | [home.md](./catalog/home.md) | WA-01 | stub | catalog-ready (not in OPS-01 core list) |
 | `smoke.spec.ts` | — | SC-01 scaffold | stub | N/A |

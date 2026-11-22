@@ -58,6 +58,6 @@ The scenario is skipped (not failed) if the DB is unavailable.
 - No Turnstile/captcha assertions (ADR-ARCH-04 permanent non-goal).
 - No wechat / phone sign-in tests.
 
-The legacy spec remains the email/password compatibility flow. Enterprise mode uses the separate
-`enterprise-auth.spec.ts` contract and hides signup/recovery pages; it does not weaken the legacy
-validation or redirect scenarios above.
+The legacy spec remains the email/password compatibility flow. Feishu mode uses the separate
+`feishu-login-*.spec.ts` specs and hides signup/recovery pages; it does not weaken the legacy
+validation or redirect scenarios above. FSL-132 removed the old enterprise mode and its E2E specs.

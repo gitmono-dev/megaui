@@ -14,15 +14,8 @@ export interface ProfilePrefs {
   clDraftByDefault?: boolean;
 }
 
-/**
- * The settings projection is deliberately wider than the mutable local store:
- * directory-managed identity and notification delivery are read-only facts
- * supplied by the authenticated Web actor.
- */
-export interface ProfilePrefsView extends ProfilePrefs {
-  directoryManaged: boolean;
-  notificationEmail: string | null;
-}
+/** The settings projection of the authenticated user's local prefs (FSL-132: no directory-managed facts). */
+export type ProfilePrefsView = ProfilePrefs;
 
 export interface ProfilePrefsUser {
   id: string;
@@ -80,22 +73,8 @@ export function getProfilePrefs(user: ProfilePrefsUser): ProfilePrefs {
   return clone(ensureProfilePrefs(user));
 }
 
-export function projectProfilePrefs(
-  user: ProfilePrefsUser,
-  options: {
-    directoryManaged: boolean;
-    notificationEmail?: string | null;
-    publicUsername?: string | null;
-  },
-): ProfilePrefsView {
-  const prefs = getProfilePrefs(user);
-  const publicUsername = options.publicUsername?.trim();
-  return {
-    ...prefs,
-    ...(publicUsername ? { username: publicUsername } : {}),
-    directoryManaged: options.directoryManaged,
-    notificationEmail: options.notificationEmail ?? null,
-  };
+export function projectProfilePrefs(user: ProfilePrefsUser): ProfilePrefsView {
+  return getProfilePrefs(user);
 }
 
 export function updateProfilePrefs(

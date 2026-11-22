@@ -1,15 +1,16 @@
-// megaui-only (FSL-131): the sign-in entry outside Feishu mode stays as it was.
+// megaui-only (FSL-131, FSL-132): the sign-in entry outside Feishu mode.
 //
 // AC6 `legacy` (and AUTH_MODE / AUTH_PROVIDER unset): `/[lang]/signin` renders the email and
 // password form with its forgot-password and sign-up links, the middleware lets a guest reach
-// it and the sign-up page, and nothing redirects to the Feishu page. AC7 `enterprise` without
-// AUTH_PROVIDER: the page renders the existing enterprise form, and nothing redirects either.
+// it and the sign-up page, and nothing redirects to the Feishu page. FSL-132 AC22/AC23:
+// `maintenance` and `enterprise` without AUTH_PROVIDER are refused, so the Web refuses to
+// start (`register()` throws `INVALID_AUTH_PROVIDER`) and the session entry is `invalid`.
 // Feishu mode itself (the 307 to `/[lang]/signin/feishu`) is asserted here at the page level
 // and end to end in `tests/e2e/feishu-login-entry.spec.ts`.
 //
 // The server component is awaited and its element tree rendered to static markup. No
-// database or socket: Better Auth, the enterprise runtime and the shared Pool are replaced
-// by spies, and `next/navigation` by a stub whose `redirect` throws like the real one.
+// database or socket: Better Auth and the shared Pool are replaced by spies, and
+// `next/navigation` by a stub whose `redirect` throws like the real one.
 import { renderToStaticMarkup } from "react-dom/server";
 import { NextRequest } from "next/server";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -38,23 +39,24 @@ vi.mock("@/lib/auth-client", () => ({ authClient: {} }));
 
 const getSession = vi.hoisted(() => vi.fn(async () => null));
 const getPool = vi.hoisted(() => vi.fn(() => ({ query: vi.fn(async () => ({ rows: [] })) })));
-vi.mock("@/lib/auth", () => ({
+vi.mock("@/lib/auth", async importOriginal => ({
+  ...(await importOriginal<typeof import("@/lib/auth")>()),
   getAuth: vi.fn(() => ({ api: { getSession } })),
-  prepareWebAuth: vi.fn(),
-  resolveCurrentWebAuthMode: vi.fn(async () => { throw new Error("unscoped deployments never read the persisted mode"); }),
 }));
-vi.mock("@/lib/enterprise-runtime", () => ({ getReadyWebAssembly: vi.fn(() => null) }));
 vi.mock("@megaui/database", async importOriginal => ({
   ...(await importOriginal<typeof import("@megaui/database")>()),
   getPool,
 }));
 
+import { AuthModeError } from "@megaui/core";
+
 import SigninPage from "@/app/[lang]/(auth)/signin/page";
+import { register } from "@/instrumentation";
 import { resolveWebSessionEntry } from "@/lib/enterprise-session";
 import { authMiddleware } from "@/middlewares/auth";
 
 const ORIGIN = "http://127.0.0.1:3000";
-const MANAGED = ["AUTH_MODE", "AUTH_PROVIDER", "DATABASE_URL", "ENTERPRISE_PROCESS_ROLE", "ENTERPRISE_OWNER_FINGERPRINT",
+const MANAGED = ["NEXT_RUNTIME", "AUTH_MODE", "AUTH_PROVIDER", "DATABASE_URL", "ENTERPRISE_PROCESS_ROLE", "ENTERPRISE_OWNER_FINGERPRINT",
   "ENTERPRISE_DB_INSTANCE_ID", "ENTERPRISE_DEPLOYMENT_ROLE", "ENTERPRISE_APPROVED_TARGETS", "GOOGLE_CLIENT_ID",
   "GOOGLE_CLIENT_SECRET", "GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET"] as const;
 const saved = new Map(MANAGED.map(key => [key, process.env[key]]));
@@ -138,40 +140,48 @@ describe("FSL-131 AC6: legacy keeps the password sign-in page and its sign-up li
   });
 });
 
-describe("FSL-131 AC7: enterprise without AUTH_PROVIDER keeps its sign-in page", () => {
-  const enterpriseEnvironments = [
-    ["AUTH_PROVIDER unset", { AUTH_MODE: "enterprise" }],
-    ["blank AUTH_PROVIDER", { AUTH_MODE: "enterprise", AUTH_PROVIDER: "  " }],
+async function startupError(): Promise<unknown> {
+  process.env.NEXT_RUNTIME = "nodejs";
+  try {
+    await register();
+    return undefined;
+  } catch (error) {
+    return error;
+  } finally {
+    delete process.env.NEXT_RUNTIME;
+  }
+}
+
+describe("FSL-132 AC22/AC23: maintenance and enterprise without AUTH_PROVIDER refuse to start", () => {
+  const refused = [
+    ["AC22 AUTH_MODE=maintenance", { AUTH_MODE: "maintenance" }],
+    ["AC22 AUTH_MODE=maintenance, AUTH_PROVIDER=local", { AUTH_MODE: "maintenance", AUTH_PROVIDER: "local" }],
+    ["AC23 AUTH_MODE=enterprise, AUTH_PROVIDER unset", { AUTH_MODE: "enterprise" }],
+    ["AC23 AUTH_MODE=enterprise, blank AUTH_PROVIDER", { AUTH_MODE: "enterprise", AUTH_PROVIDER: "  " }],
   ] as const;
 
-  it.each(enterpriseEnvironments)("%s: the page renders the existing enterprise form", async (_label, values) => {
-    setEnvironment({ ...values, GITHUB_CLIENT_ID: "synthetic-id", GITHUB_CLIENT_SECRET: "synthetic-secret" });
-    expect(resolveWebSessionEntry()).toBe("existing");
-    for (const lang of LOCALES) {
-      const copy = getTranslation(lang).auth.signin;
-      const html = await renderSignin(lang, { callbackUrl: `/${lang}/workspace` });
-      expect(html).toContain('data-testid="signin-card"');
-      expect(html).toContain(copy.enterprise.title);
-      expect(html).toContain(copy.enterprise.description);
-      expect(html).toContain('data-testid="enterprise-login"');
-      expect(html).toContain('data-testid="enterprise-alias"');
-      expect(html).toContain('data-testid="enterprise-request"');
-      // As before: no password form, no sign-up link and no OAuth buttons in enterprise mode.
-      expect(html).not.toMatch(/type="password"/);
-      expect(html).not.toContain(`href="/${lang}/signup"`);
-      expect(html).not.toContain(copy.continueWith);
-      expect(html).not.toContain("feishu-login");
-    }
-    expect(navigation.redirect).not.toHaveBeenCalled();
-  });
-
-  it.each(enterpriseEnvironments)("%s: a guest reaches the sign-in page without a redirect", async (_label, values) => {
+  it.each(refused)("%s: register() throws INVALID_AUTH_PROVIDER and the session entry is invalid", async (_label, values) => {
     setEnvironment(values);
-    expect(await authMiddleware(request("/en/signin"))).toBeUndefined();
-    expect(await authMiddleware(request("/zh-CN/signin?callbackUrl=%2Fzh-CN%2Fworkspace"))).toBeUndefined();
+    const error = await startupError();
+    expect(error).toBeInstanceOf(AuthModeError);
+    expect((error as AuthModeError).code).toBe("INVALID_AUTH_PROVIDER");
+    expect(resolveWebSessionEntry()).toBe("invalid");
+    // No session is read for a refused pair, so no actor and no redirect to the workspace.
     const page = await authMiddleware(request("/en/workspace"));
     expect(page?.status).toBe(302);
     expect(new URL(page!.headers.get("location")!).pathname).toBe("/en/signin");
+    expect(getSession).not.toHaveBeenCalled();
+    // The legacy password pages are not offered either.
+    expect((await authMiddleware(request("/en/signup")))?.status).toBe(404);
+  });
+
+  it.each([
+    ["AUTH_MODE and AUTH_PROVIDER unset", {}],
+    ["AUTH_MODE=legacy", { AUTH_MODE: "legacy" }],
+    ["AUTH_MODE=legacy, AUTH_PROVIDER=local", { AUTH_MODE: "legacy", AUTH_PROVIDER: "local" }],
+  ] as const)("%s: legacy still starts", async (_label, values) => {
+    setEnvironment(values);
+    expect(await startupError()).toBeUndefined();
   });
 });
 

@@ -11,8 +11,8 @@ const envSchema = z.object({
     .enum(["development", "test", "production"])
     .default("development"),
   MEGAUI_APP_NAME: z.string().min(1).default("megaui"),
-  // Shared authentication mode; an absent value keeps legacy behaviour.
-  AUTH_MODE: z.enum(["legacy", "enterprise", "maintenance"]).default("legacy"),
+  // FSL-132: AUTH_MODE / AUTH_PROVIDER are parsed only by `resolveAuthMode`
+  // (@megaui/core, GC-02); startup refuses a pair it rejects (instrumentation.ts).
 });
 
 export type Env = z.infer<typeof envSchema>;

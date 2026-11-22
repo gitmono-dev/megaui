@@ -15,22 +15,20 @@
 
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import { Loader2 } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { z } from "zod";
 
-import { Alert, AlertDescription, AlertTitle, Button, FormError, Input, Label } from "@megaui/ui";
+import { Button, FormError, Input, Label } from "@megaui/ui";
 
 import { useTranslation } from "@/hooks/use-translation";
 import { authClient } from "@/lib/auth-client";
 import { resolvePostAuthPath } from "@/lib/post-auth-redirect";
 
-export function LoginForm({ enterprise = false }: { enterprise?: boolean }) {
-  if (enterprise) return <EnterpriseLoginForm />;
-
+// FSL-132: the email and password form only; the old enterprise pairing form is gone.
+export function LoginForm() {
   const { t, locale } = useTranslation();
 
   const schema = useMemo(
@@ -212,172 +210,6 @@ export function LoginForm({ enterprise = false }: { enterprise?: boolean }) {
           </Link>
         </div>
       </form>
-    </div>
-  );
-}
-
-const ENTERPRISE_CODE = /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9]{8}$/;
-
-function EnterpriseLoginForm() {
-  const router = useRouter();
-  const { t, locale } = useTranslation();
-  const copy = t.auth.signin.enterprise;
-  const [alias, setAlias] = useState("");
-  const [code, setCode] = useState("");
-  const [pairingId, setPairingId] = useState<string | null>(null);
-  const [pairingToken, setPairingToken] = useState<string | null>(null);
-  const [challengeId, setChallengeId] = useState<string | null>(null);
-  const [status, setStatus] = useState<"idle" | "pending" | "confirmed" | "expired">("idle");
-  const [cooldownUntil, setCooldownUntil] = useState(0);
-  const [now, setNow] = useState(() => Date.now());
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    if (cooldownUntil <= Date.now()) return undefined;
-    const timer = window.setInterval(() => setNow(Date.now()), 250);
-    return () => window.clearInterval(timer);
-  }, [cooldownUntil]);
-
-  useEffect(() => {
-    if (!pairingId || status !== "pending") return undefined;
-    let active = true;
-    const poll = async () => {
-      const result = await authClient.enterprise.status(pairingId);
-      if (!active || !result.ok) return;
-      setStatus(result.status);
-      if (result.status === "confirmed") setChallengeId(result.challengeId ?? null);
-    };
-    void poll();
-    const timer = window.setInterval(() => { void poll(); }, 2_000);
-    return () => { active = false; window.clearInterval(timer); };
-  }, [pairingId, status]);
-
-  const errorText = (code: string) =>
-    copy.errors[code as keyof typeof copy.errors] ?? copy.errors.UNKNOWN_ERROR;
-
-  const requestPairing = async () => {
-    const value = alias.trim();
-    if (value.length < 3 || value.length > 64) {
-      setError(errorText("INVALID_INPUT"));
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    setChallengeId(null);
-    setStatus("idle");
-    const result = await authClient.enterprise.request(value);
-    if (!result.ok) {
-      setError(errorText(result.error));
-      setLoading(false);
-      return;
-    }
-    setPairingId(result.pairingId);
-    setPairingToken(result.pairingToken);
-    setCooldownUntil(Date.now() + result.resendAfter * 1_000);
-    setStatus("pending");
-    setLoading(false);
-  };
-
-  const verify = async (event: React.FormEvent) => {
-    event.preventDefault();
-    const normalized = code.trim().toUpperCase();
-    if (!challengeId || !ENTERPRISE_CODE.test(normalized)) {
-      setError(errorText("INVALID_INPUT"));
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    const result = await authClient.enterprise.verify(challengeId, normalized);
-    if (!result.ok) {
-      setError(errorText(result.error));
-      setLoading(false);
-      return;
-    }
-    const params = new URLSearchParams(window.location.search);
-    router.push(resolvePostAuthPath(params, locale));
-  };
-
-  const cooldown = Math.max(0, Math.ceil((cooldownUntil - now) / 1_000));
-
-  return (
-    <div className="flex flex-col gap-4" data-testid="enterprise-login">
-      <div className="space-y-1">
-        <h2 className="text-lg font-semibold">{copy.title}</h2>
-        <p className="text-sm text-muted-foreground">{copy.description}</p>
-      </div>
-      <FormError message={error ?? undefined} />
-      {!pairingId && (
-        <form onSubmit={(event) => { event.preventDefault(); void requestPairing(); }} className="flex flex-col gap-4">
-          <div className="grid gap-2">
-            <Label htmlFor="enterprise-alias">{copy.alias}</Label>
-            <Input
-              id="enterprise-alias"
-              data-testid="enterprise-alias"
-              value={alias}
-              onChange={(event) => setAlias(event.target.value)}
-              placeholder={copy.aliasPlaceholder}
-              autoComplete="username"
-              disabled={loading}
-            />
-          </div>
-          <Button type="submit" data-testid="enterprise-request" disabled={loading}>
-            {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            {loading ? copy.requesting : copy.request}
-          </Button>
-        </form>
-      )}
-      {pairingId && pairingToken && (
-        <div className="flex flex-col gap-4">
-          <Alert>
-            <AlertTitle>{copy.instructions}</AlertTitle>
-            <AlertDescription className="mt-2 space-y-2">
-              <code data-testid="enterprise-command" className="block rounded bg-muted px-3 py-2 font-mono text-sm">
-                {copy.commandPrefix} {pairingToken}
-              </code>
-              <p data-testid="enterprise-status" className="text-sm">
-                {status === "pending" && copy.pending}
-                {status === "confirmed" && copy.confirmed}
-                {status === "expired" && copy.expired}
-              </p>
-            </AlertDescription>
-          </Alert>
-          {status === "confirmed" && challengeId && (
-            <form onSubmit={(event) => void verify(event)} className="flex flex-col gap-4">
-              <div className="grid gap-2">
-                <Label htmlFor="enterprise-code">{copy.code}</Label>
-                <Input
-                  id="enterprise-code"
-                  data-testid="enterprise-code"
-                  value={code}
-                  onChange={(event) => setCode(event.target.value.replace(/[^A-Za-z0-9]/g, "").slice(0, 8))}
-                  placeholder={copy.codePlaceholder}
-                  inputMode="text"
-                  autoComplete="one-time-code"
-                  maxLength={8}
-                  disabled={loading}
-                />
-              </div>
-              <Button type="submit" data-testid="enterprise-verify" disabled={loading}>
-                {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                {loading ? copy.verifying : copy.verify}
-              </Button>
-            </form>
-          )}
-          <Button
-            type="button"
-            variant="outline"
-            data-testid="enterprise-resend"
-            onClick={() => { void requestPairing(); }}
-            disabled={loading || cooldown > 0}
-          >
-            {cooldown > 0 ? copy.resendWait.replace("{seconds}", String(cooldown)) : copy.resend}
-          </Button>
-        </div>
-      )}
-      <p className="text-center text-sm">
-        <Link href={`/${locale}/signin`} className="underline underline-offset-4">{t.auth.signin.title}</Link>
-      </p>
     </div>
   );
 }

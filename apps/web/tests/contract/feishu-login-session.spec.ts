@@ -1,6 +1,8 @@
 // megaui-only (FSL-126): the Web session entry in Feishu mode (AUTH_MODE=enterprise,
 // AUTH_PROVIDER=feishu), driven through the real middleware, `resolveWebActor` and the
-// `/api/auth/[...all]` route against a one-shot PostgreSQL.
+// `/api/auth/[...all]` route against a one-shot PostgreSQL. FSL-132 adds the legacy entry
+// (AUTH_MODE=legacy): an email and password sign-in through the real route, `get-session`,
+// `resolveWebActor` returning a legacy actor, and sign-out ending the session.
 //
 // Sessions and `feishu_login_sessions` rows are written directly: the Feishu session the
 // way verify issues it (`createSession(userId, false, { expiresAt: +8h }, true)` followed by
@@ -27,11 +29,9 @@ vi.mock("@/lib/auth", () => ({
     if (!authHolder.current) throw new Error("test Auth instance is not ready");
     return authHolder.current;
   },
-  prepareWebAuth: () => { throw new Error("Feishu mode must not prepare the enterprise assembly"); },
-  resolveCurrentWebAuthMode: async () => { throw new Error("Feishu mode must not read the enterprise mode"); },
 }));
 
-import { GET as authRouteGet } from "@/app/api/auth/[...all]/route";
+import { GET as authRouteGet, POST as authRoutePost } from "@/app/api/auth/[...all]/route";
 import { resolveWebActor } from "@/lib/enterprise-session";
 import { authMiddleware } from "@/middlewares/auth";
 
@@ -126,39 +126,42 @@ async function getSession(cookie?: string): Promise<{ status: number; body: unkn
   return { status: response.status, body: await response.json() };
 }
 
+beforeAll(async () => {
+  isolated = await createIsolatedPostgres();
+  await isolated.migrate();
+  database = createDatabaseClient({ connectionString: isolated.databaseUrl, max: 4, onPoolError: () => {} });
+  for (const key of MANAGED) delete process.env[key];
+  process.env.DATABASE_URL = isolated.databaseUrl;
+  auth = buildAuth(database);
+  authHolder.current = auth;
+  await auth.$context;
+}, 180_000);
+
+beforeEach(async () => {
+  await database!.pool.query(`delete from feishu_login_sessions; delete from session; delete from feishu_identities;
+    delete from account; delete from "user"`);
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+afterAll(async () => {
+  const errors: unknown[] = [];
+  for (const end of [() => closeDatabaseClient(), () => database?.close(), () => isolated?.destroy()]) {
+    try { await end(); } catch (error) { errors.push(error); }
+  }
+  for (const [key, value] of saved) {
+    if (value === undefined) delete process.env[key]; else process.env[key] = value;
+  }
+  if (errors.length) throw new AggregateError(errors, "FSL-126 cleanup failed");
+}, 120_000);
+
 describe("FSL-126 Web session entry in Feishu mode", () => {
-  beforeAll(async () => {
-    isolated = await createIsolatedPostgres();
-    await isolated.migrate();
-    database = createDatabaseClient({ connectionString: isolated.databaseUrl, max: 4, onPoolError: () => {} });
-    for (const key of MANAGED) delete process.env[key];
+  beforeEach(() => {
     process.env.AUTH_MODE = "enterprise";
     process.env.AUTH_PROVIDER = "feishu";
-    process.env.DATABASE_URL = isolated.databaseUrl;
-    auth = buildAuth(database);
-    authHolder.current = auth;
-    await auth.$context;
-  }, 180_000);
-
-  beforeEach(async () => {
-    await database!.pool.query(`delete from feishu_login_sessions; delete from session; delete from feishu_identities;
-      delete from account; delete from "user"`);
   });
-
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  afterAll(async () => {
-    const errors: unknown[] = [];
-    for (const end of [() => closeDatabaseClient(), () => database?.close(), () => isolated?.destroy()]) {
-      try { await end(); } catch (error) { errors.push(error); }
-    }
-    for (const [key, value] of saved) {
-      if (value === undefined) delete process.env[key]; else process.env[key] = value;
-    }
-    if (errors.length) throw new AggregateError(errors, "FSL-126 cleanup failed");
-  }, 120_000);
 
   it("AC1: a page request with a valid Feishu session gets that user", async () => {
     const member = await boundMember();
@@ -278,5 +281,77 @@ describe("FSL-126 Web session entry in Feishu mode", () => {
     const other = await feishuSession(member.userId);
     await database!.pool.query("delete from feishu_login_sessions where session_id = $1", [other.sessionId]);
     expect(await getSession(other.cookie)).toEqual({ status: 200, body: null });
+  });
+});
+
+/** `POST /api/auth/<path>` through the middleware and then the real route. */
+async function authPost(path: string, body: unknown, cookie?: string): Promise<Response> {
+  const request = new NextRequest(`${ORIGIN}/api/auth${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", origin: ORIGIN, ...(cookie ? { cookie } : {}) },
+    body: JSON.stringify(body),
+  });
+  const blocked = await authMiddleware(request);
+  if (blocked) return blocked;
+  return authRoutePost(request);
+}
+
+function sessionCookieOf(response: Response): string | undefined {
+  const line = response.headers.getSetCookie().find(entry => entry.startsWith(`${SESSION_COOKIE}=`));
+  return line?.split(";", 1)[0];
+}
+
+describe("FSL-132 Web session entry in legacy mode", () => {
+  beforeEach(() => {
+    process.env.AUTH_MODE = "legacy";
+    delete process.env.AUTH_PROVIDER;
+  });
+
+  it.each([
+    ["AUTH_MODE=legacy", "legacy", undefined],
+    ["AUTH_MODE unset, AUTH_PROVIDER=local", undefined, "local"],
+  ] as const)("AC28 %s: sign in with email and password, read the session, sign out", async (_label, mode, provider) => {
+    if (mode === undefined) delete process.env.AUTH_MODE; else process.env.AUTH_MODE = mode;
+    if (provider === undefined) delete process.env.AUTH_PROVIDER; else process.env.AUTH_PROVIDER = provider;
+    const signUp = await auth.api.signUpEmail({ body: { email: EMAIL, password: PASSWORD, name: "Legacy Member" } });
+    const userId = signUp.user.id;
+    await database!.pool.query("delete from session");
+
+    // Sign in through the middleware and the real `/api/auth/[...all]` route.
+    const signIn = await authPost("/sign-in/email", { email: EMAIL, password: PASSWORD });
+    expect(signIn.status).toBe(200);
+    const cookie = sessionCookieOf(signIn);
+    expect(cookie).toBeDefined();
+
+    // get-session returns that user, and the Web actor is legacy.
+    const session = await getSession(cookie);
+    expect(session.status).toBe(200);
+    expect(session.body).toMatchObject({ user: { id: userId, email: EMAIL, name: "Legacy Member" } });
+    const sessionId = (session.body as { session: { id: string } }).session.id;
+    await expect(resolveWebActor(new Headers({ cookie: cookie! }))).resolves.toEqual({
+      kind: "legacy",
+      userId,
+      email: EMAIL,
+      sessionId,
+    });
+    expect(await authMiddleware(pageRequest(cookie))).toBeUndefined();
+    // A legacy session needs no Feishu marker row.
+    expect((await database!.pool.query("select count(*)::int as n from feishu_login_sessions")).rows[0]).toEqual({ n: 0 });
+
+    // Sign out ends the session: get-session is null and the actor is gone.
+    const signOut = await authPost("/sign-out", {}, cookie);
+    expect(signOut.status).toBe(200);
+    expect(await getSession(cookie)).toEqual({ status: 200, body: null });
+    await expect(resolveWebActor(new Headers({ cookie: cookie! }))).resolves.toBeNull();
+    expect(redirectTarget(await authMiddleware(pageRequest(cookie)))).toBe("/en/signin?callbackUrl=%2Fen%2Fworkspace");
+    expect((await database!.pool.query("select count(*)::int as n from session where id = $1", [sessionId])).rows[0])
+      .toEqual({ n: 0 });
+  });
+
+  it("AC28: a wrong password signs nobody in", async () => {
+    await auth.api.signUpEmail({ body: { email: EMAIL, password: PASSWORD, name: "Legacy Member" } });
+    const response = await authPost("/sign-in/email", { email: EMAIL, password: `${PASSWORD}-wrong` });
+    expect(response.status).toBe(401);
+    expect(sessionCookieOf(response)).toBeUndefined();
   });
 });

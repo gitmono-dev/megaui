@@ -137,33 +137,6 @@ export const zhCN = {
           waitButton: "等待 {seconds}s"
         }
       },
-      enterprise: {
-        title: "使用飞书登录",
-        description: "请在本人的飞书私聊中向 Mega 机器人发送指令，然后在此输入验证码。",
-        alias: "飞书登录名",
-        aliasPlaceholder: "请输入已批准的登录名",
-        request: "开始配对",
-        requesting: "正在开始配对…",
-        instructions: "请在与 Mega 机器人的本人私聊中发送以下指令：",
-        commandPrefix: "/login",
-        pending: "正在等待本人私聊消息…",
-        confirmed: "私聊已确认，请输入机器人发送的 8 位验证码。",
-        expired: "配对已过期，请重新开始。",
-        code: "8 位验证码",
-        codePlaceholder: "仅限字母和数字",
-        verify: "验证并继续",
-        verifying: "正在验证…",
-        resend: "重新请求验证码",
-        resendWait: "请在 {seconds} 秒后重试",
-        errors: {
-          INVALID_INPUT: "请输入有效的登录名或验证码。",
-          RATE_LIMITED: "请求过于频繁，请稍后再试。",
-          INVALID_CREDENTIALS: "验证码无效或已过期。",
-          NOT_FOUND: "此配对已不可用。",
-          UNAVAILABLE: "企业登录暂时不可用。",
-          UNKNOWN_ERROR: "企业登录未完成，请重试。"
-        }
-      },
       feishu: {
         title: "使用飞书登录",
         description: "输入工作邮箱，我们会通过飞书向你发送登录验证码。",
@@ -1042,13 +1015,8 @@ export const zhCN = {
         avatarSaveError: "无法更新头像。",
         displayName: "显示名",
         displayNameRequired: "请输入显示名（最多 60 个字符）。",
-        directoryManagedTitle: "由企业目录管理",
-        directoryManagedDescription: "显示名和头像来自企业目录，无法在此修改。",
         username: "用户名",
         usernameHint: "注册时设置，注册后不可修改。",
-        notificationEmail: "通知邮箱",
-        notificationEmailMissing: "尚未配置通知地址",
-        notificationEmailHint: "用于工作区通知，由组织目录管理。",
         usernameInvalid: "用户名只能包含小写字母、数字和连字符（2–31 个字符，以字母或数字开头）。",
         email: "邮箱",
         emailHint: "在「账号与安全」中管理。",
@@ -2267,7 +2235,6 @@ export const zhCN = {
     },
     auth: {
       unauthorized: "需要登录",
-      maintenance: "企业访问正在维护，暂时不可用。",
     },
     mega: {
       badRequest: "请求无效。",

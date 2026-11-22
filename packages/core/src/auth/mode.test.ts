@@ -1,4 +1,4 @@
-// megaui-only (FSL-116): tests for the single AUTH_MODE / AUTH_PROVIDER parser.
+// megaui-only (FSL-116, FSL-132): tests for the single AUTH_MODE / AUTH_PROVIDER parser.
 import { describe, expect, it } from 'vitest'
 
 import * as core from '../index'
@@ -32,15 +32,36 @@ describe('resolveAuthMode (FSL-116, ADR-FSL-12)', () => {
     })
   })
 
-  it('AC3: AUTH_MODE=enterprise without AUTH_PROVIDER is the transitional enterprise mode', () => {
-    expect(resolveAuthMode({ AUTH_MODE: 'enterprise' })).toStrictEqual({
-      mode: 'enterprise',
-      provider: undefined,
-    })
-  })
+  it.each([undefined, '', '  '])(
+    'FSL-132: AUTH_MODE=enterprise without AUTH_PROVIDER (%j) is INVALID_AUTH_PROVIDER',
+    (provider) => {
+      expect(codeOf(() => resolveAuthMode({ AUTH_MODE: 'enterprise', AUTH_PROVIDER: provider }))).toBe(
+        'INVALID_AUTH_PROVIDER',
+      )
+      expect(codeOf(() => resolveAuthMode({ AUTH_MODE: ' enterprise ', AUTH_PROVIDER: provider }))).toBe(
+        'INVALID_AUTH_PROVIDER',
+      )
+    },
+  )
 
-  it('maintenance without AUTH_PROVIDER keeps the transitional maintenance mode', () => {
-    expect(resolveAuthMode({ AUTH_MODE: 'maintenance' })).toStrictEqual({ mode: 'maintenance' })
+  it.each([undefined, '', '  ', 'local', 'feishu'])(
+    'FSL-132: AUTH_MODE=maintenance (AUTH_PROVIDER=%j) is INVALID_AUTH_PROVIDER',
+    (provider) => {
+      expect(codeOf(() => resolveAuthMode({ AUTH_MODE: 'maintenance', AUTH_PROVIDER: provider }))).toBe(
+        'INVALID_AUTH_PROVIDER',
+      )
+    },
+  )
+
+  it('FSL-132: the refusal message names the keys, never a value', () => {
+    let message = ''
+    try {
+      resolveAuthMode({ AUTH_MODE: 'maintenance' })
+    } catch (error) {
+      message = (error as Error).message
+    }
+    expect(message).toContain('AUTH_PROVIDER')
+    expect(message).not.toContain('maintenance')
   })
 
   it.each(['oidc', 'Feishu', 'lark'])(
@@ -61,12 +82,6 @@ describe('resolveAuthMode (FSL-116, ADR-FSL-12)', () => {
       )
     },
   )
-
-  it('maintenance with AUTH_PROVIDER=local is INVALID_AUTH_PROVIDER', () => {
-    expect(codeOf(() => resolveAuthMode({ AUTH_MODE: 'maintenance', AUTH_PROVIDER: 'local' }))).toBe(
-      'INVALID_AUTH_PROVIDER',
-    )
-  })
 
   it('enterprise with AUTH_PROVIDER=local is INVALID_AUTH_PROVIDER', () => {
     expect(codeOf(() => resolveAuthMode({ AUTH_MODE: 'enterprise', AUTH_PROVIDER: 'local' }))).toBe(

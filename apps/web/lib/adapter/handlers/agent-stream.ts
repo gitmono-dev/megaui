@@ -33,9 +33,12 @@ const SYSTEM_PROMPT: AgentLlmMessage = {
 const LLM_DISABLED_REASON =
   "LLM is not configured (AI_BASE_URL / AI_API_KEY / AI_MODEL)";
 
-/** Enterprise streams re-read the authoritative qualification at this cadence. */
+/**
+ * A live stream re-resolves its Web actor at this cadence (FSL-132: legacy or Feishu), so a
+ * sign-out or the end of a Feishu session's eight hours stops the stream.
+ */
 export const AGENT_AUTH_REVALIDATION_INTERVAL_MS = 15_000;
-/** The cadence leaves a bounded 30-second revocation-to-last-delta budget. */
+/** The cadence leaves a bounded 30-second sign-out-to-last-delta budget. */
 export const AGENT_AUTH_MAX_REVOKE_LATENCY_MS = 30_000;
 
 export function shouldRevalidateAgentAccess(

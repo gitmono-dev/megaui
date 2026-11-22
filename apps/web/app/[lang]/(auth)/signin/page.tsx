@@ -2,14 +2,14 @@
 //
 // Rendering on the server lets the OAuth provider list come from request-time
 // environment variables and keeps the full translation catalogue out of the
-// client bundle. In enterprise mode only the Feishu pairing form is offered,
-// so social buttons are hidden there.
+// client bundle. FSL-132: the old enterprise pairing form is gone; outside Feishu
+// mode the page is the email and password form with the configured social buttons.
 //
 // FSL-131: in Feishu mode (`resolveWebSessionEntry() === "feishu"`, the same decision as the
 // middleware and the Feishu page) this page renders nothing and answers 307 to
 // `/[lang]/signin/feishu` with the same query parameters (keys and values, re-serialised),
 // so the middleware's guest redirect to `/[lang]/signin` lands on the Feishu page as well.
-// Every other mode renders as before.
+// Every other mode renders the email and password form.
 import { resolveSocialProvidersFromEnv } from "@megaui/auth";
 import { getTranslation, isValidLocale } from "@megaui/i18n";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, type SocialProvider } from "@megaui/ui";
@@ -55,20 +55,16 @@ export default async function SigninPage({
   }
   const t = getTranslation(isValidLocale(lang) ? lang : "en");
   const copy = t.auth.signin;
-  const enterprise = process.env.AUTH_MODE?.trim() === "enterprise";
-
-  const heading = enterprise ? copy.enterprise.title : copy.welcomeBack;
-  const subheading = enterprise ? copy.enterprise.description : copy.socialLogin;
 
   return (
     <Card data-testid="signin-card">
       <CardHeader className="text-center">
-        <CardTitle className="text-xl">{heading}</CardTitle>
-        <CardDescription>{subheading}</CardDescription>
+        <CardTitle className="text-xl">{copy.welcomeBack}</CardTitle>
+        <CardDescription>{copy.socialLogin}</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-6">
-        <SocialSection providers={enterprise ? [] : enabledSocialProviders()} dividerLabel={copy.continueWith} />
-        <LoginForm enterprise={enterprise} />
+        <SocialSection providers={enabledSocialProviders()} dividerLabel={copy.continueWith} />
+        <LoginForm />
         <LegalNotice
           lead={copy.termsNotice}
           and={t.common.and}

@@ -12,8 +12,6 @@ import { fieldStyle, SettingsCard, SettingsToast } from "./settings-primitives";
 type ProfilePrefs = {
   username: string;
   bio: string;
-  directoryManaged?: boolean;
-  notificationEmail?: string | null;
 };
 
 function ensureAuthSuccess(result: unknown, fallback: string): void {
@@ -71,7 +69,9 @@ async function uploadAvatarFile(file: File): Promise<string> {
   return json.data.url;
 }
 
-export function ProfileForm({ enterprise }: { readonly enterprise?: boolean } = {}) {
+// FSL-132: the directory-managed profile UI (read-only name, avatar and notification
+// email) left with the old enterprise mode; every user edits their own profile.
+export function ProfileForm() {
   const { t } = useTranslation();
   const text = t.workspace.settings.profile;
   const uploadApiErrors = t.upload.apiErrors;
@@ -83,8 +83,7 @@ export function ProfileForm({ enterprise }: { readonly enterprise?: boolean } = 
   const [bio, setBio] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
-  const profileModeReady = enterprise !== undefined || prefs.data !== undefined;
-  const directoryManaged = enterprise ?? prefs.data?.directoryManaged ?? false;
+  const profileModeReady = prefs.data !== undefined;
 
   function mapAvatarUploadError(reason: unknown): string {
     if (reason instanceof AvatarUploadError) {
@@ -121,13 +120,11 @@ export function ProfileForm({ enterprise }: { readonly enterprise?: boolean } = 
     mutationFn: async () => {
       if (!profileModeReady) throw new Error(text.saveError);
       const trimmedName = name.trim();
-      if (!directoryManaged && (!trimmedName || trimmedName.length > 60)) throw new Error(text.displayNameRequired);
+      if (!trimmedName || trimmedName.length > 60) throw new Error(text.displayNameRequired);
       if (bio.length > 280) throw new Error(text.bioTooLong);
-      if (!directoryManaged && avatarUrl && !/^https?:\/\/\S+$/i.test(avatarUrl)) throw new Error(text.avatarSaveError);
-      if (!directoryManaged) {
-        const userResult = await authClient.updateUser({ name: trimmedName, image: avatarUrl || null });
-        ensureAuthSuccess(userResult, text.saveError);
-      }
+      if (avatarUrl && !/^https?:\/\/\S+$/i.test(avatarUrl)) throw new Error(text.avatarSaveError);
+      const userResult = await authClient.updateUser({ name: trimmedName, image: avatarUrl || null });
+      ensureAuthSuccess(userResult, text.saveError);
       return megaPost<ProfilePrefs>("profile-prefs", { bio });
     },
     onSuccess: () => {
@@ -143,7 +140,7 @@ export function ProfileForm({ enterprise }: { readonly enterprise?: boolean } = 
 
   const uploadAvatar = useMutation({
     mutationFn: async (file: File) => {
-      if (!profileModeReady || directoryManaged) throw new Error(text.avatarSaveError);
+      if (!profileModeReady) throw new Error(text.avatarSaveError);
       const url = await uploadAvatarFile(file);
       const userResult = await authClient.updateUser({ image: url });
       ensureAuthSuccess(userResult, text.avatarSaveError);
@@ -166,12 +163,6 @@ export function ProfileForm({ enterprise }: { readonly enterprise?: boolean } = 
       <p style={{ color: MEGA_TOKENS.muted }}>{text.subtitle}</p>
       {toast ? <SettingsToast tone="success">{toast}</SettingsToast> : null}
       {error ? <SettingsToast tone="error">{error}</SettingsToast> : null}
-      {directoryManaged ? (
-        <div data-mega-settings="directory-managed" role="note" style={{ border: `1px solid ${MEGA_TOKENS.border}`, borderRadius: 8, padding: MEGA_SPACING_TOKENS[8] }}>
-          <strong>{text.directoryManagedTitle}</strong>
-          <p style={{ color: MEGA_TOKENS.muted, marginBottom: 0 }}>{text.directoryManagedDescription}</p>
-        </div>
-      ) : null}
       {safeAvatarSource(avatarUrl) ? (
         <img alt="" data-mega-settings="avatar-preview" src={safeAvatarSource(avatarUrl)} style={{ borderRadius: "50%", height: 64, objectFit: "cover", width: 64 }} />
       ) : null}
@@ -180,7 +171,7 @@ export function ProfileForm({ enterprise }: { readonly enterprise?: boolean } = 
         <input
           accept="image/jpeg,image/png,image/gif,image/webp,image/svg+xml,image/bmp"
           data-mega-settings="avatar-file-input"
-          disabled={!profileModeReady || directoryManaged || uploadAvatar.isPending}
+          disabled={!profileModeReady || uploadAvatar.isPending}
           onChange={(event) => {
             const file = event.target.files?.[0];
             if (file) uploadAvatar.mutate(file);
@@ -198,13 +189,13 @@ export function ProfileForm({ enterprise }: { readonly enterprise?: boolean } = 
       >
         <label>
           {text.displayName}
-          <input disabled={!profileModeReady || directoryManaged} onChange={(event) => setName(event.target.value)} style={fieldStyle} value={name} />
+          <input disabled={!profileModeReady} onChange={(event) => setName(event.target.value)} style={fieldStyle} value={name} />
         </label>
         <label>
           {text.avatarUrlLabel}
           <input
             data-mega-settings="field-avatar-url"
-            disabled={!profileModeReady || directoryManaged}
+            disabled={!profileModeReady}
             onChange={(event) => setAvatarUrl(event.target.value)}
             placeholder={text.avatarUrlPlaceholder}
             style={fieldStyle}
@@ -216,19 +207,6 @@ export function ProfileForm({ enterprise }: { readonly enterprise?: boolean } = 
           {text.username}
           <input disabled readOnly style={fieldStyle} value={prefs.data?.username ?? ""} />
           <small style={{ color: MEGA_TOKENS.muted }}>{text.usernameHint}</small>
-        </label>
-        <label>
-          {text.notificationEmail}
-          <input
-            data-mega-settings="field-notification-email"
-            disabled
-            placeholder={text.notificationEmailMissing}
-            readOnly
-            style={fieldStyle}
-            type="email"
-            value={prefs.data?.notificationEmail ?? ""}
-          />
-          <small style={{ color: MEGA_TOKENS.muted }}>{text.notificationEmailHint}</small>
         </label>
         <label>
           {text.bio}

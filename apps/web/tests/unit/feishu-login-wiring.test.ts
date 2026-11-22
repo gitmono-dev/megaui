@@ -1,8 +1,9 @@
 // megaui-only (FSL-150): the Feishu-mode startup in `instrumentation.ts` `register()` against a
 // one-shot PostgreSQL. AC5: in Feishu mode `register()` has finished one cleanup run before it
 // returns, with no authentication request handled (no Better Auth instance exists yet); in
-// legacy mode and in enterprise mode without AUTH_PROVIDER it starts no cleanup and keeps the
-// existing enterprise runtime startup.
+// legacy mode it starts no cleanup and builds nothing. FSL-132: there is no enterprise runtime
+// startup any more, and `maintenance` or `enterprise` without AUTH_PROVIDER refuses the startup
+// with `INVALID_AUTH_PROVIDER` before any cleanup.
 import { randomBytes, randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -12,7 +13,6 @@ import { createIsolatedPostgres, isDockerAvailable, type IsolatedPostgres } from
 const spies = vi.hoisted(() => ({
   createAuth: undefined as unknown as ReturnType<typeof vi.fn>,
   startCleanup: undefined as unknown as ReturnType<typeof vi.fn>,
-  initializeEnterprise: undefined as unknown as ReturnType<typeof vi.fn>,
 }));
 
 vi.mock("@megaui/auth", async (importOriginal) => {
@@ -25,13 +25,6 @@ vi.mock("@megaui/engine", async (importOriginal) => {
   spies.startCleanup = vi.fn(actual.startFeishuLoginCleanup);
   return { ...actual, startFeishuLoginCleanup: spies.startCleanup };
 });
-// The existing enterprise startup is not under test; only whether `register()` still takes it.
-vi.mock("@/lib/auth", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/auth")>();
-  spies.initializeEnterprise = vi.fn(async () => undefined);
-  return { ...actual, initializeEnterpriseWebRuntime: spies.initializeEnterprise };
-});
-
 import { register } from "@/instrumentation";
 import { stopFeishuWebRuntime } from "@/lib/auth";
 
@@ -94,7 +87,6 @@ describe("FSL-150 register() in Feishu mode", () => {
     await database!.pool.query("delete from feishu_login_codes");
     spies.createAuth.mockClear();
     spies.startCleanup.mockClear();
-    spies.initializeEnterprise.mockClear();
   });
 
   afterEach(async () => {
@@ -127,7 +119,6 @@ describe("FSL-150 register() in Feishu mode", () => {
     // No Better Auth instance exists yet, so no authentication request can have been handled,
     // and the enterprise runtime is not started.
     expect(spies.createAuth).not.toHaveBeenCalled();
-    expect(spies.initializeEnterprise).not.toHaveBeenCalled();
     // No signal handler was installed.
     expect(process.listenerCount("SIGTERM")).toBe(signals.term);
     expect(process.listenerCount("SIGINT")).toBe(signals.int);
@@ -156,16 +147,30 @@ describe("FSL-150 register() in Feishu mode", () => {
     ["legacy", undefined],
     ["legacy", "local"],
     [undefined, undefined],
-    ["enterprise", undefined],
-    ["enterprise", " "],
-  ] as const)("AUTH_MODE=%s AUTH_PROVIDER=%s starts no cleanup and keeps the existing startup", async (mode, provider) => {
+  ] as const)("AUTH_MODE=%s AUTH_PROVIDER=%s starts no cleanup and builds no Auth instance", async (mode, provider) => {
     setMode(mode, provider);
     const id = await seedExpiredRow();
 
     await register();
 
     expect(spies.startCleanup).not.toHaveBeenCalled();
+    expect(spies.createAuth).not.toHaveBeenCalled();
     expect((await readRow(id))?.state).toBe("active");
-    expect(spies.initializeEnterprise).toHaveBeenCalledTimes(1);
+  }, 60_000);
+
+  it.each([
+    ["enterprise", undefined],
+    ["enterprise", " "],
+    ["maintenance", undefined],
+    ["maintenance", "local"],
+  ] as const)("FSL-132: AUTH_MODE=%s AUTH_PROVIDER=%s refuses the startup before any cleanup", async (mode, provider) => {
+    setMode(mode, provider);
+    const id = await seedExpiredRow();
+
+    await expect(register()).rejects.toMatchObject({ name: "AuthModeError", code: "INVALID_AUTH_PROVIDER" });
+
+    expect(spies.startCleanup).not.toHaveBeenCalled();
+    expect(spies.createAuth).not.toHaveBeenCalled();
+    expect((await readRow(id))?.state).toBe("active");
   }, 60_000);
 });

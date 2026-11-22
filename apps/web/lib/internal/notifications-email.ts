@@ -6,7 +6,7 @@
 
 import { randomUUID } from "node:crypto";
 
-import { resolveEnterpriseConfig } from "@megaui/core";
+import { resolveAuthMode } from "@megaui/core";
 import {
   createEmailSender,
   generateProductNotificationEmail,
@@ -75,12 +75,13 @@ let idempotencyStore: MemoryIdempotencyStoreType = defaultIdempotencyStore;
 
 /**
  * Resolve the mode needed by this legacy-only entry point without opening a
- * database or loading any enterprise provider configuration. Unknown modes
- * fail closed as retired rather than accidentally preserving the old API.
+ * database, through `resolveAuthMode` (FSL-132). Feishu mode is retired, and a
+ * pair `resolveAuthMode` refuses fails closed as retired rather than
+ * accidentally preserving the old API.
  */
 export function resolveInternalEmailMode(source: NodeJS.Dict<string> = process.env): "legacy" | "retired" {
   try {
-    return resolveEnterpriseConfig({ authMode: source.AUTH_MODE, activated: false }).mode === "legacy"
+    return resolveAuthMode({ AUTH_MODE: source.AUTH_MODE, AUTH_PROVIDER: source.AUTH_PROVIDER }).mode === "legacy"
       ? "legacy"
       : "retired";
   } catch {

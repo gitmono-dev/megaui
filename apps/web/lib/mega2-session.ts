@@ -4,7 +4,8 @@
 // derived with `deriveMega2Actor` (the same rule as Mega2's `into_login_user`); when one
 // of them equals that principal, or the check cannot be completed, the session is
 // projected as `null` and the stable log key `FEISHU_LOGIN_PRINCIPAL_CONFLICT` is emitted.
-// Legacy and enterprise actors keep their projection unchanged and run no check.
+// Legacy actors keep their projection unchanged and run no check. FSL-132: no enterprise
+// actor is produced any more and one is never projected (fail-closed).
 import type { Auth } from "@megaui/auth";
 import { getPool } from "@megaui/database";
 
@@ -89,19 +90,18 @@ export function projectMega2Session(
   options: Readonly<{ feishuPrincipalChecked?: boolean }> = {},
 ): Mega2SessionProjection | null {
   if (!sameSession(session, actor) || !actor) return null;
+  if (actor.kind === "enterprise") return null;
   if (actor.kind === "feishu" && options.feishuPrincipalChecked !== true) return null;
-  const name = actor.kind === "enterprise"
-    ? actor.backendUsername
-    : actor.kind === "feishu"
-      ? feishuMega2Principal(actor.userId)
-      : deriveMega2Actor({ name: session.user.name, email: session.user.email });
+  const name = actor.kind === "feishu"
+    ? feishuMega2Principal(actor.userId)
+    : deriveMega2Actor({ name: session.user.name, email: session.user.email });
   if (!name) return null;
   return Object.freeze({
     session: Object.freeze({ id: session.session.id, expiresAt: session.session.expiresAt }),
     user: Object.freeze({
       id: session.user.id,
       name,
-      email: actor.kind === "enterprise" ? actor.email ?? null : session.user.email,
+      email: session.user.email,
       image: session.user.image,
       banned: false as const,
     }),

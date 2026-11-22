@@ -22,17 +22,14 @@
 | `ENTERPRISE_COLLAB_REVOKE_KEY` | 企业协作 | 独立 revoke service credential；不回退 ticket secret |
 | `NEXT_PUBLIC_MEGA_COLLAB_PUBLIC_URL` | 协作 | 浏览器 WS |
 | `AI_BASE_URL` / `AI_API_KEY` / `AI_MODEL` | Agent | OpenAI-compatible |
-| `AUTH_MODE` | 否 | 认证模式：仅 `legacy` / `enterprise` / `maintenance`；缺省或空白按 `legacy`，其它取值构建失败 |
-| `AUTH_PROVIDER` | 否 | 认证提供方。规则由 `@megaui/core` 的 `resolveAuthMode`（FSL-116）定义：`AUTH_MODE=enterprise` 时为 `feishu`（飞书登录）或在过渡期缺省（仍走现有企业实现），`AUTH_MODE=legacy` 时缺省或为 `local`，`AUTH_MODE=maintenance` 在过渡期只接受缺省；非法的 `AUTH_PROVIDER` 取值或不允许的组合以 `INVALID_AUTH_PROVIDER` 拒绝（先校验提供方），提供方合法而 `AUTH_MODE` 为其它值时以 `INVALID_AUTH_MODE` 拒绝。过渡期（至 FSL-131）允许的「`enterprise` 不设提供方」与「`maintenance`」自 FSL-132 起拒绝。**当前尚无进程读取该键**：由 FSL-121、FSL-126、FSL-128 接入后生效，飞书登录由 FSL-150、FSL-131 启用 |
-| `FEISHU_TENANT_KEY` / `FEISHU_APP_ID` | 飞书 callback | v2 业务信封必须精确匹配的 tenant 与 app 标识 |
-| `FEISHU_EVENT_VERIFICATION_TOKEN` / `FEISHU_EVENT_ENCRYPT_KEY` | 飞书 callback | URL/业务信封 token 校验，以及 raw wire 签名与 AES-256-CBC 解密；仅从部署 secret store 注入 |
+| `AUTH_MODE` | 否 | 认证模式：仅 `legacy` / `enterprise`；缺省或空白按 `legacy`。由 `@megaui/core` 的 `resolveAuthMode` 解析，Web 与 collab 启动时校验：`maintenance` 与未设置 `AUTH_PROVIDER` 的 `enterprise` 以 `INVALID_AUTH_PROVIDER` 拒绝启动（FSL-132）；其它取值在提供方合法时于 Web 以 `INVALID_AUTH_MODE` 拒绝启动（提供方非法时先以 `INVALID_AUTH_PROVIDER` 拒绝），collab 先按自身规则以 `EnterprisePolicyError` 拒绝 |
+| `AUTH_PROVIDER` | 否 | 认证提供方。规则由 `@megaui/core` 的 `resolveAuthMode`（FSL-116）定义：`AUTH_MODE=enterprise` 时必须为 `feishu`（飞书邮箱验证码登录），`AUTH_MODE=legacy` 时缺省或为 `local`；非法的 `AUTH_PROVIDER` 取值或不允许的组合（含 `enterprise` 不设提供方与任何 `maintenance`）以 `INVALID_AUTH_PROVIDER` 拒绝（先校验提供方），提供方合法而 `AUTH_MODE` 为其它值时以 `INVALID_AUTH_MODE` 拒绝。Web（会话入口、认证实例与启动钩子）与 collab 读取该键，见 [飞书邮箱验证码登录 · 配置](./implementation/feishu-login.md#配置) |
+| `FEISHU_APP_ID` / `FEISHU_APP_SECRET` | 飞书登录 | 飞书应用凭据，Web 只在飞书模式下读取（`readFeishuLoginConfig`），完整合同见 [飞书邮箱验证码登录 · 配置](./implementation/feishu-login.md#配置)。Web 不再读取 `FEISHU_TENANT_KEY` 与飞书事件回调的密钥（FSL-132 删除了回调入口） |
 | `ENTERPRISE_OTP_HMAC_KEY` | 飞书登录 | 飞书邮箱验证码登录的 HMAC 密钥：恰为 32 字节的规范 base64url 编码（43 个字符、无填充），验证码、邮箱与身份绑定（`open_id_hmac`）的 HMAC 共用，以用途标签区分；完整合同见 [飞书邮箱验证码登录 · 配置](./implementation/feishu-login.md#配置)。**不可轮换（FSL-161）：** 飞书登录首次检查时把以该密钥对 `FEISHU_APP_ID` 计算的 HMAC 指纹写入 `feishu_login_key_check`；此后该密钥或 `FEISHU_APP_ID` 任一变化（新配置随进程重启加载），到达该检查的飞书登录 request 与 verify 持续返回 503 `{ "status": "unavailable" }`（输入非法的 400 与限流的 429 仍先于它返回）并输出 `FEISHU_LOGIN_KEY_MISMATCH`。不支持轮换该密钥或更换应用，也不提供身份迁移；唯一恢复方式是由运维恢复原密钥与原 `FEISHU_APP_ID`，不得通过清空 `feishu_identities` 或 `feishu_login_key_check` 绕过该检查（见 [飞书邮箱验证码登录 · 密钥一致性检查](./implementation/feishu-login.md#密钥一致性检查)）。**当前状态：** 飞书登录端点由 FSL-150 接入 Web，在此之前没有部署运行该检查 |
 
-> **弃用声明（plan-20261118，ADR-FSL-13）：** 现有企业模式已弃用，弃用范围：`AUTH_MODE=maintenance`、未设置 `AUTH_PROVIDER` 的 `AUTH_MODE=enterprise`、企业认证接口 `/api/auth/enterprise/*`（配对登录与企业 OTP）、飞书事件回调、内部资格接口、collab 企业撤销接口、企业 worker 任务与通讯录同步、admin CLI，以及 20 张 `enterprise_*` 表与 `session` 的企业列。弃用窗口期间（FSL-116 起共 33 个双仓版本）旧企业路径保持可用。现有企业模式将由飞书邮箱验证码登录（`AUTH_MODE=enterprise` + `AUTH_PROVIDER=feishu`）取代。自 FSL-132 所在版本起，`AUTH_MODE=enterprise` 但未设置 `AUTH_PROVIDER`、以及 `AUTH_MODE=maintenance` 都将以配置错误拒绝启动，之后的版本删除现有企业实现。新配置见 [飞书邮箱验证码登录 · 配置](./implementation/feishu-login.md#配置)。
+> **弃用声明（plan-20261118，ADR-FSL-13）：** 现有企业模式已弃用，弃用范围：`AUTH_MODE=maintenance`、未设置 `AUTH_PROVIDER` 的 `AUTH_MODE=enterprise`、企业认证接口 `/api/auth/enterprise/*`（配对登录与企业 OTP）、飞书事件回调、内部资格接口、collab 企业撤销接口、企业 worker 任务与通讯录同步、admin CLI，以及 20 张 `enterprise_*` 表与 `session` 的企业列。现有企业模式由飞书邮箱验证码登录（`AUTH_MODE=enterprise` + `AUTH_PROVIDER=feishu`）取代。自 FSL-132 所在版本起，`AUTH_MODE=enterprise` 但未设置 `AUTH_PROVIDER`、以及 `AUTH_MODE=maintenance` 都以 `INVALID_AUTH_PROVIDER` 拒绝启动，Web 的企业配置与接线（企业运行期装配、企业认证接口、飞书事件回调、内部资格接口、企业登录表单与目录托管资料界面）已删除；其余企业实现由后续版本删除。新配置见 [飞书邮箱验证码登录 · 配置](./implementation/feishu-login.md#配置)。
 
-`AUTH_MODE` 由所有进程共享：`enterprise` 缺少当前能力必需配置时拒绝启动，部署持有持久激活标记时拒绝 `legacy`。解析器在 `@megaui/core` 内是纯函数（不读环境、不持 secret），客户端可见配置白名单之外的键默认 server-only；见[企业身份配置合同](./implementation/enterprise-auth.md)。
-
-标准 Next Node 启动现在先等待企业 Web 装配预检：显式 scope 必须对应现有 policy 和实际 DML 数据库角色，未声明 scope 的 legacy 也会检查数据库尚未激活企业认证。企业 Auth 与配对能力共享已验证的标准 Pool；重复启动和 HMR 复用整套装配，配置变化须重启。仅 enterprise 模式要求独立 IP 摘要密钥、显式代理 CIDR 数组和固定登录 origin；配对 HTTP 端点仍由后续任务交付。关闭超过五秒会返回 `cleanup-pending` 并永久停止准入，由宿主 owner 完成进程退出及数据库连接清理，不能直接重试初始化。独立 legacy CLI 的同步 getter 边界及恢复步骤见[Web企业启动与恢复](./implementation/enterprise-auth.md#web企业启动与恢复)。
+`AUTH_MODE` 由所有进程共享。Web 只经 `@megaui/core` 的 `resolveAuthMode` 解析它与 `AUTH_PROVIDER`（纯函数，不读环境、不持 secret）；collab 先按自身规则检查 `AUTH_MODE` 的取值（未知取值以 `EnterprisePolicyError` 拒绝），再以 `resolveAuthMode` 判定组合。被拒绝的组合在两者中都拒绝启动；客户端可见配置白名单之外的键默认 server-only。
 
 目录对账由 durable job 每 5 分钟执行：job 不保存 provider credential；只有 numeric `code === 0`、合法 `data.items`、明确 boolean `has_more`、runtime 类型正确的成员字段、完整且不重复/循环的续页 token 构成的全部同 scope 分页才进入数据库事务，畸形 HTTP 200 或 cursor 循环都按不完整快照零写入。generation 原子 CAS 后，snapshot 元数据的 `member_count`按全部 provider 成员计算，但不持久化逐成员快照投影；只有 `activated=true, frozen=false, resigned=false, exited=false` 的成员推进身份水位。权限缩小由 job 持续携带旧 scope，直到完整快照 applied 后从旧水位产出 `out_of_scope`；失败分页保留上一完整快照。15 分钟陈旧身份不能取得资格，旧 generation 不能恢复 active，冻结/离职成员因身份与 scope generation 不一致而 fail-closed；目录恢复不覆盖本地 ban，也不授予本地 admin 权限。
 
@@ -69,8 +66,6 @@
 混合路由下，CL 文件、代码、文档和设置的六个导航消费者会等待完整上下文，避免把未知 search 当作默认可写页面。未知时不准入新写入或导航；已准入复合操作及子组件保存队列保持原生命周期。回归使用本次运行独占的源码副本、PG 和 Next 进程；旧 Roam 图片上传回归另启专属对象存储并验证浏览器解码，详见[混合路由导航兼容](./implementation/enterprise-auth.md#混合路由导航兼容)。
 
 飞书事件只把已验证后的白名单业务字段写入 `enterprise_event_inbox`：event_id 与必须含非空白字符的 IM message_id 分层去重，不保存 raw body/私聊正文/明文 pairing token；pending 与过期 lease 使用各自的有界 claim 索引，租约/完成字段由状态约束守住，只有 done metadata 可按 TTL 索引分页清理。
-
-飞书 callback 入口只有精确的匿名 `POST /api/integrations/feishu/events`；其它方法、尾斜杠和相邻路径仍需 session。入口先以 `X-Lark-Request-Timestamp`、`X-Lark-Request-Nonce`、`X-Lark-Signature` 对不超过 256 KiB 的原始 wire bytes 验签，并拒绝超出 5 分钟的时间戳；可选密文按 `SHA256(encrypt key)` 派生 key，解开 `IV16 || AES-256-CBC ciphertext`。URL verification 仅在 verification token 正确时返回 challenge；业务信封还必须匹配 tenant/app，随后才调用 `acceptVerifiedEvent(getPool(), event)` 并等待事务提交。用户 p2p text 中的 `/login <token>` 只跨边界为小写 SHA-256 摘要；回调 body、私聊正文和明文 token 不记录。配置缺失或任一校验失败均 fail-closed 且不入库；恢复时修正部署 secret/tenant/app 或飞书订阅配置后重试 callback，不要在日志中粘贴请求体或密钥。
 
 `@megaui/engine` 的 `acceptVerifiedEvent` 只接收三个已验证事件类型，在同一事务提交 inbox 与唯一 durable job；event_id 或 IM message_id 重放返回首次提交的同一结果。标准 worker 已注册 Contact/私聊提示与 inbox 清理 handler：默认提示分派按 inbox ID 幂等写入类型化 durable follow-up job，不会因 owner handler 尚未激活而静默丢失；自定义 effect 执行时每 10 秒续租 30 秒 inbox lease，并必须按 inbox ID 幂等。提示处理不从不完整目录读取推断成员缺失；清理按 UTC 小时幂等续排，以 follow-up 唯一 dedupe key 索引排除未完成下游任务，每次最多删除 100 条超过 30 天的 done metadata，不删除 pending/leased 或等待下游消费的行。
 
@@ -109,17 +104,6 @@ FS-58 的 mega2 通知偏好 adapter 只消费当前 `enabled` 与事件偏好�
 `enterprise_profile.notification_email` 和本地通知 outbox 负责，不从 session 兼容邮箱补值。详见
 [mega2 enabled偏好与本地邮件通知分离](./implementation/enterprise-auth.md#mega2-enabled偏好与本地邮件通知分离)。
 
-FS-59 的企业资料页由 `resolveWebActor` 判定目录身份：企业模式禁用显示名、头像文件和头像 URL
-编辑，并显示目录资料来源说明；保存操作只更新本地简介，不调用已封禁的 Better Auth `update-user`。
-说明提供中英文词条，legacy 模式继续保留原有资料编辑合同。详见
-[企业资料编辑入口只读化](./implementation/enterprise-auth.md#企业资料编辑入口只读化)。
-
-FS-24 的设置页从受保护的 `profile-prefs` 投影读取 enterprise
-`notification_email`，该地址只读且允许为空；通知偏好仍只通过 mega2 当前的
-`enabled`/事件偏好合同更新，不能写入身份绑定。workspace 与协作编辑器使用 public
-profile 的显示名/用户名，不再从兼容邮箱回退。详见
-[Web资料与通知设置隔离](./implementation/enterprise-auth.md#web资料与通知设置隔离)。
-
 数据库目标由 `packages/database/src/enterprise-scope.ts` 守卫：目标必须携带登记的 owner、instance 与 environment，SQL 角色的实际权限不得超出登记范围，陌生目标不会被自动初始化，`db:migrate` 在连接目标前先做预检，预检失败则一次 DDL 都不会发生。
 
 企业身份与通知资料由三张表承载：`enterprise_identity`（外部身份三元组与本地用户的绑定，唯一约束 `tenant_key+app_id+open_id` 与 `local_user_id+tenant_key+app_id`）、`enterprise_profile`（租户内唯一的 `login_name`、实例内唯一的不可变 `backend_username`、可空且不参与唯一约束的 `notification_email`）与 `enterprise_policy`（实例归属与单调激活水位 `auth_epoch`）。三张表都继续引用原 `user.id`。
@@ -133,8 +117,8 @@ provider 的准入与唯一目标同样由 `@megaui/core` 的 `admitProvider` �
 完整注释清单见 [`env.example`](../env.example)。
 
 旧内部通知邮件路由（`/api/internal/notifications/email`）只在 `AUTH_MODE=legacy` 保留，继续要求
-`MEGA2_INTERNAL_MAIL_BEARER`，并拒绝 `identity.invalid` 兼容地址和未知认证事件。enterprise
-及 maintenance 模式对该退场路由固定返回 HTTP 410；不会重启 mega2 邮件或从兼容邮箱推导通知地址。
+`MEGA2_INTERNAL_MAIL_BEARER`，并拒绝 `identity.invalid` 兼容地址和未知认证事件。飞书模式（以及
+`resolveAuthMode` 拒绝的组合）对该退场路由固定返回 HTTP 410；不会重启 mega2 邮件或从兼容邮箱推导通知地址。
 
 FS-90 新增完整 actor 库存快照表：每个 policy scope 保留批准操作、源文件与归属摘要、观测时间及上游归属数组，支持空库存；数据库约束 UUID、摘要格式与有限时间。迁移失败可回滚 DDL/journal 后前滚重试，旧 actor 保留行不变。FS-70 已接入完整扫描封存与覆盖检查，新增同名主体、缺失回执和过期来源均拒绝覆盖；恢复命令见[企业身份实现说明](./implementation/enterprise-auth.md#完整-actor-库存快照-schema)。
 

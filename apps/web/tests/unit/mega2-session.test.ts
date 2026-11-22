@@ -16,12 +16,7 @@ const poolQuery = vi.hoisted(() => vi.fn(async (): Promise<{ rows: unknown[] }> 
 }));
 const getPool = vi.hoisted(() => vi.fn(() => ({ query: poolQuery })));
 
-vi.mock("@/lib/auth", () => ({
-  getAuth,
-  prepareWebAuth: vi.fn(),
-  resolveCurrentWebAuthMode: vi.fn(async () => { throw new Error("unscoped legacy must not read the persisted mode"); }),
-}));
-vi.mock("@/lib/enterprise-runtime", () => ({ getReadyWebAssembly: vi.fn(() => null) }));
+vi.mock("@/lib/auth", () => ({ getAuth }));
 vi.mock("@megaui/database", async importOriginal => ({
   ...(await importOriginal<typeof import("@megaui/database")>()),
   getPool,
@@ -59,7 +54,8 @@ beforeEach(() => {
 
 /**
  * The projection exactly as it was before FSL-156 (`apps/web/lib/mega2-session.ts` at the
- * parent commit), kept verbatim as the regression oracle for legacy and enterprise actors.
+ * parent commit), kept as the regression oracle for legacy actors (FSL-132 removed its
+ * enterprise branch together with the enterprise actor).
  */
 function preFsl156Projection(session: Mega2RawSession | null, actor: WebActor | null) {
   const rustTrim = (value: string) => value.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, "");
@@ -70,16 +66,14 @@ function preFsl156Projection(session: Mega2RawSession | null, actor: WebActor | 
     return localPart === "" ? undefined : localPart;
   };
   if (!session || !actor || session.user.id !== actor.userId || session.session.id !== actor.sessionId) return null;
-  const name = actor.kind === "enterprise"
-    ? actor.backendUsername
-    : derive({ name: session.user.name, email: session.user.email });
+  const name = derive({ name: session.user.name, email: session.user.email });
   if (!name) return null;
   return {
     session: { id: session.session.id, expiresAt: session.session.expiresAt },
     user: {
       id: session.user.id,
       name,
-      email: actor.kind === "enterprise" ? actor.email ?? null : session.user.email,
+      email: session.user.email,
       image: session.user.image,
       banned: false as const,
     },
@@ -107,14 +101,12 @@ const NAMES_AND_EMAILS: ReadonlyArray<readonly [string, string | null]> = [
 ];
 
 describe("FSL-156 AC6: legacy projection is unchanged", () => {
-  it("projects legacy and enterprise actors exactly as before FSL-156", () => {
+  it("projects legacy actors exactly as before FSL-156", () => {
     const actors: WebActor[] = [
       { kind: "legacy", userId: "u-1", sessionId: "s-1" },
       { kind: "legacy", userId: "u-1", email: "other@example.test", sessionId: "s-1" },
       { kind: "legacy", userId: "u-2", sessionId: "s-1" },
       { kind: "legacy", userId: "u-1", sessionId: "s-2" },
-      { kind: "enterprise", userId: "u-1", identityId: "i", authEpoch: 1, backendUsername: "Frozen.User", email: "n@example.test", sessionId: "s-1" },
-      { kind: "enterprise", userId: "u-1", identityId: "i", authEpoch: 1, backendUsername: "", sessionId: "s-1" },
     ];
     for (const [name, email] of NAMES_AND_EMAILS) {
       for (const image of [null, "https://img.example.test/a.png"]) {

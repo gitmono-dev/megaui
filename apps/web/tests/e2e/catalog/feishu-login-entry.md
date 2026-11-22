@@ -6,7 +6,7 @@ FSL-131：飞书模式下的登录入口。`/[lang]/signin` 转到飞书登录�
 
 本 spec 不输入邮箱或验证码，不读取 Mock 收件箱。加载时设置 `PLAYWRIGHT_NO_COPY_PROMPT=1`，失败时不生成页面快照（ER-11）。每个用例的页面与浏览器上下文在成功与抛错时都关闭。
 
-`legacy` 与未设置 `AUTH_PROVIDER` 的 `enterprise` 部署的登录页不变，由单元测试 `apps/web/tests/unit/signin-entry.test.ts` 覆盖（FSL-131 AC6、AC7），不在本 spec 中。
+`legacy` 部署的登录页不变，未设置 `AUTH_PROVIDER` 的 `enterprise` 与 `maintenance` 部署拒绝启动（FSL-132），二者都由单元测试 `apps/web/tests/unit/signin-entry.test.ts` 覆盖，不在本 spec 中。
 
 ## 用例
 

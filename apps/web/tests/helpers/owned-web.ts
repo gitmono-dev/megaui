@@ -268,7 +268,6 @@ class OwnedProcess {
 
   get isExited() { return this.exited || this.spawnFailed; }
   get isListening() { return /Ready in \d/.test(this.stdout); }
-  get enterpriseInitializationFailed() { return (this.stdout + this.stderr).includes("ENTERPRISE_WEB_UNAVAILABLE"); }
 
   private groupExists(): boolean {
     if (!this.child.pid) return false;
@@ -594,7 +593,6 @@ export class OwnedWeb {
     try {
       const startupDeadline = Date.now() + START_TIMEOUT;
       while (!child.isListening && Date.now() < startupDeadline) {
-        if (child.enterpriseInitializationFailed) throw new Error("Owned Web enterprise initialization rejected");
         if (child.isExited) throw new Error("Owned Web failed to bind its own listener");
         await delay(100);
       }
@@ -602,7 +600,6 @@ export class OwnedWeb {
       const deadline = Date.now() + HTTP_TIMEOUT;
       let lastStatus = "none";
       while (Date.now() < deadline) {
-        if (child.enterpriseInitializationFailed) throw new Error("Owned Web enterprise initialization rejected");
         if (child.isExited) throw new Error("Owned Web exited before HTTP readiness");
         try {
           const remaining = Math.max(1_000, deadline - Date.now());
@@ -682,40 +679,6 @@ export async function withOwnedWeb<T>(work: (owner: OwnedWeb) => Promise<T>, sig
     }
     throw error;
   } finally { signal?.removeEventListener("abort", abort); }
-}
-
-/** FS-73: switch this owned run to the enterprise Web assembly for the pairing E2E. */
-export async function installEnterprisePairingFixture(owner: OwnedWeb): Promise<void> {
-  const admin = owner.createDatabaseObserver();
-  const databaseUrl = owner.env.DATABASE_URL;
-  if (!databaseUrl) throw new Error("Owned enterprise fixture database is unavailable");
-  const database = decodeURIComponent(new URL(databaseUrl).pathname.slice(1)).replaceAll('"', '""');
-  await admin.pool.query(`create role fs73_web login password 'synthetic-fs73-password';
-    revoke create on schema public from public;
-    revoke create on database "${database}" from public;
-    grant connect on database "${database}" to fs73_web;
-    grant usage on schema public to fs73_web;
-    grant select,insert,update,delete on all tables in schema public to fs73_web;
-    grant usage,select on all sequences in schema public to fs73_web;
-    insert into enterprise_policy
-      (id,scope,owner_fingerprint,deployment_role,environment,activation_state,auth_epoch)
-      values ('policy-fs73','fs73','owned','test','test','enterprise',1)`);
-  const webUrl = new URL(databaseUrl);
-  webUrl.username = "fs73_web";
-  webUrl.password = "synthetic-fs73-password";
-  Object.assign(owner.env, {
-    AUTH_MODE: "enterprise",
-    DATABASE_URL: webUrl.toString(),
-    ENTERPRISE_PROCESS_ROLE: "web",
-    ENTERPRISE_OWNER_FINGERPRINT: "owned",
-    ENTERPRISE_DB_INSTANCE_ID: "fs73",
-    ENTERPRISE_DEPLOYMENT_ROLE: "test",
-    FEISHU_TENANT_KEY: "tenant",
-    FEISHU_APP_ID: "app",
-    ENTERPRISE_IP_HMAC_MASTER_KEY: Buffer.alloc(32, 7).toString("base64url"),
-    ENTERPRISE_TRUSTED_PROXY_CIDRS: "[]",
-  });
-  delete owner.env.ENTERPRISE_APPROVED_TARGETS;
 }
 
 // Only installed into an owned source copy. Context inputs and router observations
@@ -800,7 +763,6 @@ async function main(): Promise<void> {
   await withOwnedWeb(async (owner) => {
     if (spec === "apps/web/tests/e2e/navigation-readiness.spec.ts") await installNavigationFixture(owner);
     if (spec === "apps/web/tests/e2e/workspace-docs-roam.spec.ts") await owner.provisionObjectStorage();
-    if (spec === "apps/web/tests/e2e/enterprise-pairing-request.spec.ts") await installEnterprisePairingFixture(owner);
     await owner.start();
     const result = await owner.run("pnpm", ["exec", "playwright", "test", spec, "--workers=1", "--trace=off"], 600_000);
     const counts = result.stdout.match(/\b\d+ (?:passed|failed|skipped)\b/g) ?? [];
