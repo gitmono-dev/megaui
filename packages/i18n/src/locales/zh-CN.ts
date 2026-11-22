@@ -181,7 +181,11 @@ export const zhCN = {
         verifyFailed: "登录未完成，请重试。",
         codeInvalid: "验证码无效或已过期。",
         accountConflict: "该邮箱已被本站的其它账号使用，无法通过飞书登录，请联系管理员。",
-        codeRetry: "登录未完成，请重新获取验证码。"
+        codeRetry: "登录未完成，请重新获取验证码。",
+        resend: "重新发送",
+        resendWait: "{seconds} 秒后可重新发送",
+        codeResent: "已重新请求验证码，此前发送的验证码不再有效。",
+        changeEmail: "更换邮箱"
       }
     },
     signup: {

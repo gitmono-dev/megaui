@@ -16,6 +16,7 @@
 | `enterprise-harness.spec.ts` | [enterprise-harness.md](./catalog/enterprise-harness.md) | FS-40 | owned Next + isolated PG (enterprise/legacy) | N/A |
 | `feishu-login-page.spec.ts` | [feishu-login-page.md](./catalog/feishu-login-page.md) | FSL-129 | owned Next (Feishu mode) + isolated PG + Feishu Mock + real Chromium | N/A |
 | `feishu-login-verify-errors.spec.ts` | [feishu-login-verify-errors.md](./catalog/feishu-login-verify-errors.md) | FSL-130 | owned Next (Feishu mode) + isolated PG + Feishu Mock + real Chromium | N/A |
+| `feishu-login-resend.spec.ts` | [feishu-login-resend.md](./catalog/feishu-login-resend.md) | FSL-155 | owned Next (Feishu mode) + isolated PG + Feishu Mock + real Chromium | N/A |
 | `enterprise-auth-fixture.spec.ts` | [enterprise-auth-fixture.md](./catalog/enterprise-auth-fixture.md) | FS-89 | owned Next + isolated PG + FSM-05 Mock + real Chromium | N/A |
 | `enterprise-auth.spec.ts` | [enterprise-auth.md](./catalog/enterprise-auth.md) | FS-20 / FS-26 | owned Next + isolated PG + FSM-05 Mock + real Chromium | N/A |
 | `enterprise-offboarding.spec.ts` | [enterprise-offboarding.md](./catalog/enterprise-offboarding.md) | FS-30 / FS-17 / FS-18 | owned Next + isolated PG + FSM-05 Mock + real Chromium | N/A |
@@ -86,5 +87,7 @@ See `docs/implementation/live-e2e-notes.md` for digests and re-pin notes.
 - 飞书登录页两步主流程：[feishu-login-page](catalog/feishu-login-page.md)（邮箱步骤、验证码步骤、已知与未知邮箱同形、Mock 收件箱验证码登录进入首页；基座在成功与失败路径释放 PG、Mock 与 Web；专用配置 `playwright.feishu-login.config.ts`）
 
 - 飞书登录验证码页错误提示：[feishu-login-verify-errors](catalog/feishu-login-verify-errors.md)（错码与格式非法显示「验证码无效或已过期」并停留在验证码步骤，预置同邮箱本地用户触发的 409 显示账号冲突，注入会话签发故障触发的 503 提示重新获取验证码；专用配置 `playwright.feishu-login.config.ts`）
+
+- 飞书登录验证码页重新发送与更换邮箱：[feishu-login-resend](catalog/feishu-login-resend.md)（实际等待 61 秒，不用假时钟：60 秒内重发不可用；重发后旧码无效、新码可登录、库中新行激活、Mock 收件箱收到第二条私聊；重发失败（注入的 503）时提示失败、保留验证码并重新倒计时；更换邮箱回到邮箱步骤，为命中与未命中的新邮箱请求后旧邮箱的验证码都无效；专用配置 `playwright.feishu-login.config.ts`）
 
 - FS-92既有Roam回归：[workspace-docs-roam.spec.ts](workspace-docs-roam.spec.ts)；[catalog](catalog/workspace-docs-roam.md)登记实际剪贴板origin、块引用编辑/阅读态转换、平台行尾键及owned对象存储。原业务断言与22例集合保持。

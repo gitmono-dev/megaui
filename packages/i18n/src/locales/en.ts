@@ -181,7 +181,11 @@ export const en = {
         verifyFailed: "Sign-in could not be completed. Please try again.",
         codeInvalid: "The code is invalid or has expired.",
         accountConflict: "This email is already used by another account on this site, so it cannot sign in with Feishu. Please contact your administrator.",
-        codeRetry: "Sign-in could not be completed. Please request a new code."
+        codeRetry: "Sign-in could not be completed. Please request a new code.",
+        resend: "Resend code",
+        resendWait: "Resend in {seconds}s",
+        codeResent: "A new code has been requested. Codes sent before it no longer work.",
+        changeEmail: "Use a different email"
       }
     },
     signup: {
