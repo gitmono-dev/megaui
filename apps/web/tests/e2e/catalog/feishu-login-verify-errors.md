@@ -8,7 +8,7 @@ FSL-130：飞书登录页 `/[lang]/signin/feishu` 验证码步骤按 verify 状�
 
 | 名称 | 覆盖 |
 |---|---|
-| AC1 / AC2: a wrong code shows invalid-or-expired and stays on the code step | Alice 提交与真实验证码每位都不同的合法格式验证码：verify 为 401，验证码步骤内显示 `codeInvalid`，仍在验证码步骤（输入框与按钮可用、无邮箱步骤、不设置会话 Cookie）；7 位验证码为 400，显示同一文案；随后以正确验证码提交为 200 并进入 `/en` |
+| AC1 / AC2: a wrong code shows invalid-or-expired and stays on the code step | Alice 提交与真实验证码每位都不同的合法格式验证码：verify 为 401，验证码步骤内显示 `codeInvalid`，仍在验证码步骤（输入框与按钮可用、无邮箱步骤、不设置会话 Cookie）；7 位验证码为 400，显示同一文案；随后以正确验证码提交为 200 并进入 `/en/workspace` |
 | AC3: a 409 for a local user with the member's email shows the account conflict | 预置 `bob@example.com` 的本地用户后，`zh-CN` 与 `en` 页面各提交 Bob 的正确验证码：409，显示对应语言的 `accountConflict`，停留在验证码步骤、不设置会话 Cookie，`user` 表全部行不变；同一验证码再次提交为 401，显示 `codeInvalid` |
 | AC4: a 503 from a failed session issue asks for a new code | Dave 到达验证码步骤后注入 `session` 插入故障，提交正确验证码：503，显示 `codeRetry`，停留在验证码步骤、不设置会话 Cookie，`session` 表不变；移除触发器后同一验证码再次提交为 401，显示 `codeInvalid` |
 

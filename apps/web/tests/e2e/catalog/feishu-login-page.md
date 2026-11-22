@@ -15,7 +15,7 @@ FSL-129：飞书登录页 `/[lang]/signin/feishu` 的两步主流程与飞书登
 | AC3 / AC5: a known and an unknown email both switch to the same code step | 已知成员与未知邮箱各在新的浏览器上下文中提交：request 均为 202 `{"status":"accepted"}`，都切换到验证码步骤；替换邮箱后的验证码步骤 DOM 与 Cookie 名称集合相同；只有成员的 Mock 收件箱多出一条私聊 |
 | AC4: an invalid email shows the format error and stays on the email step | 非法邮箱 request 为 400，邮箱步骤内显示词典中的格式错误，停留在邮箱步骤，不设置 flow Cookie |
 | the email stays out of browser storage and a reload returns to the email step | 验证码步骤时 localStorage、sessionStorage 与 `document.cookie` 都不含邮箱，flow Cookie 为 HttpOnly；刷新后回到空的邮箱步骤，flow Cookie 不变 |
-| AC6: the code from the Mock inbox signs in and lands on the home page | 以 Mock 收件箱中的验证码（以小写、中间带空格的形式粘贴，输入框规范化为 8 位大写）提交 verify 为 200，进入首页 `/en`，设置会话 Cookie，首页 CTA 为「进入工作区」并指向 `/en/workspace`；此后再访问本页被 302 到 `/en/workspace` |
+| AC6: the code from the Mock inbox signs in and lands on the workspace | 以 Mock 收件箱中的验证码（以小写、中间带空格的形式粘贴，输入框规范化为 8 位大写）提交 verify 为 200，直接进入工作区 `/en/workspace`（FSL-184），设置会话 Cookie；随后单独访问首页 `/en` 为 200 且停在该页，首页 CTA 为「进入工作区」并指向 `/en/workspace`；此后再访问本页被 302 到 `/en/workspace` |
 | AC7: on success, closing the harness releases the PG, the Mock and the Web | 主流程基座在关闭前七项资源都在，`close()` 之后全部释放 |
 
 ## 运行

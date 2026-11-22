@@ -76,7 +76,7 @@ async function signedIn(
     expect((await requested).status()).toBe(202);
     await expect(page.getByTestId("feishu-login-code-step")).toBeVisible();
     expect(await submitCode(page, await harness.nextCode(member.openId, seen))).toBe(200);
-    await page.waitForURL(url => url.pathname === "/en");
+    await page.waitForURL(url => url.pathname === "/en/workspace");
     await work(context, page);
   } finally {
     await page.close();

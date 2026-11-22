@@ -107,7 +107,7 @@ export function CodeForm({ email }: { email: string }) {
     setNotice(null);
     const status = await postJson(FEISHU_LOGIN_VERIFY_PATH, { code });
     if (status === 200) {
-      router.push(`/${locale}`);
+      router.push(`/${locale}/workspace`);
       return;
     }
     setLoading(false);

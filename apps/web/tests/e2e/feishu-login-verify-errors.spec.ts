@@ -163,7 +163,7 @@ test.describe("FSL-130 code step error messages", () => {
 
       // Still the same step and flow: the right code now signs in.
       expect(await submitCode(page, code)).toBe(200);
-      await page.waitForURL(url => url.pathname === "/en");
+      await page.waitForURL(url => url.pathname === "/en/workspace");
       expect((await context.cookies()).map(cookie => cookie.name)).toContain(SESSION_COOKIE);
     });
   });

@@ -4,9 +4,10 @@
 //
 // AC1 the email step; AC3 a valid email switches to the code step; AC4 an invalid email
 // shows the format error; AC5 a known and an unknown email give the same page; AC6 the code
-// from the Mock inbox signs in and lands on the home page; the email never reaches browser
-// storage and a reload starts again at the email step; AC7 the harness releases PG, Mock and
-// Web on setup failure, on a failing test body and on success.
+// from the Mock inbox signs in and lands on the workspace (FSL-184), while the home page and
+// the signed-in redirect of the sign-in page stay as they were; the email never reaches
+// browser storage and a reload starts again at the email step; AC7 the harness releases PG,
+// Mock and Web on setup failure, on a failing test body and on success.
 import { expect, test, type Browser, type BrowserContext, type Page } from "@playwright/test";
 
 import { getTranslation } from "@megaui/i18n";
@@ -202,7 +203,7 @@ test.describe("FSL-129 Feishu sign-in page", () => {
     await context.close();
   });
 
-  test("AC6: the code from the Mock inbox signs in and lands on the home page", async ({ browser }) => {
+  test("AC6: the code from the Mock inbox signs in and lands on the workspace", async ({ browser }) => {
     const { context, page } = await openPage(browser, harness!.origin);
     const seen = await harness!.inboxSize(ALICE.openId);
     expect((await submitEmail(page, ALICE.email)).status).toBe(202);
@@ -216,9 +217,12 @@ test.describe("FSL-129 Feishu sign-in page", () => {
     await expect(page.getByTestId("feishu-login-code")).toHaveValue(code);
     await page.getByTestId("feishu-login-verify").click();
     expect((await verified).status()).toBe(200);
-    await page.waitForURL(url => url.pathname === "/en");
+    // FSL-184: a successful sign-in goes straight into the workspace.
+    await page.waitForURL(url => url.pathname === "/en/workspace");
     expect(await cookieNames(context)).toContain(SESSION_COOKIE);
-    // The home page sees the session: its single CTA leads into the workspace.
+    // The home page is still there and sees the session: its single CTA leads into the workspace.
+    expect((await page.goto("/en"))?.status()).toBe(200);
+    expect(new URL(page.url()).pathname).toBe("/en");
     const cta = page.getByTestId("home-cta");
     await expect(cta).toHaveText(en.home.enterWorkspace);
     await expect(cta).toHaveAttribute("href", "/en/workspace");

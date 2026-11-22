@@ -76,11 +76,11 @@ See `docs/implementation/live-e2e-notes.md` for digests and re-pin notes.
 
 - Mock 自身 API-only 集成：[feishu-mock](catalog/feishu-mock.md)（真实 CLI/HTTP 协议：token、单人读取、定向消息、在职状态控制与 reset；Mock 不再发送回调或记录事件（FSL-140），部门分页与游标已删除（FSL-167）；无网站/DB/browser；专用配置 `playwright.feishu-mock.config.ts`）
 
-- 飞书登录页两步主流程：[feishu-login-page](catalog/feishu-login-page.md)（邮箱步骤、验证码步骤、已知与未知邮箱同形、Mock 收件箱验证码登录进入首页；基座在成功与失败路径释放 PG、Mock 与 Web；专用配置 `playwright.feishu-login.config.ts`）
+- 飞书登录页两步主流程：[feishu-login-page](catalog/feishu-login-page.md)（邮箱步骤、验证码步骤、已知与未知邮箱同形、Mock 收件箱验证码登录直接进入工作区，首页入口与已登录访问登录页的重定向不变；基座在成功与失败路径释放 PG、Mock 与 Web；专用配置 `playwright.feishu-login.config.ts`）
 
 - 飞书登录验证码页错误提示：[feishu-login-verify-errors](catalog/feishu-login-verify-errors.md)（错码与格式非法显示「验证码无效或已过期」并停留在验证码步骤，预置同邮箱本地用户触发的 409 显示账号冲突，注入会话签发故障触发的 503 提示重新获取验证码；专用配置 `playwright.feishu-login.config.ts`）
 
-- 飞书登录验证码页重新发送与更换邮箱：[feishu-login-resend](catalog/feishu-login-resend.md)（实际等待 61 秒，不用假时钟：60 秒内重发不可用；重发后旧码无效、新码可登录、库中新行激活、Mock 收件箱收到第二条私聊；重发失败（注入的 503）时提示失败、保留验证码并重新倒计时；更换邮箱回到邮箱步骤，为命中与未命中的新邮箱请求后旧邮箱的验证码都无效；专用配置 `playwright.feishu-login.config.ts`）
+- 飞书登录验证码页重新发送与更换邮箱：[feishu-login-resend](catalog/feishu-login-resend.md)（实际等待 61 秒，不用假时钟：60 秒内重发不可用；重发后旧码无效、新码可登录并进入工作区、库中新行激活、Mock 收件箱收到第二条私聊；重发失败（注入的 503）时提示失败、保留验证码并重新倒计时；更换邮箱回到邮箱步骤，为命中与未命中的新邮箱请求后旧邮箱的验证码都无效；专用配置 `playwright.feishu-login.config.ts`）
 
 - 飞书模式的登录入口：[feishu-login-entry](catalog/feishu-login-entry.md)（访客访问 `/[lang]/signin` 得到 307 到 `/[lang]/signin/feishu`、保留查询参数，受保护页面经 `/[lang]/signin` 最终到达飞书登录页，页面没有密码表单与注册链接；注册、找回密码与重置密码页面返回 404；专用配置 `playwright.feishu-login.config.ts`）
 

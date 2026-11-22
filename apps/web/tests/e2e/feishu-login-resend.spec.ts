@@ -253,7 +253,7 @@ test.describe("FSL-155 code step resend and change email", () => {
 
       // AC4: the new code signs in.
       expect(await submitCode(page, second)).toBe(200);
-      await page.waitForURL(url => url.pathname === "/en");
+      await page.waitForURL(url => url.pathname === "/en/workspace");
       expect((await context.cookies()).map(cookie => cookie.name)).toContain(SESSION_COOKIE);
     });
   });
@@ -304,7 +304,7 @@ test.describe("FSL-155 code step resend and change email", () => {
 
       // Nothing was reserved here, so the code still signs in.
       expect(await submitCode(page, code)).toBe(200);
-      await page.waitForURL(url => url.pathname === "/en");
+      await page.waitForURL(url => url.pathname === "/en/workspace");
     });
   });
 
@@ -341,7 +341,7 @@ test.describe("FSL-155 code step resend and change email", () => {
       expect(await submitCode(page, bobCode)).toBe(401);
       await expectCodeInvalid(page, context, zh);
       expect(await submitCode(page, daveCode)).toBe(200);
-      await page.waitForURL(url => url.pathname === "/zh-CN");
+      await page.waitForURL(url => url.pathname === "/zh-CN/workspace");
       expect((await context.cookies()).map(cookie => cookie.name)).toContain(SESSION_COOKIE);
     });
   });

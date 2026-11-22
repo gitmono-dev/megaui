@@ -8,7 +8,7 @@ FSL-182：飞书会话下工作区外壳侧栏的显示名与头像首字母、�
 
 | 名称 | 覆盖 |
 |---|---|
-| AC1-AC3: rail, greeting and profile form show the projection displayName | Alice 经 Mock 收件箱验证码登录后读取 `get-session`：`user.name` 为 `fs_<用户 ID>`，本地 `user` 行的姓名与邮箱为 Mock 的 `Mock Alice` 与 `alice@example.com`，`user.displayName` 等于 `feishuUserDisplayName` 对二者的结果（姓名含登录邮箱本地部分，为用户 ID）；`/en/workspace` 的侧栏显示名与首页问候中的名字等于去首尾空白的 `displayName`，头像首字母等于对其的 `getInitials`，`/en/workspace/settings` 资料表单姓名输入的初始值等于 `displayName` 原值。随后把本地 `user.name` 改写为不触发规则、带首尾空白的姓名，再读 `get-session`：`user.name` 不变，`displayName` 为该姓名原值；三处断言同上（侧栏与问候去空白，表单保留空白），且页面不出现 `fs_<用户 ID>` |
+| AC1-AC3: rail, greeting and profile form show the projection displayName | Alice 经 Mock 收件箱验证码登录、到达 `/en/workspace` 后读取 `get-session`：`user.name` 为 `fs_<用户 ID>`，本地 `user` 行的姓名与邮箱为 Mock 的 `Mock Alice` 与 `alice@example.com`，`user.displayName` 等于 `feishuUserDisplayName` 对二者的结果（姓名含登录邮箱本地部分，为用户 ID）；`/en/workspace` 的侧栏显示名与首页问候中的名字等于去首尾空白的 `displayName`，头像首字母等于对其的 `getInitials`，`/en/workspace/settings` 资料表单姓名输入的初始值等于 `displayName` 原值。随后把本地 `user.name` 改写为不触发规则、带首尾空白的姓名，再读 `get-session`：`user.name` 不变，`displayName` 为该姓名原值；三处断言同上（侧栏与问候去空白，表单保留空白），且页面不出现 `fs_<用户 ID>` |
 
 ## 运行
 
