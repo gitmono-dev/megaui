@@ -7,43 +7,85 @@ const srcDir = path.dirname(fileURLToPath(import.meta.url));
 const SOURCES_DOC = path.resolve(srcDir, "../../../docs/implementation/feishu-login.md");
 const PROVENANCE_RE = /^\/\/ megaui:[A-Za-z0-9_./-]+@[0-9a-f]+(?:\s.*)?$/m;
 const SOURCES_NOTE = "; 原参照见 docs/implementation/feishu-login.md「来源」)";
+const PROVENANCE_FIXTURE = path.resolve(srcDir, "../../../tests/fixtures/feishu-login-provenance.json");
+
+/**
+ * FSL-141: the original first lines that name the removed directory of the old login are kept
+ * verbatim in a repository fixture outside `packages/` and `apps/`, so the plan's enterprise
+ * residue guard stays at zero hits. The fixture must hold exactly these files, each with a
+ * non-empty string; anything else fails the whole suite.
+ */
+const FIXTURE_FILES = [
+  "feishu-login/plugin.ts",
+  "feishu-login/request.ts",
+  "feishu-login/verify.ts",
+  "feishu-login/policy.ts",
+  "feishu-login/cookie.ts",
+  "feishu-login/input.ts",
+] as const;
+
+function readFixtureOriginals(): Readonly<Record<(typeof FIXTURE_FILES)[number], string>> {
+  const parsed: unknown = JSON.parse(readFileSync(PROVENANCE_FIXTURE, "utf8"));
+  const originals = (parsed as { originals?: unknown } | null)?.originals;
+  if (typeof originals !== "object" || originals === null || Array.isArray(originals)) {
+    throw new Error(`${PROVENANCE_FIXTURE}: "originals" must be an object`);
+  }
+  const entries = originals as Record<string, unknown>;
+  const keys = Object.keys(entries).sort();
+  if (JSON.stringify(keys) !== JSON.stringify([...FIXTURE_FILES].sort())) {
+    throw new Error(`${PROVENANCE_FIXTURE}: "originals" must list exactly ${FIXTURE_FILES.join(", ")}`);
+  }
+  for (const key of keys) {
+    if (typeof entries[key] !== "string" || entries[key] === "") {
+      throw new Error(`${PROVENANCE_FIXTURE}: "originals.${key}" must be a non-empty string`);
+    }
+  }
+  return entries as Record<(typeof FIXTURE_FILES)[number], string>;
+}
+
+const FIXTURE_ORIGINALS = readFixtureOriginals();
+
+function originalFirstLine(file: (typeof FIXTURE_FILES)[number]): string {
+  return FIXTURE_ORIGINALS[file];
+}
 
 /**
  * FSL-133: the Feishu login files whose original reference moved into the 「来源」 table of
  * `docs/implementation/feishu-login.md`. `header` is the exact first line each file has now;
  * `original` is, verbatim, the first line it had before FSL-133 (for `code.ts`, the first line
- * of the file it was moved from).
+ * of the file it was moved from). FSL-141: the six originals that name the old directory come
+ * from the fixture above; the check is unchanged.
  */
 const FEISHU_LOGIN_SOURCES = [
   {
     file: "feishu-login/plugin.ts",
     header: `// megaui-only (FSL-123, FSL-124: the feishuLogin Better Auth plugin${SOURCES_NOTE}`,
-    original: "// megaui:packages/auth/src/enterprise-otp/plugin.ts@24a8551 (megaui-only FSL-123, FSL-124: the feishuLogin Better Auth plugin)",
+    original: originalFirstLine("feishu-login/plugin.ts"),
   },
   {
     file: "feishu-login/request.ts",
     header: `// megaui-only (FSL-123, FSL-154, FSL-161: the request contract of the Feishu login${SOURCES_NOTE}`,
-    original: "// megaui:packages/auth/src/enterprise-otp/request.ts@24a8551 (megaui-only FSL-123, FSL-154, FSL-161: the request contract of the Feishu login)",
+    original: originalFirstLine("feishu-login/request.ts"),
   },
   {
     file: "feishu-login/verify.ts",
     header: `// megaui-only (FSL-124, FSL-151, FSL-125, FSL-152, FSL-169, FSL-161: the verify endpoint of the Feishu login${SOURCES_NOTE}`,
-    original: "// megaui:packages/auth/src/enterprise-otp/verify.ts@24a8551 (megaui-only FSL-124, FSL-151, FSL-125, FSL-152, FSL-169, FSL-161: the verify endpoint of the Feishu login)",
+    original: originalFirstLine("feishu-login/verify.ts"),
   },
   {
     file: "feishu-login/policy.ts",
     header: `// megaui-only (FSL-127: the Feishu-mode operation allowlist${SOURCES_NOTE}`,
-    original: "// megaui:packages/auth/src/enterprise-otp/policy.ts@ac1f445 (megaui-only FSL-127: the Feishu-mode operation allowlist)",
+    original: originalFirstLine("feishu-login/policy.ts"),
   },
   {
     file: "feishu-login/cookie.ts",
     header: `// megaui-only (FSL-123: the Feishu login flow cookie${SOURCES_NOTE}`,
-    original: "// megaui:packages/auth/src/enterprise-otp/plugin.ts@24a8551 (megaui-only FSL-123: the Feishu login flow cookie)",
+    original: originalFirstLine("feishu-login/cookie.ts"),
   },
   {
     file: "feishu-login/input.ts",
     header: `// megaui-only (FSL-123: email admission of the Feishu login request${SOURCES_NOTE}`,
-    original: "// megaui:packages/auth/src/enterprise-otp/input.ts@24a8551 (megaui-only FSL-123: email admission of the Feishu login request)",
+    original: originalFirstLine("feishu-login/input.ts"),
   },
   {
     file: "feishu-login/code.ts",

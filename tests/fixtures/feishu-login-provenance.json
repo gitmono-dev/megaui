@@ -1,0 +1,11 @@
+{
+  "description": "FSL-141: the original first lines (GC-03) of the Feishu login files that FSL-133 moved into the 「来源」 table of docs/implementation/feishu-login.md, verbatim. packages/auth/src/provenance.test.ts reads them; they live outside packages/ and apps/ so that the plan's enterprise residue guard finds no old path.",
+  "originals": {
+    "feishu-login/plugin.ts": "// megaui:packages/auth/src/enterprise-otp/plugin.ts@24a8551 (megaui-only FSL-123, FSL-124: the feishuLogin Better Auth plugin)",
+    "feishu-login/request.ts": "// megaui:packages/auth/src/enterprise-otp/request.ts@24a8551 (megaui-only FSL-123, FSL-154, FSL-161: the request contract of the Feishu login)",
+    "feishu-login/verify.ts": "// megaui:packages/auth/src/enterprise-otp/verify.ts@24a8551 (megaui-only FSL-124, FSL-151, FSL-125, FSL-152, FSL-169, FSL-161: the verify endpoint of the Feishu login)",
+    "feishu-login/policy.ts": "// megaui:packages/auth/src/enterprise-otp/policy.ts@ac1f445 (megaui-only FSL-127: the Feishu-mode operation allowlist)",
+    "feishu-login/cookie.ts": "// megaui:packages/auth/src/enterprise-otp/plugin.ts@24a8551 (megaui-only FSL-123: the Feishu login flow cookie)",
+    "feishu-login/input.ts": "// megaui:packages/auth/src/enterprise-otp/input.ts@24a8551 (megaui-only FSL-123: email admission of the Feishu login request)"
+  }
+}

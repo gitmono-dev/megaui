@@ -108,14 +108,14 @@ pnpm vitest run                     # the full unit suite
 pnpm exec playwright test <spec>    # E2E (apps/web/tests/e2e)
 ```
 
-Tests that start their own PostgreSQL need a running Docker or Podman daemon. CI also runs the scripts in `scripts/` (brand residue, license allowlist, secret residue, docs links, public assets); see [CONTRIBUTING.md](CONTRIBUTING.md) for the full list and [AGENTS.md](AGENTS.md) for the engineering rules.
+Tests that start their own PostgreSQL need a running Docker or Podman daemon. CI also runs the scripts in `scripts/` (brand residue, license allowlist, secret residue, secret keys, docs links, public assets); see [CONTRIBUTING.md](CONTRIBUTING.md) for the full list and [AGENTS.md](AGENTS.md) for the engineering rules.
 
 ## Documentation
 
 | Start here | What it covers |
 |---|---|
 | [`docs/configuration.md`](docs/configuration.md) | Every environment variable, and the CI guard tools (Chinese) |
-| [`docs/implementation/enterprise-auth.md`](docs/implementation/enterprise-auth.md) | Enterprise identity configuration contract (Chinese) |
+| [`docs/implementation/feishu-login.md`](docs/implementation/feishu-login.md) | Feishu email-code sign-in: configuration, endpoints and data (Chinese) |
 | [`docs/implementation/chat-collab-protocol.md`](docs/implementation/chat-collab-protocol.md) | Chat and collaboration protocol (Chinese) |
 | [`docs/implementation/document-page-features.md`](docs/implementation/document-page-features.md) | Document editing features (Chinese) |
 | [`docs/implementation/ci-test-isolation.md`](docs/implementation/ci-test-isolation.md) | How CI isolates and parallelizes tests (Chinese) |

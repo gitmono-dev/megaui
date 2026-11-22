@@ -53,13 +53,14 @@ pnpm vitest run                # the full unit suite (needs Docker for DB-backed
 ```
 
 CI additionally runs the guard scripts in `scripts/` (brand residue, license allowlist,
-secret residue, docs links, public assets). Run them locally when you touch the files they cover:
+secret residue, secret keys, docs links, public assets). Run them locally when you touch the files they cover:
 
 ```bash
 bash scripts/check-brand-residue.sh
 bash scripts/check-docs-links.sh
 bash scripts/check-licenses.sh
 bash scripts/check-env-placeholders.sh env.example .env.test.example
+bash scripts/check-secret-keys.sh
 ```
 
 ## Code and documentation conventions
@@ -72,7 +73,8 @@ bash scripts/check-env-placeholders.sh env.example .env.test.example
 - **Fail closed.** Authentication, authorisation, and configuration parsing must reject unknown or
   missing input rather than fall back to a permissive default.
 - **Secrets.** Never commit real credentials. Sample env files only contain placeholders
-  (`replace-with-...`); `scripts/check-env-placeholders.sh` enforces it.
+  (`replace-with-...`); `scripts/check-env-placeholders.sh` and, for `FEISHU_APP_SECRET` and
+  `ENTERPRISE_OTP_HMAC_KEY`, `scripts/check-secret-keys.sh` enforce it.
 - **Docs.** Update the relevant file under `docs/` when behaviour or configuration changes.
   `docs/` is currently written in Chinese; English contributions are welcome and will be
   accepted alongside.
@@ -132,7 +134,7 @@ pnpm turbo run lint
 pnpm vitest run <路径>
 ```
 
-CI 还会运行 `scripts/` 里的守卫脚本（品牌残留、许可证白名单、密钥残留、文档链接、公共资源）。
+CI 还会运行 `scripts/` 里的守卫脚本（品牌残留、许可证白名单、密钥残留、飞书登录密钥、文档链接、公共资源）。
 
 ### 约定
 

@@ -257,10 +257,6 @@ jobs:
           df -h /tmp || true
           df -i /tmp || true
 
-      - name: Live provider status (FS-26)
-        run: >
-          echo "FS-26 live Feishu/production gate: NOT EXECUTED (DEFER-FS-03)"
-
       - name: Secret residue guard (ER-11)
         run: |
           set -euo pipefail
@@ -299,8 +295,8 @@ jobs:
           bash scripts/check-env-placeholders.sh env.example .env.test.example
           echo "Secret residue guard: clean"
 
-      - name: Enterprise secret guard (FS-51)
-        run: bash scripts/check-enterprise-secrets.sh
+      - name: Secret key guard
+        run: bash scripts/check-secret-keys.sh
 
       - name: Brand residue guard (OPS-02)
         run: bash scripts/check-brand-residue.sh

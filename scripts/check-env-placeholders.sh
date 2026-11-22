@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Validate that sensitive keys in sample env files use placeholder prefixes
-# (replace-with-* / REPLACE_WITH_*), not real-looking credentials.
+# (replace-with-* / REPLACE_WITH_*), not real-looking credentials. The secret
+# keys of the Feishu login (FEISHU_APP_SECRET, ENTERPRISE_OTP_HMAC_KEY) are
+# listed once, in scripts/check-secret-keys.sh, and checked there.
 set -euo pipefail
 
 python3 - "$@" <<'PY'
@@ -17,7 +19,6 @@ SENSITIVE = {
     "RESEND_API_KEY",
     "MEGA2_INTERNAL_MAIL_BEARER",
     "MEGA_COLLAB_INTERNAL_TOKEN",
-    "ENTERPRISE_COLLAB_REVOKE_KEY",
     "S3_ACCESS_KEY_ID",
     "S3_ACCESS_KEY_SECRET",
     "AI_API_KEY",

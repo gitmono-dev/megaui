@@ -16,9 +16,16 @@ async function configuredWorkers(): Promise<string> {
   expect(workers).toBe("3");
   expect(workflow).toContain("timeout-minutes: 120");
   for (const name of ["Typecheck (CMD-01)", "Build (CMD-02)", "Lint (CMD-03)", "Secret residue guard (ER-11)",
-    "Enterprise secret guard (FS-51)", "Brand residue guard (OPS-02)", "Public assets guard (OPS-02)",
+    "Secret key guard", "Brand residue guard (OPS-02)", "Public assets guard (OPS-02)",
     "Docs relative links (OPS-02)", "License allowlist (OPS-02)"]) expect(workflow).toContain(`- name: ${name}`);
   return workers!;
+}
+
+/** The body of the workflow step named exactly `name`, up to the next step. */
+function stepBody(workflow: string, name: string): string | undefined {
+  const parts = workflow.split(`- name: ${name}\n`);
+  expect(parts.length, name).toBeLessThanOrEqual(2);
+  return parts[1]?.split("- name:")[0];
 }
 
 async function probe(directory: string, workers: string): Promise<void> {
@@ -39,6 +46,22 @@ async function probe(directory: string, workers: string): Promise<void> {
     expect(timedOut).toBe(false); expect(result).toEqual({ code: 0, signal: null });
   } finally { clearTimeout(timer); }
 }
+
+describe("CI guard steps (FSL-141)", () => {
+  it("AC10: the workflow has no Live provider status step", async () => {
+    const workflow = await readFile(path.join(root, ".github/workflows/ci.yml"), "utf8");
+    expect(workflow).not.toMatch(/- name: Live provider status/);
+    expect(workflow).not.toContain("NOT EXECUTED (DEFER-FS-03)");
+  });
+
+  it("AC11: the Secret key guard step runs check-secret-keys.sh and no enterprise guard is left", async () => {
+    const workflow = await readFile(path.join(root, ".github/workflows/ci.yml"), "utf8");
+    const step = stepBody(workflow, "Secret key guard");
+    expect(step).toBeDefined();
+    expect(step!.trim()).toBe("run: bash scripts/check-secret-keys.sh");
+    expect(workflow).not.toMatch(/Enterprise secret guard|check-enterprise-secrets/);
+  });
+});
 
 describe("complete CI test execution", () => {
   afterEach(() => vi.unstubAllEnvs());

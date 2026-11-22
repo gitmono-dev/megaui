@@ -26,7 +26,7 @@ public disclosure; we are happy to credit you in the advisory if you wish.
 ## Scope
 
 In scope: the code in this repository, in particular authentication and session handling
-(including the enterprise Feishu pairing login), authorisation checks, the collaboration
+(including the Feishu email-code sign-in), authorisation checks, the collaboration
 server and its tickets, upload and storage handling, and the BFF that talks to mega2.
 
 Out of scope: vulnerabilities in third-party dependencies that are not exploitable through
@@ -59,7 +59,7 @@ megaui 目前是预发布软件（`0.x`），安全修复只在 `main` 分支进
 
 ### 范围
 
-范围内：本仓库的代码，尤其是认证与会话处理（含企业飞书配对登录）、授权检查、协作服务及其票据、上传与存储处理，以及对接 mega2 的 BFF。
+范围内：本仓库的代码，尤其是认证与会话处理（含飞书邮箱验证码登录）、授权检查、协作服务及其票据、上传与存储处理，以及对接 mega2 的 BFF。
 
 范围外：无法通过 megaui 利用的第三方依赖漏洞（请向上游报告）、需要主机或管理员账号已被攻破才能成立的问题，以及依靠不现实请求量的拒绝服务。
 

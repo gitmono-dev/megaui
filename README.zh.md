@@ -108,14 +108,14 @@ pnpm vitest run                     # 全量单元测试
 pnpm exec playwright test <spec>    # E2E（apps/web/tests/e2e）
 ```
 
-需要自行启动 PostgreSQL 的测试要求有可用的 Docker 或 Podman。CI 还会运行 `scripts/` 中的脚本（品牌残留、许可证白名单、密钥残留、文档链接、公共资源）；完整清单见 [CONTRIBUTING.md](CONTRIBUTING.md)，工程约束见 [AGENTS.md](AGENTS.md)。
+需要自行启动 PostgreSQL 的测试要求有可用的 Docker 或 Podman。CI 还会运行 `scripts/` 中的脚本（品牌残留、许可证白名单、密钥残留、飞书登录密钥、文档链接、公共资源）；完整清单见 [CONTRIBUTING.md](CONTRIBUTING.md)，工程约束见 [AGENTS.md](AGENTS.md)。
 
 ## 文档
 
 | 入口 | 内容 |
 |---|---|
 | [`docs/configuration.md`](docs/configuration.md) | 全部环境变量与 CI 守卫工具 |
-| [`docs/implementation/enterprise-auth.md`](docs/implementation/enterprise-auth.md) | 企业身份配置合同 |
+| [`docs/implementation/feishu-login.md`](docs/implementation/feishu-login.md) | 飞书邮箱验证码登录：配置、接口与数据 |
 | [`docs/implementation/chat-collab-protocol.md`](docs/implementation/chat-collab-protocol.md) | 聊天与协作协议 |
 | [`docs/implementation/document-page-features.md`](docs/implementation/document-page-features.md) | 文档页编辑功能 |
 | [`docs/implementation/ci-test-isolation.md`](docs/implementation/ci-test-isolation.md) | CI 如何隔离并并行测试 |

@@ -49,7 +49,7 @@
 
 provider 键的错误与必填键的错误一并报告，排在必填键之后。错误同样只含键名，不含 provider 或地址取值。simulator 不能在 production 启用。
 
-**弃用声明（ADR-FSL-13）：** 现有企业模式已弃用，将由本文的飞书邮箱验证码登录取代。弃用范围：`AUTH_MODE=maintenance`、未设置 `AUTH_PROVIDER` 的 `AUTH_MODE=enterprise`、企业认证接口 `/api/auth/enterprise/*`（配对登录与企业 OTP）、飞书事件回调、内部资格接口、collab 企业撤销接口、企业 worker 任务与通讯录同步、admin CLI，以及 20 张 `enterprise_*` 表与 `session` 的企业列。自 FSL-132 所在版本起，`AUTH_MODE=enterprise` 但未设置 `AUTH_PROVIDER` 的配置，以及 `AUTH_MODE=maintenance`，都以 `INVALID_AUTH_PROVIDER` 拒绝启动，Web 的企业接线（企业认证接口、飞书事件回调、内部资格接口、企业登录表单与目录托管资料界面）已删除；自 FSL-134 所在版本起，collab 的企业策略桥、会话复核、企业撤销接口与 v3 企业票据已删除（见「协作服务」）；其余企业实现由后续删除卡移除。
+**弃用声明（ADR-FSL-13）：** 现有企业模式已弃用并由本文的飞书邮箱验证码登录取代；弃用声明（FSL-116）与下述删除同在 v0.44.0 中发布（REL-02 下没有中间版本，按版本计的弃用窗口为 0，用户 2026-11-20 决定以 EX-16 覆盖）。弃用范围：`AUTH_MODE=maintenance`、未设置 `AUTH_PROVIDER` 的 `AUTH_MODE=enterprise`、企业认证接口 `/api/auth/enterprise/*`（配对登录与企业 OTP）、飞书事件回调、内部资格接口、collab 企业撤销接口、企业 worker 任务与通讯录同步、admin CLI，以及 20 张 `enterprise_*` 表与 `session` 的企业列。自 FSL-132 所在版本起，`AUTH_MODE=enterprise` 但未设置 `AUTH_PROVIDER` 的配置，以及 `AUTH_MODE=maintenance`，都以 `INVALID_AUTH_PROVIDER` 拒绝启动，Web 的企业接线（企业认证接口、飞书事件回调、内部资格接口、企业登录表单与目录托管资料界面）已删除；自 FSL-134 所在版本起，collab 的企业策略桥、会话复核、企业撤销接口与 v3 企业票据已删除（见「协作服务」）；其余企业实现（auth 插件、engine 企业服务、worker 与 admin CLI、core 企业模块、数据库企业代码、Mock 的企业回调与部门目录、企业文档与样例配置）已由 FSL-133..FSL-141（Mock 部门目录为 FSL-167）删除，20 张 `enterprise_*` 表与 `session` 的企业列已由 FSL-168 的前滚迁移删除（见「数据 › 企业表已删除」）。
 
 ## 飞书接口
 
@@ -604,7 +604,7 @@ collab-server（`apps/collab-server`）只按普通协作票据校验连接（FS
 
 ## 来源
 
-自 `packages/auth/src/enterprise-otp/` 迁来或以其为来源的飞书登录文件（FSL-133），首行改为 `// megaui-only (<卡号说明>; 原参照见 docs/implementation/feishu-login.md「来源」)`，原首行（参照源标注，GC-03）逐字移入下表。`code.ts` 由 FSL-133 自 `packages/auth/src/enterprise-otp/code.ts` 迁入（只改名，生成规则不变）；其余文件路径不变。`packages/auth/src/provenance.test.ts` 以固定期望值断言这些文件的首行，以及下表每行与原首行逐字一致。
+自 `packages/auth/src/enterprise-otp/` 迁来或以其为来源的飞书登录文件（FSL-133），首行改为 `// megaui-only (<卡号说明>; 原参照见 docs/implementation/feishu-login.md「来源」)`，原首行（参照源标注，GC-03）逐字移入下表。`code.ts` 由 FSL-133 自 `packages/auth/src/enterprise-otp/code.ts` 迁入（只改名，生成规则不变）；其余文件路径不变。`packages/auth/src/provenance.test.ts` 以固定期望值断言这些文件的首行，以及下表每行与原首行逐字一致；含旧路径的六条原参照期望值存放在仓库根 `tests/fixtures/feishu-login-provenance.json`（FSL-141，使「企业模式零残留」守卫零命中），`code.ts` 的原参照仍写在测试中。
 
 | 文件 | 原首行（FSL-133 之前，逐字） |
 |---|---|

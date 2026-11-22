@@ -488,3 +488,94 @@ describe("FSL-167: Mock department directory removed", () => {
     expect(existsSync(join(ROOT, path)), path).toBe(false);
   });
 });
+
+describe("FSL-141: enterprise docs, sample config, scripts and CI closed out", () => {
+  // AC1, AC2 and the card's renames: these exact paths are gone.
+  const deletedPaths = [
+    ["AC1", "docs/implementation/enterprise-auth.md"],
+    ["AC2", "docs/implementation/enterprise-feature-notes.md"],
+    ["write set", "scripts/check-enterprise-secrets.sh"],
+    ["write set", "tests/guards/enterprise-secrets.test.ts"],
+  ] as const;
+
+  it.each(deletedPaths)("%s: %s does not exist", (_ac, path) => {
+    expect(existsSync(join(ROOT, path)), path).toBe(false);
+  });
+
+  it("write set: the renamed secret key guard and its test exist", () => {
+    expect(existsSync(join(ROOT, "scripts/check-secret-keys.sh"))).toBe(true);
+    expect(existsSync(join(ROOT, "tests/guards/secret-keys.test.ts"))).toBe(true);
+  });
+
+  // AC4, AC5: the card's sample-file guard. The pattern is passed verbatim as one argument,
+  // without a shell; it covers commented-out keys too.
+  const SAMPLE_PATTERN = "ENTERPRISE_(?!OTP_HMAC_KEY(?![A-Za-z0-9_]))|FEISHU_TENANT_KEY|FEISHU_DIRECTORY_DEPARTMENT_IDS|FEISHU_EVENT_";
+  const sampleArgs = (...files: string[]) => ["-P", "-n", SAMPLE_PATTERN, ...files];
+
+  it.each([["AC4", "env.example"], ["AC5", ".env.test.example"]])(
+    "%s: %s holds no enterprise key other than ENTERPRISE_OTP_HMAC_KEY (exit 1)",
+    (_ac, file) => {
+      const result = rg(sampleArgs(file), ROOT);
+      expect(result.stderr).toBe("");
+      expect(result.stdout).toBe("");
+      expect(result.status).toBe(1);
+    },
+  );
+
+  it("AC4, AC5: the sample guard misses ENTERPRISE_OTP_HMAC_KEY and hits every removed key, commented or not", () => {
+    const fixture = mkdtempSync(join(tmpdir(), "megaui-enterprise-removed-"));
+    try {
+      const sample = join(fixture, "env.sample");
+      writeFileSync(sample, "ENTERPRISE_OTP_HMAC_KEY=replace-with-key\n# ENTERPRISE_OTP_HMAC_KEY=replace-with-key\n");
+      expect(rg(sampleArgs(sample), fixture).status).toBe(1);
+      for (const line of ["# ENTERPRISE_PROCESS_ROLE=web", "ENTERPRISE_OTP_HMAC_KEY_OLD=x", "FEISHU_TENANT_KEY=x",
+        "FEISHU_DIRECTORY_DEPARTMENT_IDS=[]", "FEISHU_EVENT_ENCRYPT_KEY=x", "# FEISHU_EVENT_VERIFICATION_TOKEN=x"]) {
+        writeFileSync(sample, `ENTERPRISE_OTP_HMAC_KEY=replace-with-key\n${line}\n`);
+        const hit = rg(sampleArgs(sample), fixture);
+        expect(hit.status, line).toBe(0);
+        expect(hit.stdout).toContain(`2:${line}`);
+      }
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  // AC15: the plan's 「企业模式零残留」 guard, run exactly as written in the card (test files
+  // included). The pattern is passed verbatim as one argument, without a shell.
+  const RESIDUE_PATTERN = "enterprise-otp|services/enterprise|core/src/enterprise|enterprise_(?!email)";
+  const residueArgs = ["-P", "-n", RESIDUE_PATTERN, "packages", "apps", "--glob", "!**/node_modules/**",
+    "--glob", "!**/.next/**", "--glob", "!**/drizzle/**", "--glob", "!**/*.tsbuildinfo"];
+
+  it("AC15: the plan's enterprise residue guard over packages and apps finds nothing (exit 1)", () => {
+    const result = rg(residueArgs, ROOT);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toBe("");
+    expect(result.status).toBe(1);
+  });
+
+  it("AC15: the same rg guard hits each old path in a test file, misses enterprise_email and skips migrations", () => {
+    const fixture = mkdtempSync(join(tmpdir(), "megaui-enterprise-removed-"));
+    try {
+      for (const directory of ["packages/auth/src", "packages/database/drizzle", "apps/web/.next",
+        "packages/engine/node_modules/x", "tests/fixtures"]) {
+        mkdirSync(join(fixture, directory), { recursive: true });
+      }
+      writeFileSync(join(fixture, "packages/auth/src/a.test.ts"), "const column = 'enterprise_email'\n");
+      writeFileSync(join(fixture, "packages/database/drizzle/0004_x.sql"), "CREATE TABLE \"enterprise_policy\" ();\n");
+      writeFileSync(join(fixture, "apps/web/.next/b.js"), "require('./services/enterprise')\n");
+      writeFileSync(join(fixture, "apps/tsconfig.tsbuildinfo"), "packages/core/src/enterprise/x.ts\n");
+      writeFileSync(join(fixture, "packages/engine/node_modules/x/index.ts"), "enterprise-otp\n");
+      writeFileSync(join(fixture, "tests/fixtures/provenance.json"), "\"packages/auth/src/enterprise-otp/plugin.ts\"\n");
+      expect(rg(residueArgs, fixture).status).toBe(1);
+      for (const text of ["packages/auth/src/enterprise-otp/plugin.ts", "packages/engine/src/services/enterprise/x.ts",
+        "packages/core/src/enterprise/x.ts", "select 1 from enterprise_policy"]) {
+        writeFileSync(join(fixture, "packages/auth/src/c.test.ts"), `// ${text}\n`);
+        const hit = rg(residueArgs, fixture);
+        expect(hit.status, text).toBe(0);
+        expect(hit.stdout).toContain("packages/auth/src/c.test.ts");
+      }
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+});

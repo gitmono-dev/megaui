@@ -44,7 +44,7 @@ body:
       label: Auth mode / 认证模式
       options:
         - legacy (email and password)
-        - enterprise (Feishu pairing)
+        - enterprise + feishu (Feishu email-code sign-in)
         - Not applicable / 不适用
   - type: input
     id: version
