@@ -7,6 +7,7 @@ import { MEGA_SPACING_TOKENS, MEGA_TOKENS } from "@megaui/ui/tokens";
 
 import { useTranslation } from "@/hooks/use-translation";
 import { authClient } from "@/lib/auth-client";
+import { selfDisplayName } from "@/lib/self-display-name";
 import { fieldStyle, SettingsCard, SettingsToast } from "./settings-primitives";
 
 type ProfilePrefs = {
@@ -98,11 +99,15 @@ export function ProfileForm() {
     return reason instanceof Error ? reason.message : text.avatarSaveError;
   }
 
+  // FSL-182: the name input starts from `selfDisplayName` (raw, not trimmed). The user id
+  // stays a dependency, so switching to another account re-initialises the form and drops
+  // an unsaved edit even when both accounts share the same display name.
+  const selfName = selfDisplayName(session.data?.user);
   useEffect(() => {
     if (session.data?.user) {
-      setName(session.data.user.name ?? "");
+      setName(selfDisplayName(session.data.user) ?? "");
     }
-  }, [session.data?.user?.id, session.data?.user?.name]);
+  }, [session.data?.user?.id, selfName]);
   // Sync avatar from session only when the server reports a concrete URL.
   // Avoid wiping a just-uploaded preview if the client session briefly lags
   // with `image: null` after updateUser.

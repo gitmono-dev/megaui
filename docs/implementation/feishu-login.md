@@ -499,12 +499,22 @@ Mega2 经 `GET /api/auth/get-session` 读取当前会话，并按 `WebsiteAuthUs
 - **`user.displayName`：** 只出现在飞书会话的投影中，值由该次 `get-session` 已读取的本地 `user` 行（`id`、`name`、`email`）按「公开资料」一节对飞书绑定用户的 `displayName` 规则（FSL-153）计算：`user.name` 转小写后含 `@` 或含登录邮箱的完整本地部分时为用户 ID，否则为按原样存储的 `user.name`；登录邮箱缺失时（`user.email` 为 `NOT NULL`，属防御分支）为用户 ID。该规则只在 `packages/engine/src/services/public-profile.ts` 的导出函数 `feishuUserDisplayName` 中实现（经 `@megaui/engine` 导出），公开资料的 `resolvePublicProfiles` 与投影都调用它，因此本人看到的显示名与其他人经共享服务看到的显示名相同；FSL-153 对用户 ID 偶然包含登录邮箱本地部分不做处理的例外照常适用。值只取自本地 `user` 行与该规则，从不取投影的 `user.name`：本地姓名本身以 `fs_` 开头、甚至恰为 `fs_<用户 ID>` 时，按规则得出的值原样作为显示名。
 - **其余字段不变：** `user.name` 仍为 `fs_<用户 ID>`，`id`、`email`、`image`、`banned` 与 `session` 不变；主体冲突或核对失败时投影仍为 200 `null`（见「Mega2 授权主体」）。
 - **legacy 投影：** legacy 会话的投影与此前逐字节相同，不含 `displayName` 键。
-- **读取方式：** `apps/web/lib/self-display-name.ts` 的 `selfDisplayName(sessionUser)` 是界面读取自身名字的唯一方式（约束；页面改读由 FSL-182、FSL-183 完成，此前页面仍直接读取会话 `user.name`）：`displayName` 为字符串时原样返回（含空白字符串），否则返回 `name`（legacy 投影即其 `user.name`），无用户时返回 `undefined`。
+- **读取方式：** `apps/web/lib/self-display-name.ts` 的 `selfDisplayName(sessionUser)` 是界面读取自身名字的唯一方式（约束；工作区外壳、首页问候与资料表单已由 FSL-182 改读，文档协作 presence 与私聊、频道的乐观作者名由 FSL-183 改读）：`displayName` 为字符串时原样返回（含空白字符串），否则返回 `name`（legacy 投影即其 `user.name`），无用户时返回 `undefined`。
 - **不保存：** `displayName` 每次请求由首次登录建号时已保存的本地 `user` 行派生，不新增数据库查询，不另行持久化或缓存；它随 `get-session` 响应交给本人的浏览器与 Mega2，Mega2 忽略该字段。
 
-**当前状态：** 投影字段与 `selfDisplayName` 由 FSL-181 实现；工作区页面尚未改读 `selfDisplayName`（FSL-182、FSL-183），在此之前飞书模式下页面仍显示会话 `user.name`（`fs_<用户 ID>`）。
+**工作区外壳、首页问候与资料表单（FSL-182）：** 三处只经 `selfDisplayName` 读取自身名字，不再直接读取会话 `user.name`；只替换输入，各处既有的格式化与回退、会话来源（同一个 `authClient.useSession()`）与生命周期都不变。
+
+- **侧栏显示名与头像首字母**（`apps/web/app/[lang]/workspace/workspace-shell-client.tsx`）：显示名为 `sessionDisplayName(selfDisplayName(session?.user), undefined, profilePrefs.username ?? nav.currentUser)`，即输入去首尾空白后非空时取之，否则取资料偏好的 `username`，再缺失时取本地化的「当前用户」；头像首字母为 `getInitials` 作用于该显示名的结果。
+- **首页问候**（`apps/web/app/[lang]/workspace/page.tsx`）：`sessionDisplayName(selfDisplayName(session?.user), undefined, profilePrefs.username ?? home.fallbackName)`，回退顺序同上，最后为本地化的问候默认称呼。
+- **资料表单姓名初始值**（`apps/web/app/[lang]/workspace/settings/components/profile-form.tsx`）：会话就绪时以 `selfDisplayName(session.data.user) ?? ""` 原值初始化（不去空白）；该 effect 的依赖仍含会话用户 `id`，只把姓名依赖换为 `selfDisplayName` 的结果，因此切换到另一账号（即使显示名相同）时仍按新会话重新初始化并丢弃未保存的编辑；保存流程不变（飞书模式下 `/update-user` 不在「操作白名单」内）。
+
+飞书模式下三处的输入为投影的 `displayName`；legacy 投影不含该字段，`selfDisplayName` 返回 `user.name`，三处所示与此前相同。
+
+**当前状态：** 投影字段与 `selfDisplayName` 由 FSL-181 实现，外壳、问候与资料表单由 FSL-182 改读；文档协作 presence 与乐观消息作者名尚未改读（FSL-183），在此之前飞书模式下这两处仍取会话 `user.name`（`fs_<用户 ID>`）。
 
 `apps/web/tests/contract/mega2-feishu-session.spec.ts` 以真实 `get-session` 路由与一次性 PG 构造五种飞书用户——姓名与邮箱无关、姓名含 `@`、姓名含登录邮箱完整本地部分（大小写不同）、姓名只含本地部分的片段、姓名以 `fs_` 开头——断言 `user` 为 `id`（用户 ID）、`name`（`fs_<用户 ID>`）、`email`、`image`、`banned` 加上 `displayName`（依次为姓名、用户 ID、用户 ID、姓名、姓名）；直接改写本地 `user.name`（含改为 `fs_<用户 ID>` 本身）后再读，`displayName` 随之按规则改变而 `user.name` 不变；FSL-156 原有用例的期望对象加入按该规则计算的 `displayName`。`apps/web/tests/unit/mega2-session.test.ts` 断言姓名非空、含首尾空白与全为空白三种 legacy 会话的 `JSON.stringify` 投影与本卡之前的固定字符串逐字相等且不含 `displayName` 键，以及无登录邮箱的飞书投影 `displayName` 为用户 ID。`apps/web/tests/unit/self-display-name.test.ts` 覆盖 `displayName` 为字符串、缺失、非字符串、`name` 为空串与无用户五种输入；`packages/engine/src/exports.test.ts` 断言包入口导出 `feishuUserDisplayName`。
+
+FSL-182 的测试：`apps/web/tests/unit/workspace-self-display.test.tsx`（happy-dom）渲染真实的外壳、首页与资料表单，只把 `authClient.useSession` 与 BFF 请求替换为替身（另以 `next/navigation` 替身提供测试环境中没有的 App Router 钩子）；飞书会话 `user` 为 `{ name: "fs_<用户 ID>", displayName }`，`displayName` 为普通姓名、含首尾空白与全为空白（资料偏好 `username` 存在与缺失）时，断言侧栏显示名与问候等于 `sessionDisplayName` 对该输入的结果（原姓名、去空白后的姓名、`username`、本地化默认值），头像首字母等于 `getInitials` 的结果，表单姓名初始值等于 `displayName` 原值；legacy 会话（无 `displayName`，姓名非空与含首尾空白，各在 `username` 存在与缺失时）断言三处与以 `user.name` 为输入的此前结果逐字相等。`apps/web/tests/unit/profile-form-account-switch.test.tsx` 渲染真实资料表单（替身同上，会话替身为外部 store），飞书与 legacy 各一次：在姓名输入中做未保存的编辑，同一账号的新会话对象保留该编辑，切换到显示名相同、用户 ID 不同的账号后姓名回到新账号的初始值。`apps/web/tests/e2e/feishu-login-display-name.spec.ts`（`playwright.feishu-login.config.ts`）经 Mock 收件箱验证码登录 Mock 成员，读取 `get-session` 的投影后断言 `displayName` 等于 `feishuUserDisplayName` 对其姓名与邮箱的结果（Mock 姓名含登录邮箱本地部分，为用户 ID），并在改写本地 `user.name` 为不触发规则、带首尾空白的姓名后再读；两种情况下首页问候与侧栏显示名等于去首尾空白的 `displayName`，头像首字母等于 `getInitials` 的结果，资料表单姓名初始值等于 `displayName` 原值（见 `apps/web/tests/e2e/catalog/feishu-login-display-name.md`）。
 
 ## 公开资料
 

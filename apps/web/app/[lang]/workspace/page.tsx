@@ -10,6 +10,7 @@ import { MEGA_RADIUS_TOKENS, MEGA_SPACING_TOKENS, MEGA_TOKENS } from "@megaui/ui
 import { useTranslation } from "@/hooks/use-translation";
 import type { HomeDashboard } from "@/lib/adapter/home";
 import { authClient } from "@/lib/auth-client";
+import { selfDisplayName } from "@/lib/self-display-name";
 
 import { HomeHero } from "./components/hero";
 import { HomeCardGrid } from "./components/home-card-grid";
@@ -93,8 +94,9 @@ export default function WorkspaceHomePage() {
     );
   }
 
+  // FSL-182: the greeting reads the own name only through `selfDisplayName`.
   const displayName = sessionDisplayName(
-    session?.user?.name,
+    selfDisplayName(session?.user),
     undefined,
     profilePrefsQuery.data?.username ?? home.fallbackName,
   );

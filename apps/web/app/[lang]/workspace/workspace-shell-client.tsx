@@ -30,6 +30,7 @@ import {
 
 import { useTranslation } from "@/hooks/use-translation";
 import { authClient } from "@/lib/auth-client";
+import { selfDisplayName } from "@/lib/self-display-name";
 import type { WorkspaceSearchResults } from "@/lib/adapter/search-workspace";
 
 interface UnreadCountResponse {
@@ -253,8 +254,10 @@ export function WorkspaceShellClient({ children }: { children: ReactNode }) {
 
   const nav = t.workspace.nav;
   const palette = t.workspace.palette;
+  // FSL-182: the own name is read only through `selfDisplayName` (Feishu projection
+  // `displayName`, legacy `name`); the formatting and fallback are unchanged.
   const displayName = sessionDisplayName(
-    session?.user?.name,
+    selfDisplayName(session?.user),
     undefined,
     profilePrefsQuery.data?.username ?? nav.currentUser,
   );

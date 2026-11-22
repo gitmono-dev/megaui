@@ -16,6 +16,7 @@
 | `feishu-login-verify-errors.spec.ts` | [feishu-login-verify-errors.md](./catalog/feishu-login-verify-errors.md) | FSL-130 | owned Next (Feishu mode) + isolated PG + Feishu Mock + real Chromium | N/A |
 | `feishu-login-resend.spec.ts` | [feishu-login-resend.md](./catalog/feishu-login-resend.md) | FSL-155 | owned Next (Feishu mode) + isolated PG + Feishu Mock + real Chromium | N/A |
 | `feishu-login-entry.spec.ts` | [feishu-login-entry.md](./catalog/feishu-login-entry.md) | FSL-131 | owned Next (Feishu mode) + isolated PG + Feishu Mock + real Chromium | N/A |
+| `feishu-login-display-name.spec.ts` | [feishu-login-display-name.md](./catalog/feishu-login-display-name.md) | FSL-182 | owned Next (Feishu mode) + isolated PG + Feishu Mock + real Chromium | N/A |
 | `auth-flow.spec.ts` | [auth-flow.md](./catalog/auth-flow.md) | FS-26 / WA-02 | owned Next + isolated PG | ran (compose `:17001`) |
 | `home.spec.ts` | [home.md](./catalog/home.md) | WA-01 | stub | catalog-ready (not in OPS-01 core list) |
 | `smoke.spec.ts` | — | SC-01 scaffold | stub | N/A |
@@ -82,5 +83,7 @@ See `docs/implementation/live-e2e-notes.md` for digests and re-pin notes.
 - 飞书登录验证码页重新发送与更换邮箱：[feishu-login-resend](catalog/feishu-login-resend.md)（实际等待 61 秒，不用假时钟：60 秒内重发不可用；重发后旧码无效、新码可登录、库中新行激活、Mock 收件箱收到第二条私聊；重发失败（注入的 503）时提示失败、保留验证码并重新倒计时；更换邮箱回到邮箱步骤，为命中与未命中的新邮箱请求后旧邮箱的验证码都无效；专用配置 `playwright.feishu-login.config.ts`）
 
 - 飞书模式的登录入口：[feishu-login-entry](catalog/feishu-login-entry.md)（访客访问 `/[lang]/signin` 得到 307 到 `/[lang]/signin/feishu`、保留查询参数，受保护页面经 `/[lang]/signin` 最终到达飞书登录页，页面没有密码表单与注册链接；注册、找回密码与重置密码页面返回 404；专用配置 `playwright.feishu-login.config.ts`）
+
+- 飞书会话的自身显示名：[feishu-login-display-name](catalog/feishu-login-display-name.md)（Mock 成员登录后侧栏显示名、头像首字母、首页问候与资料表单姓名初始值取 `get-session` 投影的 `displayName`，覆盖 FSL-153 规则的用户 ID 与保留姓名两种结果；专用配置 `playwright.feishu-login.config.ts`）
 
 - FS-92既有Roam回归：[workspace-docs-roam.spec.ts](workspace-docs-roam.spec.ts)；[catalog](catalog/workspace-docs-roam.md)登记实际剪贴板origin、块引用编辑/阅读态转换、平台行尾键及owned对象存储。原业务断言与22例集合保持。
