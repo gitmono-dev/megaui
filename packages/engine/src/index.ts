@@ -54,6 +54,8 @@ export {
   type InviteMemberInput,
   type MembersService,
 } from "./services/members";
+// FSL-181: the FSL-153 Feishu display-name rule, shared with the Web session projection.
+export { feishuUserDisplayName, type FeishuDisplayNameSource } from "./services/public-profile";
 export {
   createBlocksRepo,
   createDocsDomain,

@@ -1,4 +1,4 @@
-// megaui-only (FSL-156): the Mega2 principal of a Feishu session, driven through the real
+// megaui-only (FSL-156, FSL-181): the Mega2 principal of a Feishu session, driven through the real
 // middleware and `/api/auth/[...all]` route (`get-session`, `sign-out`) against a one-shot
 // PostgreSQL. Feishu members sign in through the real verify endpoint (FSL-124/FSL-125): codes
 // are written with the issue store's `reserve` / `activate`, as the issue service does, so the
@@ -11,6 +11,9 @@
 //
 // Mega2's side is not run: `mega2Username` restates `WebsiteAuthUserJson::into_login_user`
 // (mega2 `src/api/oauth/model.rs`): a non-blank `name` is the `LoginUser.username`.
+//
+// FSL-181: the Feishu projection also carries `user.displayName`, the FSL-153 display name of
+// the local `user` row; `fsl153DisplayName` restates that rule independently of the engine.
 import { createHash, randomBytes } from "node:crypto";
 import { NextRequest } from "next/server";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -152,7 +155,15 @@ async function feishuLogin(member: Member): Promise<{ cookie: string; userId: st
 
 interface Projection {
   readonly session: { id: string };
-  readonly user: { id: string; name: string; email: string | null; image: string | null; banned: boolean };
+  readonly user: { id: string; name: string; email: string | null; image: string | null; banned: boolean; displayName?: string };
+}
+
+/** FSL-153, restated: the user ID when the lowercased name contains `@` or the complete local part. */
+function fsl153DisplayName(userId: string, name: string, email: string): string {
+  const lowerEmail = email.toLowerCase();
+  const localPart = lowerEmail.slice(0, lowerEmail.lastIndexOf("@"));
+  const lowerName = name.toLowerCase();
+  return lowerName.includes("@") || lowerName.includes(localPart) ? userId : name;
 }
 
 /** `GET /api/auth/get-session` through the middleware and then the real route. */
@@ -233,11 +244,21 @@ describe("FSL-156 Mega2 principal of Feishu sessions", () => {
     const member = { email: "wang.wu@example.test", openId: "ou_fsl156_wangwu", name: "王五 Wang Wu" };
     const login = await feishuLogin(member);
     const body = await getSession(login.cookie);
-    expect(body?.user).toEqual({ id: login.userId, name: `fs_${login.userId}`, email: member.email, image: null, banned: false });
+    // FSL-181: the expected user also carries the FSL-153 display name of the local row.
+    expect(body?.user).toEqual({
+      id: login.userId,
+      name: `fs_${login.userId}`,
+      email: member.email,
+      image: null,
+      banned: false,
+      displayName: fsl153DisplayName(login.userId, member.name, member.email),
+    });
     expect(mega2Username(body!.user)).toBe(`fs_${login.userId}`);
     // The display name stays on the user for page display; it is not the Mega2 principal.
     expect((await database!.pool.query(`select name from "user" where id = $1`, [login.userId])).rows[0]).toEqual({ name: member.name });
-    expect(JSON.stringify(body)).not.toContain("Wang Wu");
+    // Since FSL-181 the display name is in `displayName` only; the principal never carries it.
+    expect(body!.user.name).not.toContain("Wang Wu");
+    expect(body!.user.displayName).toBe(member.name);
     expect(verifyLog).not.toHaveBeenCalled();
   });
 
@@ -365,6 +386,58 @@ describe("FSL-156 Mega2 principal of Feishu sessions", () => {
       const warn = captureWarn();
       expect((await getSession(login.cookie))?.user.name).toBe(login.principal);
       expect(warn).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("FSL-181: the Feishu projection carries the FSL-153 display name", () => {
+    const CASES = [
+      { label: "a name unrelated to the email", member: { email: "qian.er@example.test", openId: "ou_fsl181_unrelated", name: "钱二 Ada" }, keeps: true },
+      { label: "a name containing @", member: { email: "zheng.shi@example.test", openId: "ou_fsl181_at", name: "Zheng <zs@corp.example>" }, keeps: false },
+      { label: "a name containing the complete local part (other case)", member: { email: "feng.jiu@example.test", openId: "ou_fsl181_local", name: "FENG.JIU 冯九" }, keeps: false },
+      { label: "a name containing only fragments of the local part (kept)", member: { email: "chen.qi@example.test", openId: "ou_fsl181_fragment", name: "Chen Qi" }, keeps: true },
+      { label: "a name starting with fs_", member: { email: "wei.shiyi@example.test", openId: "ou_fsl181_fs", name: "fs_wei 卫十一" }, keeps: true },
+    ] as const;
+
+    for (const { label, member, keeps } of CASES) {
+      it(`AC1-AC5: ${label}`, async () => {
+        const login = await feishuLogin(member);
+        const body = await getSession(login.cookie);
+        const displayName = keeps ? member.name : login.userId;
+        expect(fsl153DisplayName(login.userId, member.name, member.email)).toBe(displayName);
+        expect(body?.user).toEqual({
+          id: login.userId,
+          name: `fs_${login.userId}`,
+          email: member.email,
+          image: null,
+          banned: false,
+          displayName,
+        });
+        expect(mega2Username(body!.user)).toBe(`fs_${login.userId}`);
+      });
+    }
+
+    it("AC5: changing the local name changes displayName and keeps user.name", async () => {
+      const member = { email: "wei.shiyi@example.test", openId: "ou_fsl181_rename", name: "fs_wei 卫十一" };
+      const login = await feishuLogin(member);
+      const principal = `fs_${login.userId}`;
+      const before = await getSession(login.cookie);
+      expect(before?.user).toMatchObject({ id: login.userId, name: principal, displayName: member.name });
+      for (const renamed of ["fs_renamed 新名", principal, "Wei.ShiYi"]) {
+        await database!.pool.query(`update "user" set name = $2 where id = $1`, [login.userId, renamed]);
+        const after = await getSession(login.cookie);
+        expect(after?.user).toEqual({
+          id: login.userId,
+          name: principal,
+          email: member.email,
+          image: null,
+          banned: false,
+          // A local name equal to the principal is the display name as is; one containing the
+          // complete local part is replaced by the user ID (FSL-153).
+          displayName: fsl153DisplayName(login.userId, renamed, member.email),
+        });
+      }
+      expect(fsl153DisplayName(login.userId, principal, member.email)).toBe(principal);
+      expect(fsl153DisplayName(login.userId, "Wei.ShiYi", member.email)).toBe(login.userId);
     });
   });
 });

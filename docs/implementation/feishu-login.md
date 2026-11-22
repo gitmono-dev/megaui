@@ -483,6 +483,7 @@ Mega2 经 `GET /api/auth/get-session` 读取当前会话，并按 `WebsiteAuthUs
 - **稳定性：** 同一成员再次登录时，verify 按 `feishu_identities` 中 `(app_id, open_id_hmac)` 的绑定找到原用户（见「建号」的「再次登录」），用户 ID 不变；主体不读取显示名，因此退出后再次登录、显示名改变都不改变主体。用户 ID 是 `user` 表主键，不同用户（包括显示名相同的两个飞书成员）的主体不同。
 - **冲突核对（fail-closed）：** `fs_` 前缀本身不能阻止其他本地用户的 Mega2 用户名恰好是同一字符串。每次为飞书会话投影前，对该用户以外的每个本地用户，按与 Mega2 `into_login_user` 及现有 `deriveMega2Actor` 相同的规则，只由本地 `user` 的 `name` 与邮箱派生其 Mega2 用户名：`name` 按 Unicode 空白去首尾后非空时取原 `name`；否则取邮箱第一个 `@` 之前的部分按 Unicode 空白去首尾后的值。任一派生值等于该 `fs_<用户 ID>`，或核对未能完成（查询失败或结果格式不符）时，这次 `get-session` 返回 200 `null`（带 `Cache-Control: no-store`，Mega2 视为未登录），并以 `console.warn` 输出稳定日志键 `FEISHU_LOGIN_PRINCIPAL_CONFLICT`（只有该键）。核对在 `DATABASE_URL` 上的共享连接池执行一条查询：先在 `user` 表中筛出 `name` 等于或邮箱包含该主体的用户，再在进程内对每一行按上述规则派生并比较。每次请求都重新核对、不缓存结果：全部冲突都已消除（例如冲突用户被删除，或其派生的 Mega2 用户名已改变）后，下一次核对成功的请求即恢复投影。核对不读取任何企业表：原先对企业资料表 `enterprise_profile` 冻结主体的联表读取已由 FSL-139 随企业数据库代码一并删除。
 - **核对范围：** 核对只比较本地 `user` 表中的用户，不读取任何企业表，不读取 `.mega_cedar.json` 或 Mega2 的任何数据。
+- **显示名字段（FSL-181）：** 飞书会话的投影在 `user` 中多出 `displayName`（见「浏览器显示名」）。Mega2 反序列化 `get-session` 响应的结构体（mega2 `src/api/oauth/model.rs` 的 `WebsiteGetSessionResponse`、`WebsiteSessionJson`、`WebsiteAuthUserJson`）没有 `deny_unknown_fields`，serde 忽略该字段；`into_login_user` 的授权用户名只取 `user.name`，因此主体、冲突核对与管理员判定都不受它影响。
 - **legacy 部署：** legacy actor 仍按 `deriveMega2Actor` 取 `name` 或邮箱前缀，不执行冲突核对（企业 actor 已随 FSL-132、FSL-134 删除）。`AUTH_PROVIDER` 未设置、空白或为 `local`（`legacy` 模式）时不会出现飞书 actor（见「会话」的入口选择），投影与本卡之前相同。
 
 **管理员登记：** Mega2 管理员若需授予飞书用户，在 `.mega_cedar.json` 的管理员列表中登记其 `fs_<用户 ID>`，不登记显示名或邮箱前缀。用户 ID 在该成员首次飞书登录建号后才存在，运维可在 megaui 数据库中按其登录邮箱（小写）查得，例如 `select u.id from "user" as u join feishu_identities as i on i.user_id = u.id where u.email = '<登录邮箱>'`。管理员列表中的 `fs_` 条目只能由运维按已知飞书用户 ID 登记；切换到飞书模式前，以 `rg -n '"fs_' .mega_cedar.json` 核对没有来历不明的 `fs_` 条目（每一条都对应一个已知的飞书用户 ID）。按计划，这一核对同时列入 FSL-142 runbook 的部署步骤。旧企业主体只存在于 dev/test（`DEFER-FS-03`）。
@@ -490,6 +491,20 @@ Mega2 经 `GET /api/auth/get-session` 读取当前会话，并按 `WebsiteAuthUs
 **当前状态：** 本节的投影由 FSL-156 实现。自 FSL-150 起，飞书模式下的认证实例与飞书登录端点已接线（见「HTTP 接口」的「启用条件」），飞书登录签发的会话按本节投影。下述契约测试仍以替身替换 `getAuth()`，验证的是投影与冲突核对本身；FSL-150 的端到端用例不经过 `get-session` 投影。
 
 `apps/web/tests/contract/mega2-feishu-session.spec.ts` 使用一次性 PG，以真实的中间件与 `/api/auth/[...all]` 路由（`get-session`、`sign-out`）构造：`getAuth()` 替换为同一数据库上带飞书登录插件的 `createAuth` 实例，成员经真实的 verify 端点登录（验证码经签发存储的 `reserve` / `activate` 写入，首次登录建号与绑定），冲突核对与标记行读取使用 `DATABASE_URL` 上的共享连接池；测试按 `into_login_user` 的规则重述 Mega2 将得到的用户名。断言：投影的 `user.name` 为 `fs_<用户 ID>` 而数据库中的显示名不变；两个显示名相同的成员得到不同的用户名；同一成员退出（`sign-out` 后原 Cookie 的 `get-session` 为 `null`）再登录，用户与绑定各一行且用户名不变；修改 `user.name`、以另一显示名再次登录后用户名不变；显示名等于既有管理员用户名的成员得到的用户名不等于该管理员用户名；另一本地用户的 `name` 恰为 `fs_<用户 ID>`、`name` 全为 Unicode 空白且邮箱前缀（含首尾空白）为 `fs_<用户 ID>`，以及注入核对查询失败时，`get-session` 为 `null` 且 `console.warn` 恰好收到一次 `FEISHU_LOGIN_PRINCIPAL_CONFLICT`，而该会话仍被会话入口认可；冲突核对期间连接池收到的 SQL 恰有一条核对查询，且都不含 `enterprise_`（FSL-139）；非空 `name` 优先于等于主体的邮箱前缀、带首尾空白的 `name` 与更长的值都不构成冲突。`apps/web/tests/unit/mega2-session.test.ts` 以本卡之前的投影函数为基准，断言 legacy 与企业 actor 在各种 `name` / 邮箱组合下的投影与之相同、不执行核对；`AUTH_PROVIDER` 未设置、空白或为 `local` 时生产入口 `getMega2SessionResponse` 的投影与之相同且不访问连接池；并覆盖飞书分支的 fail-closed（无核对端口、查询抛错、结果格式不符、日志函数抛错）。
+
+## 浏览器显示名
+
+浏览器经 `/api/auth/get-session` 读到的是上节的 Mega2 投影，其 `user.name` 是授权主体 `fs_<用户 ID>`，不是显示名。飞书会话的投影因此另带自身显示名字段（FSL-181，`apps/web/lib/mega2-session.ts` 的 `projectMega2Session`）：
+
+- **`user.displayName`：** 只出现在飞书会话的投影中，值由该次 `get-session` 已读取的本地 `user` 行（`id`、`name`、`email`）按「公开资料」一节对飞书绑定用户的 `displayName` 规则（FSL-153）计算：`user.name` 转小写后含 `@` 或含登录邮箱的完整本地部分时为用户 ID，否则为按原样存储的 `user.name`；登录邮箱缺失时（`user.email` 为 `NOT NULL`，属防御分支）为用户 ID。该规则只在 `packages/engine/src/services/public-profile.ts` 的导出函数 `feishuUserDisplayName` 中实现（经 `@megaui/engine` 导出），公开资料的 `resolvePublicProfiles` 与投影都调用它，因此本人看到的显示名与其他人经共享服务看到的显示名相同；FSL-153 对用户 ID 偶然包含登录邮箱本地部分不做处理的例外照常适用。值只取自本地 `user` 行与该规则，从不取投影的 `user.name`：本地姓名本身以 `fs_` 开头、甚至恰为 `fs_<用户 ID>` 时，按规则得出的值原样作为显示名。
+- **其余字段不变：** `user.name` 仍为 `fs_<用户 ID>`，`id`、`email`、`image`、`banned` 与 `session` 不变；主体冲突或核对失败时投影仍为 200 `null`（见「Mega2 授权主体」）。
+- **legacy 投影：** legacy 会话的投影与此前逐字节相同，不含 `displayName` 键。
+- **读取方式：** `apps/web/lib/self-display-name.ts` 的 `selfDisplayName(sessionUser)` 是界面读取自身名字的唯一方式（约束；页面改读由 FSL-182、FSL-183 完成，此前页面仍直接读取会话 `user.name`）：`displayName` 为字符串时原样返回（含空白字符串），否则返回 `name`（legacy 投影即其 `user.name`），无用户时返回 `undefined`。
+- **不保存：** `displayName` 每次请求由首次登录建号时已保存的本地 `user` 行派生，不新增数据库查询，不另行持久化或缓存；它随 `get-session` 响应交给本人的浏览器与 Mega2，Mega2 忽略该字段。
+
+**当前状态：** 投影字段与 `selfDisplayName` 由 FSL-181 实现；工作区页面尚未改读 `selfDisplayName`（FSL-182、FSL-183），在此之前飞书模式下页面仍显示会话 `user.name`（`fs_<用户 ID>`）。
+
+`apps/web/tests/contract/mega2-feishu-session.spec.ts` 以真实 `get-session` 路由与一次性 PG 构造五种飞书用户——姓名与邮箱无关、姓名含 `@`、姓名含登录邮箱完整本地部分（大小写不同）、姓名只含本地部分的片段、姓名以 `fs_` 开头——断言 `user` 为 `id`（用户 ID）、`name`（`fs_<用户 ID>`）、`email`、`image`、`banned` 加上 `displayName`（依次为姓名、用户 ID、用户 ID、姓名、姓名）；直接改写本地 `user.name`（含改为 `fs_<用户 ID>` 本身）后再读，`displayName` 随之按规则改变而 `user.name` 不变；FSL-156 原有用例的期望对象加入按该规则计算的 `displayName`。`apps/web/tests/unit/mega2-session.test.ts` 断言姓名非空、含首尾空白与全为空白三种 legacy 会话的 `JSON.stringify` 投影与本卡之前的固定字符串逐字相等且不含 `displayName` 键，以及无登录邮箱的飞书投影 `displayName` 为用户 ID。`apps/web/tests/unit/self-display-name.test.ts` 覆盖 `displayName` 为字符串、缺失、非字符串、`name` 为空串与无用户五种输入；`packages/engine/src/exports.test.ts` 断言包入口导出 `feishuUserDisplayName`。
 
 ## 公开资料
 

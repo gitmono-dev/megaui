@@ -1,4 +1,4 @@
-// megaui-only (FSL-156): the Mega2 `get-session` projection outside Feishu mode is unchanged,
+// megaui-only (FSL-156, FSL-181): the Mega2 `get-session` projection outside Feishu mode is unchanged,
 // and the Feishu branch is fail-closed. No database or socket: Better Auth and the shared
 // Pool are replaced by spies, so the legacy cases can assert that the principal conflict
 // query is never issued.
@@ -253,5 +253,75 @@ describe("FSL-156: the Feishu branch is fail-closed", () => {
   it("projectMega2Session refuses a Feishu actor unless the check passed", () => {
     expect(projectMega2Session(session, actor)).toBeNull();
     expect(projectMega2Session(session, actor, { feishuPrincipalChecked: true })?.user.name).toBe("fs_u-1");
+  });
+});
+
+describe("FSL-181 AC6: legacy projection is byte-for-byte unchanged and has no displayName", () => {
+  const actor: WebActor = { kind: "legacy", userId: "u-1", sessionId: "s-1" };
+  // Fixed strings: JSON.stringify of the projection before FSL-181.
+  for (const [label, session, expected] of [
+    ["a non-blank name", raw("Ada Lovelace", "ada@example.test"),
+      '{"session":{"id":"s-1","expiresAt":"2030-01-01T00:00:00.000Z"},"user":{"id":"u-1","name":"Ada Lovelace","email":"ada@example.test","image":null,"banned":false}}'],
+    ["a name with surrounding whitespace", raw("  padded  ", "padded@example.test", "https://img.example.test/a.png"),
+      '{"session":{"id":"s-1","expiresAt":"2030-01-01T00:00:00.000Z"},"user":{"id":"u-1","name":"  padded  ","email":"padded@example.test","image":"https://img.example.test/a.png","banned":false}}'],
+    ["a blank name", raw("\u0085\t　", "  ada  @example.test"),
+      '{"session":{"id":"s-1","expiresAt":"2030-01-01T00:00:00.000Z"},"user":{"id":"u-1","name":"ada","email":"  ada  @example.test","image":null,"banned":false}}'],
+  ] as const) {
+    it(`a legacy session with ${label}`, () => {
+      const projected = projectMega2Session(session, actor);
+      expect(JSON.stringify(projected)).toBe(expected);
+      expect(projected).not.toBeNull();
+      expect(Object.keys(projected!.user)).toEqual(["id", "name", "email", "image", "banned"]);
+      expect("displayName" in projected!.user).toBe(false);
+      // The pre-FSL-156 oracle agrees with the fixed string.
+      expect(JSON.stringify(preFsl156Projection(session, actor))).toBe(expected);
+    });
+  }
+
+  it("the handler's legacy response body has the same bytes", async () => {
+    const session = raw("  padded  ", "padded@example.test");
+    const handler = createMega2SessionResponseHandler({
+      readSession: async () => session,
+      resolveActor: async () => actor,
+    });
+    const text = await (await handler(new Request("http://127.0.0.1:3000/api/auth/get-session"))).text();
+    expect(text).toBe(
+      '{"session":{"id":"s-1","expiresAt":"2030-01-01T00:00:00.000Z"},"user":{"id":"u-1","name":"  padded  ","email":"padded@example.test","image":null,"banned":false}}',
+    );
+    expect(text).not.toContain("displayName");
+  });
+});
+
+describe("FSL-181: the Feishu projection carries displayName by the FSL-153 rule", () => {
+  const actor: WebActor = { kind: "feishu", userId: "u-1", email: "m@example.test", sessionId: "s-1" };
+
+  it("AC2: without a login email displayName is the user ID and name stays fs_<user ID>", () => {
+    const projected = projectMega2Session(raw("Member", null), actor, { feishuPrincipalChecked: true });
+    expect(projected?.user).toEqual({ id: "u-1", name: "fs_u-1", email: null, image: null, banned: false, displayName: "u-1" });
+  });
+
+  it("follows feishuUserDisplayName on the local row, never the projected user.name", () => {
+    for (const [name, email, displayName] of [
+      ["王五 Wang Wu", "wang.wu@example.test", "王五 Wang Wu"],
+      ["m@example.test", "m@example.test", "u-1"],
+      ["Zhang.SAN Ops", "zhang.san@example.test", "u-1"],
+      ["Chen Qi", "chen.qi@example.test", "Chen Qi"],
+      ["fs_member", "m2@example.test", "fs_member"],
+      ["fs_u-1", "m2@example.test", "fs_u-1"],
+      ["  padded  ", "m2@example.test", "  padded  "],
+    ] as const) {
+      const projected = projectMega2Session(raw(name, email), actor, { feishuPrincipalChecked: true });
+      expect(projected?.user).toEqual({ id: "u-1", name: "fs_u-1", email, image: null, banned: false, displayName });
+    }
+  });
+
+  it("the handler answers displayName in the Feishu response body", async () => {
+    const handler = createMega2SessionResponseHandler({
+      readSession: async () => raw("Member", "zhou@example.test"),
+      resolveActor: async () => actor,
+      readPrincipalCandidates: async () => [],
+    });
+    const body = await (await handler(new Request("http://127.0.0.1:3000/api/auth/get-session"))).json();
+    expect(body.user).toEqual({ id: "u-1", name: "fs_u-1", email: "zhou@example.test", image: null, banned: false, displayName: "Member" });
   });
 });

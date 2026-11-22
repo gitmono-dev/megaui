@@ -71,6 +71,18 @@ describe("package exports and ADR-ARCH-01 deps (EG-01)", () => {
     }
   });
 
+  // FSL-181: the FSL-153 Feishu display-name rule is exported once, from the public profile module.
+  it("exports the Feishu display-name function of the public profile module", async () => {
+    const root = await import("./index");
+    const profile = await import("./services/public-profile");
+    expect(typeof root.feishuUserDisplayName).toBe("function");
+    expect(root.feishuUserDisplayName).toBe(profile.feishuUserDisplayName);
+    expect(root.feishuUserDisplayName({ id: "u-1", name: "Chen Qi", email: "chen.qi@corp.example" })).toBe("Chen Qi");
+    expect(root.feishuUserDisplayName({ id: "u-1", name: "Zhang.San Ops", email: "zhang.san@corp.example" })).toBe("u-1");
+    expect(root.feishuUserDisplayName({ id: "u-1", name: "a@b", email: "x@corp.example" })).toBe("u-1");
+    expect(root.feishuUserDisplayName({ id: "u-1", name: "Member", email: null })).toBe("u-1");
+  });
+
   it("has no enterprise worker or admin CLI scripts", () => {
     expect(Object.keys(packageJson.scripts).filter(name => /^enterprise:/.test(name))).toEqual([]);
     expect(Object.values(packageJson.scripts).filter(command => /src\/(workers|cli)\//.test(command))).toEqual([]);

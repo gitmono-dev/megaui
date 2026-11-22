@@ -39,14 +39,24 @@ function loginLocalPart(loginEmail: string): string {
   return at === -1 ? lowerEmail : lowerEmail.slice(0, at);
 }
 
+/** The local `user` row fields a Feishu user's display name is computed from. */
+export interface FeishuDisplayNameSource {
+  readonly id: string;
+  readonly name: string;
+  /** The login email; `null` only for a defensive caller (the `user.email` column is NOT NULL). */
+  readonly email: string | null;
+}
+
 /**
  * FSL-153: a Feishu user's display name is `user.name` as stored unless, compared
  * in lowercase, it contains `@` or the complete local part of the login email;
  * then it is the user ID. Fragments of the local part and the domain are not
- * compared.
+ * compared. Without a login email it is the user ID. FSL-181: the single source
+ * of this rule, shared by the public profile and the Web session projection.
  */
-function feishuDisplayName(name: string, localPart: string, id: string): string {
-  return revealsLogin(name, localPart) ? id : name;
+export function feishuUserDisplayName(source: FeishuDisplayNameSource): string {
+  if (source.email === null) return source.id;
+  return revealsLogin(source.name, loginLocalPart(source.email)) ? source.id : source.name;
 }
 
 const DEFAULT_AVATAR_COLOR = "#64748b";
@@ -98,8 +108,7 @@ type PublicProfileSource = {
 
 function toProfile(row: PublicProfileSource): PublicProfileRow {
   if (row.feishuBound) {
-    const localPart = loginLocalPart(row.email);
-    return toFeishuProfile(row.id, feishuDisplayName(row.name, localPart, row.id), localPart);
+    return toFeishuProfile(row.id, feishuUserDisplayName(row), loginLocalPart(row.email));
   }
   const username = legacyUsername(row.email, row.id);
   const displayName = row.name.trim() || username;

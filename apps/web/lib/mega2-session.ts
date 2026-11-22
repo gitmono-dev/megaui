@@ -6,8 +6,14 @@
 // projected as `null` and the stable log key `FEISHU_LOGIN_PRINCIPAL_CONFLICT` is emitted.
 // Legacy actors keep their projection unchanged and run no check. FSL-132: no enterprise
 // actor is produced any more and one is never projected (fail-closed).
+// FSL-181: a Feishu projection also carries `user.displayName`, computed on every request
+// from the local `user` row already read here (`id`, `name`, `email`) by the FSL-153 rule
+// (`feishuUserDisplayName`, the public profile's single source); it is never read from the
+// projected `user.name`, adds no query and is not stored. Mega2 ignores the extra field and
+// authorizes by `user.name` only. Legacy projections carry no `displayName`.
 import type { Auth } from "@megaui/auth";
 import { getPool } from "@megaui/database";
+import { feishuUserDisplayName } from "@megaui/engine";
 
 import { getAuth } from "./auth";
 import { resolveWebActor, type WebActor } from "./enterprise-session";
@@ -77,6 +83,8 @@ export interface Mega2SessionProjection {
     email: string | null;
     image: string | null;
     banned: false;
+    /** FSL-181: Feishu projections only; absent (no key) from legacy projections. */
+    displayName?: string;
   }>;
 }
 
@@ -99,15 +107,21 @@ export function projectMega2Session(
     ? feishuMega2Principal(actor.userId)
     : deriveMega2Actor({ name: session.user.name, email: session.user.email });
   if (!name) return null;
+  const user = {
+    id: session.user.id,
+    name,
+    email: session.user.email,
+    image: session.user.image,
+    banned: false as const,
+  };
   return Object.freeze({
     session: Object.freeze({ id: session.session.id, expiresAt: session.session.expiresAt }),
-    user: Object.freeze({
-      id: session.user.id,
-      name,
-      email: session.user.email,
-      image: session.user.image,
-      banned: false as const,
-    }),
+    user: Object.freeze(actor.kind === "feishu"
+      ? {
+        ...user,
+        displayName: feishuUserDisplayName({ id: session.user.id, name: session.user.name, email: session.user.email }),
+      }
+      : user),
   });
 }
 
