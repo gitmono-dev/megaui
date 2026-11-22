@@ -1,4 +1,5 @@
-// megaui-only (FS-22): content authors use the durable enterprise profile.
+// megaui-only (FS-22, FSL-136): content authors' public profiles never read enterprise profiles; a former
+// enterprise author is projected by the legacy rule from its compatibility email and `user.name`.
 import { createDatabaseClient, type DatabaseClient } from "@megaui/database";
 import { createIsolatedPostgres, type IsolatedPostgres } from "@megaui/database/test-support";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -15,8 +16,10 @@ import { fallbackPublicProfile, resolvePublicProfiles } from "./public-profile";
 const EMPTY_BODY = "{\"root\":{\"children\":[]}}";
 const ENTERPRISE_USER_ID = USERS.tianjing.id;
 const LEGACY_USER_ID = USERS.eleanor.id;
+// Shape of a compatibility key (`u_<base32 sha256>@identity.invalid`) written for enterprise users.
+const COMPAT_PREFIX = "u_7lllnvvumnhhvmxyydkl3k2pyddmsi5egyn4yfwg5wkvggceqbaq";
 
-describe("enterprise content public profiles (FS-22)", () => {
+describe("content public profiles ignore enterprise profiles (FS-22, FSL-136)", () => {
   let isolated: IsolatedPostgres;
   let client: DatabaseClient;
 
@@ -25,6 +28,10 @@ describe("enterprise content public profiles (FS-22)", () => {
     await isolated.migrate();
     client = createDatabaseClient({ connectionString: isolated.databaseUrl });
     await seedMegaDatabase(client.db);
+    await client.pool.query('update "user" set email = $2 where id = $1', [
+      ENTERPRISE_USER_ID,
+      `${COMPAT_PREFIX}@identity.invalid`,
+    ]);
     await client.pool.query(
       `insert into enterprise_profile
          (user_id, tenant_key, login_name, backend_username, display_name, notification_email)
@@ -40,7 +47,7 @@ describe("enterprise content public profiles (FS-22)", () => {
     if (errors.length > 0) throw new AggregateError(errors, "FS-22 fixture teardown failed");
   }, 120_000);
 
-  it("uses login_name across docs, comments, issues, and CLs without exposing compatibility email", async () => {
+  it("uses the opaque compatibility prefix, not login_name, across docs, comments, issues, and CLs", async () => {
     const docs = createDocsService(
       client.db,
       createAclService(client.db),
@@ -66,15 +73,18 @@ describe("enterprise content public profiles (FS-22)", () => {
     const projections = [doc.author, docComment.author, issue.author, issueComment.author, cl.author, clComment.author];
     for (const projection of projections) {
       expect(projection.id).toBe(ENTERPRISE_USER_ID);
-      expect(projection.username).toBe("directory.alice");
-      expect(projection.displayName).toBe("Directory Alice");
+      expect(projection.username).toBe(COMPAT_PREFIX);
+      expect(projection.displayName).toBe(USERS.tianjing.displayName);
+      expect(JSON.stringify(projection)).not.toContain("identity.invalid");
+      expect(JSON.stringify(projection)).not.toContain("directory.alice");
+      expect(JSON.stringify(projection)).not.toContain("Directory Alice");
       expect(projection).not.toHaveProperty("email");
       expect(projection).not.toHaveProperty("notificationEmail");
       expect(projection).not.toHaveProperty("backendUsername");
     }
   });
 
-  it("keeps author identity stable when notification or display data changes", async () => {
+  it("keeps the author profile unchanged when enterprise notification or display data changes", async () => {
     const docs = createDocsService(
       client.db,
       createAclService(client.db),
@@ -92,9 +102,9 @@ describe("enterprise content public profiles (FS-22)", () => {
     );
     const after = await docs.getDoc(created.id, ENTERPRISE_USER_ID);
 
-    expect(after.author.id).toBe(before.author.id);
-    expect(after.author.username).toBe(before.author.username);
-    expect(after.author.displayName).toBe("Renamed Alice");
+    expect(after.author).toEqual(before.author);
+    expect(after.author.username).toBe(COMPAT_PREFIX);
+    expect(after.author.displayName).toBe(USERS.tianjing.displayName);
     expect(after.id).toBe(before.id);
   });
 

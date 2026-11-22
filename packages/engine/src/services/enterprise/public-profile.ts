@@ -1,14 +1,13 @@
-// megaui-only (FS-22, FSL-153): content-safe user projection.
+// megaui-only (FS-22, FSL-153, FSL-136): content-safe user projection.
 //
 // Users bound in `feishu_identities` (FSL-153) are projected from their opaque
 // user ID and a filtered `user.name`; their login email is read only to filter
-// the name and never becomes part of the row. Enterprise content authors are
-// resolved from the durable profile first. The compatibility `user.email` is
-// otherwise queried only for rows that have no enterprise profile, preserving
-// legacy displays without allowing an enterprise DTO to derive a username or
-// merge identity from an address.
-import { eq, inArray, sql } from "drizzle-orm";
-import { enterpriseProfile, user, type Database } from "@megaui/database";
+// the name and never becomes part of the row. Every other user follows the
+// legacy rule (email prefix username, trimmed `user.name`). Since FSL-136 the
+// projection no longer reads enterprise profiles: a former enterprise user is a
+// legacy row whose username is the opaque prefix of its compatibility email.
+import { inArray, sql } from "drizzle-orm";
+import { user, type Database } from "@megaui/database";
 import type { User } from "@megaui/core";
 
 export interface PublicProfileRow {
@@ -68,20 +67,18 @@ function revealsLogin(value: string, localPart: string): boolean {
  * empty string instead of `U`. A single character still matching the local part means the name
  * contains it, which only happens when the display name is the user ID.
  */
-function feishuInitials(displayName: string, localPart: string | undefined): string {
+function feishuInitials(displayName: string, localPart: string): string {
   const full = initials(displayName);
-  if (localPart === undefined) return full;
   const first = displayName.split(/\s+/u).find(Boolean)?.[0];
   const candidates = [full, ...(first === undefined ? [""] : [first.toUpperCase(), first])];
   return candidates.find(value => !revealsLogin(value, localPart)) ?? full;
 }
 
-function feishuAvatarColor(localPart: string | undefined): string {
-  if (localPart === undefined) return DEFAULT_AVATAR_COLOR;
+function feishuAvatarColor(localPart: string): string {
   return FEISHU_AVATAR_COLORS.find(value => !revealsLogin(value, localPart)) ?? DEFAULT_AVATAR_COLOR;
 }
 
-function toFeishuProfile(id: string, displayName: string, localPart: string | undefined): PublicProfileRow {
+function toFeishuProfile(id: string, displayName: string, localPart: string): PublicProfileRow {
   return {
     id,
     username: id,
@@ -93,23 +90,19 @@ function toFeishuProfile(id: string, displayName: string, localPart: string | un
 
 type PublicProfileSource = {
   id: string;
-  name: string | null;
+  name: string;
+  email: string;
   image: string | null;
-  loginName: string | null;
-  profileDisplayName: string | null;
   feishuBound: boolean;
-  legacyEmail?: string;
 };
 
 function toProfile(row: PublicProfileSource): PublicProfileRow {
   if (row.feishuBound) {
-    // No email means the row vanished between the two reads; fail closed to the ID.
-    if (row.legacyEmail === undefined) return toFeishuProfile(row.id, row.id, undefined);
-    const localPart = loginLocalPart(row.legacyEmail);
-    return toFeishuProfile(row.id, feishuDisplayName(row.name ?? "", localPart, row.id), localPart);
+    const localPart = loginLocalPart(row.email);
+    return toFeishuProfile(row.id, feishuDisplayName(row.name, localPart, row.id), localPart);
   }
-  const username = row.loginName ?? (row.legacyEmail ? legacyUsername(row.legacyEmail, row.id) : row.id);
-  const displayName = row.profileDisplayName?.trim() || row.name?.trim() || username;
+  const username = legacyUsername(row.email, row.id);
+  const displayName = row.name.trim() || username;
   return {
     id: row.id,
     username,
@@ -134,7 +127,7 @@ export function fallbackPublicProfile(id: string): User {
   };
 }
 
-/** Resolves profiles in input order while keeping legacy fallback isolated. */
+/** Resolves profiles in input order; ids without a `user` row are omitted. */
 export async function resolvePublicProfiles(
   database: Database,
   ids: readonly string[],
@@ -142,35 +135,18 @@ export async function resolvePublicProfiles(
   const uniqueIds = Array.from(new Set(ids.filter(id => typeof id === "string" && id.length > 0)));
   if (uniqueIds.length === 0) return new Map();
 
-  const profileRows = await database
+  const rows = await database
     .select({
       id: user.id,
       name: user.name,
+      email: user.email,
       image: user.image,
-      loginName: enterpriseProfile.loginName,
-      profileDisplayName: enterpriseProfile.displayName,
       feishuBound: sql<boolean>`exists (select 1 from feishu_identities fi where fi.user_id = ${user.id})`,
     })
     .from(user)
-    .leftJoin(enterpriseProfile, eq(enterpriseProfile.userId, user.id))
     .where(inArray(user.id, uniqueIds));
 
-  const byId = new Map<string, PublicProfileSource>(profileRows.map(row => [row.id, row]));
-  const legacyIds = profileRows
-    .filter(row => row.loginName === null || row.feishuBound)
-    .map(row => row.id);
-  if (legacyIds.length > 0) {
-    const legacyRows = await database
-      .select({ id: user.id, email: user.email })
-      .from(user)
-      .where(inArray(user.id, legacyIds));
-    const legacyById = new Map(legacyRows.map(row => [row.id, row.email]));
-    for (const row of profileRows) {
-      const email = legacyById.get(row.id);
-      byId.set(row.id, email === undefined ? row : { ...row, legacyEmail: email });
-    }
-  }
-
+  const byId = new Map<string, PublicProfileSource>(rows.map(row => [row.id, row]));
   return new Map(uniqueIds.flatMap(id => {
     const row = byId.get(id);
     return row ? [[id, toPublicUser(toProfile(row))] as const] : [];

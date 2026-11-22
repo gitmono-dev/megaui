@@ -1,4 +1,5 @@
-// megaui-only (FSL-153): Feishu users' public identity is the opaque user ID and never their login email.
+// megaui-only (FSL-153, FSL-136): Feishu users' public identity is the opaque user ID and never their login
+// email; public profiles never read enterprise profiles, so a former enterprise user follows the legacy rule.
 import { createHash } from "node:crypto";
 import type { User } from "@megaui/core";
 import { createDatabaseClient, type DatabaseClient } from "@megaui/database";
@@ -49,10 +50,13 @@ const LEGACY: Seed = {
   email: "legacy.person@corp.example",
   image: "https://img.example/legacy.png",
 };
+// A former enterprise user (FSL-136): its `user.email` is the compatibility key and it still has an
+// enterprise profile row, which the projection no longer reads.
+const ENTERPRISE_COMPAT_PREFIX = "u_ayxu3s7vuv7bks4neys7lazyrgv47ux5oslywfkiizox55f2l2ha";
 const ENTERPRISE: Seed = {
   id: "fsl153Enterprise",
-  name: "Enterprise Account",
-  email: "enterprise.account@corp.example",
+  name: " Enterprise Account ",
+  email: `${ENTERPRISE_COMPAT_PREFIX}@identity.invalid`,
   image: "https://img.example/enterprise.png",
 };
 
@@ -291,15 +295,32 @@ describe("Feishu user public profiles (FSL-153)", () => {
     });
   });
 
-  it("keeps the enterprise projection: profile login name and display name first", () => {
-    expect(profiles.get(ENTERPRISE.id)).toEqual({
+  it("projects a former enterprise user by the legacy rule: opaque compatibility prefix, trimmed user.name", () => {
+    const row = profiles.get(ENTERPRISE.id);
+    expect(row).toEqual({
       id: ENTERPRISE.id,
-      username: "ent.alias",
-      displayName: "Ent Display",
+      username: ENTERPRISE_COMPAT_PREFIX,
+      displayName: "Enterprise Account",
       avatarUrl: ENTERPRISE.image,
-      avatarInitials: "ED",
+      avatarInitials: "EA",
       avatarColor: AVATAR,
     });
+    for (const value of Object.values(row!)) {
+      expect(value).not.toContain("ent.alias");
+      expect(value).not.toContain("Ent Display");
+      expect(value).not.toContain("identity.invalid");
+    }
+  });
+
+  it("does not read enterprise_profile: the same rows resolve while the table is unreachable", async () => {
+    const ids = [...FEISHU_USERS, LEGACY, ENTERPRISE].map(seed => seed.id);
+    await client.pool.query("alter table enterprise_profile rename to fsl136_enterprise_profile_hidden");
+    try {
+      const withoutTable = await resolvePublicProfiles(client.db, ids);
+      expect([...withoutTable.entries()]).toEqual([...profiles.entries()]);
+    } finally {
+      await client.pool.query("alter table fsl136_enterprise_profile_hidden rename to enterprise_profile");
+    }
   });
 
   it("returns one row per requested user in input order", () => {
