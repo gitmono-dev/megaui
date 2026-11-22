@@ -982,8 +982,8 @@ crypto 只生成合成密文，生产密钥和 OTP 明文仍由 auth crypto asse
 
 验证分为 auth handler/flow 单测、Node TCP/有限传输单测、owned Next+隔离 PG 契约和真实
 Chromium 浏览器门。浏览器门检查 Cookie 的回送和属性，不代验收后续 status、OTP、登录或
-真实飞书写入；运行记录见
-[`enterprise-pairing-request` catalog](../../apps/web/tests/e2e/catalog/enterprise-pairing-request.md)。
+真实飞书写入；运行记录原载于
+`enterprise-pairing-request` catalog（已随该 E2E 由 FSL-132 删除）。
 
 
 ## 混合路由导航兼容
