@@ -22,7 +22,11 @@ export interface Mega2PrincipalCandidate {
   readonly id: string;
   readonly name: string;
   readonly email: string | null;
-  /** `enterprise_profile.backend_username`, or null when the user has no enterprise profile. */
+  /**
+   * A frozen Mega2 user name that wins over `name` and `email` in `deriveMega2Actor`. Since
+   * FSL-139 the production query reads no frozen principal and always answers null; the
+   * derivation rule itself is unchanged.
+   */
   readonly frozenBackendUsername: string | null;
 }
 
@@ -193,26 +197,22 @@ export function createMega2SessionResponseHandler(dependencies: Mega2SessionDepe
 
 /**
  * The prefilter keeps every user whose derived Mega2 user name can equal `principal`:
- * a frozen enterprise principal equal to it, a `name` equal to it (a non-blank `name`
- * is used verbatim), or an email containing it (the trimmed local part). The handler
- * then applies `deriveMega2Actor` to each row. FSL-139 removes the `enterprise_profile`
- * join together with the enterprise database code.
+ * a `name` equal to it (a non-blank `name` is used verbatim), or an email containing it
+ * (the trimmed local part). The handler then applies `deriveMega2Actor` to each row.
+ * FSL-139: no frozen principal is read, so every row carries `frozenBackendUsername: null`.
  */
 async function readPrincipalCandidates(principal: string, userId: string): Promise<readonly Mega2PrincipalCandidate[]> {
-  const result = await getPool().query<Mega2PrincipalCandidate>(
+  const result = await getPool().query<Omit<Mega2PrincipalCandidate, "frozenBackendUsername">>(
     `select candidate.id as "id",
             candidate.name as "name",
-            candidate.email as "email",
-            profile.backend_username as "frozenBackendUsername"
+            candidate.email as "email"
        from "user" as candidate
-       left join enterprise_profile as profile on profile.user_id = candidate.id
       where candidate.id <> $2
         and (candidate.name = $1
-             or strpos(candidate.email, $1) > 0
-             or profile.backend_username = $1)`,
+             or strpos(candidate.email, $1) > 0)`,
     [principal, userId],
   );
-  return result.rows;
+  return result.rows.map(row => ({ id: row.id, name: row.name, email: row.email, frozenBackendUsername: null }));
 }
 
 const productionHandler = createMega2SessionResponseHandler({

@@ -1,5 +1,7 @@
 # 企业身份：配置合同
 
+> **已失效（FSL-139）：** 本文描述的旧企业实现已由 FSL-132 起的各删除卡删除。其中 `db:migrate` 的数据库目标预检与作用域守卫等保护均已不存在：「企业 DB 角色与迁移目标守卫」一节、迁移失败恢复步骤中「带作用域预检的」`db:migrate`，以及运行 `packages/database/src/enterprise-scope.test.ts` 的命令都不再成立（`db:migrate` 现在只运行 `drizzle-kit migrate`）。全文不得作为现行运维或验证依据；本文由 FSL-141 整体删除。现行行为见 [飞书邮箱验证码登录](./feishu-login.md) 与 [配置](../configuration.md)。
+
 本文件说明企业身份功能的共享配置合同。当前只交付配置解析，登录面由后续卡逐片交付。
 
 ## 认证模式

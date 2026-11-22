@@ -20,9 +20,6 @@ export default defineConfig({
   out: "./drizzle",
   dialect: "postgresql",
   dbCredentials: {
-    // The target of a migration is checked before drizzle-kit may connect:
-    // `db:migrate` runs the precheck of FS-44 first, and a refused target
-    // stays without a single DDL statement.
     url: connectionString,
   },
 });

@@ -211,7 +211,7 @@ describe("FSL-156 Mega2 principal of Feishu sessions", () => {
   beforeEach(async () => {
     verifyLog.mockClear();
     await database!.pool.query(`delete from feishu_login_sessions; delete from session; delete from feishu_identities;
-      delete from feishu_login_codes; delete from enterprise_profile; delete from account; delete from "user"`);
+      delete from feishu_login_codes; delete from account; delete from "user"`);
   });
 
   afterEach(() => {
@@ -321,14 +321,21 @@ describe("FSL-156 Mega2 principal of Feishu sessions", () => {
       await expectConflict(login.cookie, login.userId);
     });
 
-    it("a local user whose frozen enterprise principal is fs_<user ID>", async () => {
+    it("the check reads no enterprise table (FSL-139)", async () => {
       const login = await member();
-      await insertLocalUser("fsl156-other", "Someone Else", "someone@example.test");
-      await database!.pool.query(
-        `insert into enterprise_profile (user_id, tenant_key, login_name, backend_username) values ($1, $2, $3, $4)`,
-        ["fsl156-other", "tenant-fsl156", "someone", login.principal],
-      );
+      const pool = getPool();
+      const original = pool.query.bind(pool) as (...args: unknown[]) => unknown;
+      const texts: string[] = [];
+      vi.spyOn(pool, "query").mockImplementation(((...args: unknown[]) => {
+        if (typeof args[0] === "string") texts.push(args[0]);
+        return original(...args);
+      }) as never);
+      await insertLocalUser("fsl156-other", login.principal, "other@example.test");
       await expectConflict(login.cookie, login.userId);
+      vi.mocked(pool.query).mockRestore();
+      const check = texts.filter(text => text.includes('from "user" as candidate'));
+      expect(check).toHaveLength(1);
+      expect(texts.filter(text => /enterprise_/i.test(text))).toEqual([]);
     });
 
     it("a failed check query", async () => {
@@ -336,7 +343,7 @@ describe("FSL-156 Mega2 principal of Feishu sessions", () => {
       const pool = getPool();
       const original = pool.query.bind(pool) as (...args: unknown[]) => unknown;
       vi.spyOn(pool, "query").mockImplementation(((...args: unknown[]) => {
-        if (typeof args[0] === "string" && args[0].includes("left join enterprise_profile")) {
+        if (typeof args[0] === "string" && args[0].includes('from "user" as candidate')) {
           return Promise.reject(new Error("injected principal check failure"));
         }
         return original(...args);
@@ -348,12 +355,6 @@ describe("FSL-156 Mega2 principal of Feishu sessions", () => {
 
     it("near misses derive another user name and do not conflict", async () => {
       const login = await member();
-      // A frozen enterprise principal wins over a name equal to the principal.
-      await insertLocalUser("fsl156-frozen", login.principal, "frozen@example.test");
-      await database!.pool.query(
-        `insert into enterprise_profile (user_id, tenant_key, login_name, backend_username) values ($1, $2, $3, $4)`,
-        ["fsl156-frozen", "tenant-fsl156", "frozen", "frozen.backend"],
-      );
       // A non-blank name wins over an email local part equal to the principal.
       await insertLocalUser("fsl156-named", "Named", `${login.principal}@example.test`);
       // A non-blank name is used verbatim, padding included.

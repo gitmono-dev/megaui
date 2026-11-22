@@ -329,3 +329,72 @@ describe("FSL-138: core enterprise module removed", () => {
     }
   });
 });
+
+describe("FSL-139: database enterprise code removed", () => {
+  const STORES = ["actor", "directory", "grant", "identity", "offboarding", "operations", "policy", "repair"];
+
+  // AC1-AC3 and the card's other deletions: these exact paths are gone.
+  const deletedPaths = [
+    ...STORES.map(name => ["AC1", `packages/database/src/enterprise-${name}-store.ts`] as const),
+    ["AC2", "packages/database/src/enterprise-scope.ts"],
+    ["AC3", "packages/database/src/enterprise-scope-cli.ts"],
+    ["write set", "packages/database/src/enterprise-scope.test.ts"],
+  ] as const;
+
+  it.each(deletedPaths)("%s: %s does not exist", (_ac, path) => {
+    expect(existsSync(join(ROOT, path)), path).toBe(false);
+  });
+
+  // AC1: no enterprise-*.ts is left directly in packages/database/src (the schema files
+  // under schema/auth/ stay until FSL-168).
+  it("AC1: packages/database/src holds no enterprise-*.ts", () => {
+    expect(matching("packages/database/src", /^enterprise-.*\.ts$/)).toEqual([]);
+  });
+
+  // AC6: db:migrate runs drizzle-kit migrate and nothing else.
+  it("AC6: db:migrate is exactly drizzle-kit migrate", () => {
+    const manifest = JSON.parse(readFileSync(join(ROOT, "packages/database/package.json"), "utf8")) as {
+      scripts?: Record<string, string>;
+    };
+    expect(manifest.scripts?.["db:migrate"]).toBe("drizzle-kit migrate");
+  });
+
+  // AC9: the card's zero-hit guard, run exactly as written in the card.
+  const PATTERN = "createEnterpriseDatabaseClient|enterprise-scope|enterprise-grant-store|enterprise_profile";
+  const TARGETS = ["packages/database/src", "apps", "packages/auth", "packages/engine"];
+  const guardArgs = ["-n", PATTERN, ...TARGETS, "--glob", "!**/node_modules/**", "--glob", "!**/*.tsbuildinfo",
+    "--glob", "!**/.next/**", "--glob", "!**/schema/auth/**", "--glob", "!**/drizzle/**", "--glob", "!**/*.test.ts",
+    "--glob", "!**/*.spec.ts"];
+
+  it("AC9: the rg guard over the database code, apps, auth and engine finds nothing (exit 1)", () => {
+    const result = rg(guardArgs, ROOT);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toBe("");
+    expect(result.status).toBe(1);
+  });
+
+  it("AC9: the same rg guard reports a planted hit (exit 0) and ignores schema, migrations and tests (exit 1)", () => {
+    const fixture = mkdtempSync(join(tmpdir(), "megaui-enterprise-removed-"));
+    try {
+      for (const directory of ["packages/database/src/schema/auth", "packages/database/drizzle", "packages/auth/src",
+        "packages/engine/src", "apps/web/lib", "apps/web/.next", "packages/engine/node_modules/x"]) {
+        mkdirSync(join(fixture, directory), { recursive: true });
+      }
+      writeFileSync(join(fixture, "packages/database/src/schema/auth/enterprise-profile.ts"),
+        "export const t = pgTable('enterprise_profile', {})\n");
+      writeFileSync(join(fixture, "packages/database/drizzle/0004_x.sql"), "CREATE TABLE \"enterprise_profile\" ();\n");
+      writeFileSync(join(fixture, "packages/database/src/migrate.test.ts"), "select 1 from enterprise_profile\n");
+      writeFileSync(join(fixture, "apps/web/lib/a.spec.ts"), "createEnterpriseDatabaseClient()\n");
+      writeFileSync(join(fixture, "apps/web/.next/b.js"), "require('./enterprise-scope')\n");
+      writeFileSync(join(fixture, "apps/web/tsconfig.tsbuildinfo"), "packages/database/src/enterprise-grant-store.ts\n");
+      writeFileSync(join(fixture, "packages/engine/node_modules/x/index.ts"), "enterprise_profile\n");
+      expect(rg(guardArgs, fixture).status).toBe(1);
+      writeFileSync(join(fixture, "apps/web/lib/c.ts"), "await pool.query('select 1 from enterprise_profile')\n");
+      const hit = rg(guardArgs, fixture);
+      expect(hit.status).toBe(0);
+      expect(hit.stdout).toContain("apps/web/lib/c.ts");
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+});

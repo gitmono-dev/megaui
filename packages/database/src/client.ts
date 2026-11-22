@@ -9,12 +9,6 @@
 // dialect).
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool, type PoolConfig } from "pg";
-import {
-  assertEnterpriseScope,
-  readEnterpriseMarker,
-  readSqlRolePrivileges,
-  type EnterpriseScopeExpectation,
-} from "./enterprise-scope";
 import * as schema from "./schema";
 
 export type Schema = typeof schema;
@@ -105,32 +99,6 @@ export function createDatabaseClient(
   };
 
   return { pool, db, close };
-}
-
-/**
- * Creates a database client for an enterprise process.
- *
- * The scope guard runs before the client is handed out: a target that
- * belongs to another owner, instance or environment is refused, and the
- * pool is closed again so that no connection survives the refusal.
- */
-export async function createEnterpriseDatabaseClient(
-  options: CreateDatabaseClientOptions & { scope: EnterpriseScopeExpectation },
-): Promise<DatabaseClient> {
-  const client = createDatabaseClient(options);
-  try {
-    const marker = await readEnterpriseMarker(client.pool);
-    const privileges = await readSqlRolePrivileges(client.pool);
-    assertEnterpriseScope({
-      marker,
-      expectation: options.scope,
-      privileges,
-    });
-  } catch (error) {
-    await client.close();
-    throw error;
-  }
-  return client;
 }
 
 function readDatabaseUrl(): string {

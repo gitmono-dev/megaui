@@ -33,7 +33,7 @@
 
 企业 worker 与管理员 CLI 已删除（FSL-137）：`@megaui/engine` 不再提供 `enterprise:worker`、`enterprise:admin` 与 `enterprise:approve` 脚本，也不再导出企业服务（资格、配对、事件、目录对账、通知、保留期清理、离职与协作撤销）；这些进程读取的 worker 与管理员配置不再有任何读取方。飞书邮箱验证码登录不需要常驻 worker 或管理员命令，见[飞书邮箱验证码登录](./implementation/feishu-login.md)。
 
-以下企业表的段落只描述仍保留的表结构：写入、读取或清理这些表的 engine 企业服务、企业 worker 与管理员 CLI 已由 FSL-137 删除，这些表不再被写入。唯一仍在的读取是 Web 飞书会话的 Mega2 主体冲突检查（`apps/web/lib/mega2-session.ts`）对 `enterprise_profile.backend_username` 的只读联表，由 FSL-139 随企业数据库代码一并删除；表本身由 FSL-168 删除。
+以下企业表的段落只描述仍保留的表结构：写入、读取或清理这些表的 engine 企业服务、企业 worker 与管理员 CLI 已由 FSL-137 删除，这些表不再被写入。Web 飞书会话的 Mega2 主体冲突检查（`apps/web/lib/mega2-session.ts`）原先对 `enterprise_profile.backend_username` 的只读联表已由 FSL-139 随企业数据库代码一并删除，当前没有代码读取这些表；表本身由 FSL-168 删除。
 
 企业登录存储已新增配对、challenge、共享预算和加密DM四张表：配对token与flow只存摘要，HMAC可在恢复期后清除并保留消费元数据，DM绑定原challenge期限且每generation唯一；写入这些表的配对申请、发码与投递服务已随企业服务删除（FSL-137），删表见 FSL-168。字段与恢复边界见[配对challenge与加密投递schema](./implementation/enterprise-auth.md#配对challenge与加密投递schema)。
 
@@ -63,8 +63,6 @@
 
 FS-58 的 mega2 通知偏好 adapter 只消费当前 `enabled` 与事件偏好合同。响应中的旧 `email`、
 `delivery_mode`、`preferred_locale` 字段会被忽略，更新请求也不会发送这些字段，也不从 session 兼容邮箱补值。原先由 `enterprise_profile.notification_email` 与本地登录通知 outbox 承担的企业登录通知已随通知服务删除（FSL-137）。
-
-数据库目标由 `packages/database/src/enterprise-scope.ts` 守卫：目标必须携带登记的 owner、instance 与 environment，SQL 角色的实际权限不得超出登记范围，陌生目标不会被自动初始化，`db:migrate` 在连接目标前先做预检，预检失败则一次 DDL 都不会发生。
 
 **production 的 Web 运行角色（FSL-158、FSL-162，GC-15）：** 飞书模式（`AUTH_MODE=enterprise` + `AUTH_PROVIDER=feishu`）的 Web 以 `DATABASE_URL` 连接的角色是运行角色，它只获授 `SELECT` / `INSERT` / `UPDATE` / `DELETE` 与序列 `USAGE`；表由迁移角色拥有，迁移由 `db:migrate` 以迁移角色（另一个连接串）执行。运行角色及其可 `SET ROLE` 的全部角色都不得为超级用户、不得具有 `CREATEDB` 属性，也不得对当前数据库或其中任一 schema（`pg_catalog`、`information_schema`、`pg_toast*` 除外）持有 `CREATE`；它们也不得拥有当前数据库、上述任一 schema 或当前数据库中的任一对象（表、序列、视图、函数、类型等，表由迁移角色拥有），因此运行角色不得是迁移角色，也不得可 `SET ROLE` 到迁移角色。飞书模式的 Web 启动时检查这些事实：`NODE_ENV=production` 下任一为真或权限无法读取时以 `DATABASE_ROLE_SCOPE_REJECTED` 拒绝启动；其它环境（`development`、`test` 与其它取值，含未设置）只输出 `DATABASE_ROLE_SCOPE_WARNING` 并继续。拒绝与告警只列出角色名与命中的事实类别，不含连接串或口令。`legacy` 与未设置 `AUTH_PROVIDER` 的部署不做该检查。详见 [飞书邮箱验证码登录 · 数据库角色](./implementation/feishu-login.md#数据库角色)。
 
