@@ -1,5 +1,7 @@
+// megaui-only (FS-87, FSL-138): the Feishu provider admission has no upstream counterpart.
 /**
- * FS-87：provider 准入与不可变目标。
+ * FS-87：provider 准入与不可变目标。FSL-138 自已删除的 core 企业模块迁入本目录，
+ * 规则不变。
  *
  * 纯 core 模块：调用方注入对象，本模块不读 process.env、不请求 HTTP。准入结果
  * 只有一个冻结目标，没有备用 provider，也没有失败后切源的能力。

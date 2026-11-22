@@ -37,7 +37,7 @@
 
 #### provider 选择
 
-函数按 `@megaui/core` 现有的 `admitProvider` 准入规则（`packages/core/src/enterprise/provider-admission.ts`）选出唯一的冻结目标 `target = { provider, origin }`，没有备用 provider，也不能按请求替换（FSL-148）。可信与否只看调用方传入的 `NODE_ENV`：`development`、`test` 视为可信；其它取值或未设置时按 `production` 处理。
+函数按 `@megaui/core` 现有的 `admitProvider` 准入规则（`packages/core/src/feishu/provider-admission.ts`；FSL-138 自已删除的 core 企业模块 `packages/core/src/enterprise/` 迁入，规则不变）选出唯一的冻结目标 `target = { provider, origin }`，没有备用 provider，也不能按请求替换（FSL-148）。可信与否只看调用方传入的 `NODE_ENV`：`development`、`test` 视为可信；其它取值或未设置时按 `production` 处理。
 
 | `FEISHU_PROVIDER` | 条件 | 结果 |
 |---|---|---|

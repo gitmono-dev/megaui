@@ -4,7 +4,7 @@
 // asserts that every path its card deletes is absent and runs the card's `rg` guard as a
 // child process: exit 1 (no match) passes, exit 0 (a match) or >1 (an error) fails.
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -254,6 +254,76 @@ describe("FSL-137: engine enterprise services, worker and admin CLI removed", ()
       const hit = rg(guardArgs, fixture);
       expect(hit.status).toBe(0);
       expect(hit.stdout).toContain("scripts/run.sh");
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("FSL-138: core enterprise module removed", () => {
+  // AC3 and the card's other deletions: these exact paths are gone.
+  const deletedPaths = [
+    ["AC3", "packages/core/src/enterprise"],
+    ...["config", "config.test", "eligibility", "eligibility.test", "policy", "provider-admission",
+      "provider-admission.test"].map(name => ["AC3", `packages/core/src/enterprise/${name}.ts`] as const),
+  ] as const;
+
+  it.each(deletedPaths)("%s: %s does not exist", (_ac, path) => {
+    expect(existsSync(join(ROOT, path)), path).toBe(false);
+  });
+
+  it("AC1: the provider admission and its test live in packages/core/src/feishu", () => {
+    expect(existsSync(join(ROOT, "packages/core/src/feishu/provider-admission.ts"))).toBe(true);
+    expect(existsSync(join(ROOT, "packages/core/src/feishu/provider-admission.test.ts"))).toBe(true);
+  });
+
+  // AC4: the barrel no longer re-exports an enterprise module, and none of the removed
+  // enterprise API is reachable from the @megaui/core entry (`packages/core/src/index.ts`,
+  // its package.json "." export); the provider admission still is.
+  it("AC4: @megaui/core exports no enterprise API", async () => {
+    const barrel = readFileSync(join(ROOT, "packages/core/src/index.ts"), "utf8");
+    expect(barrel).not.toMatch(/\.\/enterprise\//);
+    expect(barrel).toContain("export * from './feishu/provider-admission'");
+    const core: Record<string, unknown> = await import("../../packages/core/src/index");
+    const removed = ["AUTH_MODES", "DEFAULT_AUTH_MODE", "EnterpriseConfigError", "parseDirectoryDepartmentIds",
+      "resolveEnterpriseConfig", "resolveEffectiveAuthMode", "isActiveLocalBan", "isAuthenticationEligible",
+      "ENTERPRISE_POLICY_SCHEMA_VERSION", "createEnterprisePolicyResponse", "parseEnterprisePolicyResponse",
+      "CLIENT_SAFE_KEYS", "isClientSafeKey", "findClientUnsafeKeys"];
+    for (const name of removed) expect(core, name).not.toHaveProperty(name);
+    expect(Object.keys(core).filter(name => /enterprise/i.test(name))).toEqual([]);
+    for (const name of ["admitProvider", "ProviderAdmissionError", "OFFICIAL_FEISHU_ORIGIN", "resolveAuthMode"]) {
+      expect(core, name).toHaveProperty(name);
+    }
+  });
+
+  // AC7: the card's zero-hit guard, run exactly as written in the card.
+  const PATTERN = "core/src/enterprise|resolveEnterpriseConfig|isAuthenticationEligible";
+  const guardArgs = ["-n", PATTERN, "packages", "apps", "--glob", "!**/node_modules/**", "--glob", "!**/*.tsbuildinfo",
+    "--glob", "!**/.next/**", "--glob", "!**/*.test.ts", "--glob", "!**/*.spec.ts", "--glob", "!**/tests/**"];
+
+  it("AC7: the rg guard over packages and apps finds nothing (exit 1)", () => {
+    const result = rg(guardArgs, ROOT);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toBe("");
+    expect(result.status).toBe(1);
+  });
+
+  it("AC7: the same rg guard reports a planted hit (exit 0) and ignores tests (exit 1)", () => {
+    const fixture = mkdtempSync(join(tmpdir(), "megaui-enterprise-removed-"));
+    try {
+      for (const directory of ["packages/core/src", "apps/web/lib", "apps/web/tests/unit", "packages/core/node_modules/x"]) {
+        mkdirSync(join(fixture, directory), { recursive: true });
+      }
+      writeFileSync(join(fixture, "packages/core/src/a.test.ts"), "import './enterprise/config'\nresolveEnterpriseConfig()\n");
+      writeFileSync(join(fixture, "apps/web/lib/b.spec.ts"), "isAuthenticationEligible(facts)\n");
+      writeFileSync(join(fixture, "apps/web/tests/unit/c.ts"), "const path = 'packages/core/src/enterprise/policy.ts'\n");
+      writeFileSync(join(fixture, "packages/core/node_modules/x/index.ts"), "resolveEnterpriseConfig\n");
+      writeFileSync(join(fixture, "apps/web/tsconfig.tsbuildinfo"), "packages/core/src/enterprise/config.ts\n");
+      expect(rg(guardArgs, fixture).status).toBe(1);
+      writeFileSync(join(fixture, "apps/web/lib/d.ts"), "export { isAuthenticationEligible } from '@megaui/core'\n");
+      const hit = rg(guardArgs, fixture);
+      expect(hit.status).toBe(0);
+      expect(hit.stdout).toContain("apps/web/lib/d.ts");
     } finally {
       rmSync(fixture, { recursive: true, force: true });
     }

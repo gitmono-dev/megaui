@@ -14,7 +14,8 @@
  *   exactly 32 bytes (43 characters that decode and re-encode to themselves).
  * - `FEISHU_PROVIDER` (optional): unset or blank selects `feishu`, the
  *   official origin. `simulator` follows the existing `admitProvider` rules
- *   of `@megaui/core`: only with `NODE_ENV` `development` or `test`, and only
+ *   of `@megaui/core` (`packages/core/src/feishu/provider-admission.ts`,
+ *   FSL-138): only with `NODE_ENV` `development` or `test`, and only
  *   with `FEISHU_SIMULATOR_ORIGIN` the exact loopback origin
  *   `http://127.0.0.1:<port>`. Any other value is refused.
  * - `FEISHU_SIMULATOR_ORIGIN`: read only for the `simulator` provider.

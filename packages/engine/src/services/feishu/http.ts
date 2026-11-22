@@ -2,10 +2,12 @@
 /**
  * FS-03：固定源 HTTP 传输。
  *
- * The transport consumes the frozen target of FS-87 and never decides the
- * provider again: every request goes to the origin of that target, a
- * redirect is refused instead of followed, and a transport failure cannot
- * reach another source.
+ * The transport consumes the frozen target of the FS-87 provider admission
+ * (`admitProvider` of `@megaui/core`, in
+ * `packages/core/src/feishu/provider-admission.ts` since FSL-138) and never
+ * decides the provider again: every request goes to the origin of that
+ * target, a redirect is refused instead of followed, and a transport failure
+ * cannot reach another source.
  *
  * One operation has a total budget. A transient error is retried inside that
  * budget with an exponential backoff, up to `maxAttempts` HTTP attempts in all
