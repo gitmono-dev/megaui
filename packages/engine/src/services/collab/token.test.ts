@@ -5,8 +5,12 @@ import {
   MegaInternalError,
   MegaUnauthorizedError,
 } from "../../errors";
-import { COLLAB_TICKET_PREFIX_V2 } from "@megaui/core/collab/ticket";
-import { COLLAB_TICKET_PREFIX_V3, COLLAB_TICKET_V3_MAX_TTL_MS, verifyCollabTicket } from "@megaui/core/collab/ticket";
+import {
+  COLLAB_TICKET_PREFIX,
+  COLLAB_TICKET_PREFIX_V2,
+  COLLAB_TICKET_TTL_MS,
+  verifyCollabTicket,
+} from "@megaui/core/collab/ticket";
 import { createCollabTokenService } from "./token";
 
 const SECRET = "test-collab-secret-do-not-use-in-prod";
@@ -136,17 +140,21 @@ describe("createCollabTokenService (EG-13)", () => {
     });
   });
 
-  it("mints an enterprise v3 ticket from explicit server metadata and caps its TTL", () => {
-    const service = createCollabTokenService({ secret: SECRET, nowMs: 0, ttlMs: 60 * 60_000 });
-    const minted = service.mintForSession(SESSION, {
-      enterprise: { identityId: "identity-1", authEpoch: 4 },
-    });
-    expect(minted.token.startsWith(COLLAB_TICKET_PREFIX_V3)).toBe(true);
-    expect(minted.expiresAtMs).toBe(COLLAB_TICKET_V3_MAX_TTL_MS);
-    expect(verifyCollabTicket(minted.token, SECRET, { nowMs: 0 })).toMatchObject({
-      userId: "usr_1",
-      identityId: "identity-1",
-      authEpoch: 4,
-    });
+  it("FSL-134: mints ordinary tickets without enterprise metadata, even when smuggled in", () => {
+    const service = createCollabTokenService({ secret: SECRET, nowMs: 0 });
+    const smuggled = { enterprise: { identityId: "identity-1", authEpoch: 4 } } as never;
+    for (const [options, prefix, roomName] of [
+      [smuggled, COLLAB_TICKET_PREFIX, null],
+      [{ ...(smuggled as object), roomName: "collection:channel:chn_general" }, COLLAB_TICKET_PREFIX_V2, "collection:channel:chn_general"],
+    ] as const) {
+      const minted = service.mintForSession(SESSION, options);
+      expect(minted.token.startsWith(prefix)).toBe(true);
+      expect(minted.token).not.toContain("identity-1");
+      expect(minted.expiresAtMs).toBe(COLLAB_TICKET_TTL_MS);
+      const verified = verifyCollabTicket(minted.token, SECRET, { nowMs: 0 });
+      expect(verified).toEqual({ userId: "usr_1", roomName });
+      expect(verified).not.toHaveProperty("identityId");
+      expect(verified).not.toHaveProperty("authEpoch");
+    }
   });
 });

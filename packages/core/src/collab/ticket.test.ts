@@ -1,9 +1,9 @@
+import { createHmac } from 'node:crypto'
+
 import { describe, expect, it } from 'vitest'
 import {
   COLLAB_TICKET_PREFIX,
   COLLAB_TICKET_PREFIX_V2,
-  COLLAB_TICKET_PREFIX_V3,
-  COLLAB_TICKET_V3_MAX_TTL_MS,
   isCollabTicket,
   mintCollabTicket,
   verifyCollabTicket,
@@ -199,38 +199,44 @@ describe('collab ticket v2 room binding (RT-03)', () => {
   })
 })
 
-describe('collab ticket v3 enterprise binding (FS-16)', () => {
-  const ROOM = 'collection:channel:enterprise'
+describe('FSL-134: collab tickets carry no enterprise metadata', () => {
+  const ROOM = 'collection:channel:fsl134'
+  const ENTERPRISE_FIELDS = ['identityId', 'authEpoch'] as const
 
-  it('binds identity and epoch and caps the TTL at five minutes', () => {
-    const ticket = mintCollabTicket('user-1', SECRET, {
-      nowMs: 1_000,
-      ttlMs: COLLAB_TICKET_V3_MAX_TTL_MS + 10_000,
-      identityId: 'identity-1',
-      authEpoch: 7,
-    })
-    expect(ticket.startsWith(COLLAB_TICKET_PREFIX_V3)).toBe(true)
-    expect(verifyCollabTicket(ticket, SECRET, { nowMs: 1_000 })).toEqual({
-      userId: 'user-1',
-      identityId: 'identity-1',
-      authEpoch: 7,
-      roomName: null,
-    })
-    expect(verifyCollabTicket(ticket, SECRET, { nowMs: 1_000 + COLLAB_TICKET_V3_MAX_TTL_MS })).not.toBeNull()
-    expect(verifyCollabTicket(ticket, SECRET, { nowMs: 1_000 + COLLAB_TICKET_V3_MAX_TTL_MS + 1 })).toBeNull()
+  function signedWithPrefix(prefix: string, body: string): string {
+    return `${prefix}${body}.${createHmac('sha256', SECRET).update(body).digest('base64url')}`
+  }
+
+  it.each([
+    ['v1', undefined],
+    ['v2', ROOM],
+  ] as const)('AC4/AC5: a minted %s ticket verifies without identityId and authEpoch', (_version, roomName) => {
+    const ticket = mintCollabTicket('user-1', SECRET, { nowMs: 0, ...(roomName ? { roomName } : {}) })
+    expect(ticket.startsWith(roomName ? COLLAB_TICKET_PREFIX_V2 : COLLAB_TICKET_PREFIX)).toBe(true)
+    const verified = verifyCollabTicket(ticket, SECRET, { nowMs: 0 })
+    expect(verified).toEqual({ userId: 'user-1', roomName: roomName ?? null })
+    for (const field of ENTERPRISE_FIELDS) expect(verified).not.toHaveProperty(field)
   })
 
-  it('supports collection binding and rejects incomplete enterprise metadata', () => {
-    const ticket = mintCollabTicket('user-1', SECRET, {
-      nowMs: 0,
-      roomName: ROOM,
-      identityId: 'identity-1',
-      authEpoch: 1,
-    })
-    expect(verifyCollabTicket(ticket, SECRET, { nowMs: 0 })).toMatchObject({
-      userId: 'user-1', identityId: 'identity-1', authEpoch: 1, roomName: ROOM,
-    })
-    expect(() => mintCollabTicket('user-1', SECRET, { identityId: 'identity-1' })).toThrow(/provided together/)
-    expect(() => mintCollabTicket('user-1', SECRET, { authEpoch: 1 })).toThrow(/provided together/)
+  it('AC4/AC5: enterprise options smuggled past the type are ignored and never reach the ticket', () => {
+    const smuggled = { nowMs: 0, roomName: ROOM, identityId: 'identity-1', authEpoch: 7 } as never
+    const ticket = mintCollabTicket('user-1', SECRET, smuggled)
+    expect(ticket).toBe(mintCollabTicket('user-1', SECRET, { nowMs: 0, roomName: ROOM }))
+    expect(ticket).not.toContain('identity-1')
+    expect(ticket.startsWith('mega-collab.v3.')).toBe(false)
+    const verified = verifyCollabTicket(ticket, SECRET, { nowMs: 0 })
+    for (const field of ENTERPRISE_FIELDS) expect(verified).not.toHaveProperty(field)
+  })
+
+  it('a correctly signed token in the former v3 format is not a ticket and never verifies', () => {
+    const expMs = String(60_000)
+    for (const body of [
+      ['user-1', 'identity-1', '7', expMs].join('.'),
+      ['user-1', 'identity-1', '7', expMs, ROOM].join('.'),
+    ]) {
+      const token = signedWithPrefix('mega-collab.v3.', body)
+      expect(verifyCollabTicket(token, SECRET, { nowMs: 0 })).toBeNull()
+      expect(isCollabTicket(token)).toBe(false)
+    }
   })
 })

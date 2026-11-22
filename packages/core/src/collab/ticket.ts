@@ -9,10 +9,10 @@
  * v2 (channel rooms, megaui-only / ADR-RT-03):
  *   mega-collab.v2.<userId>.<expMs>.<roomName>.<base64url-hmac>
  *   HMAC covers `userId.expMs.roomName`
- * v3 (enterprise identity/epoch binding):
- *   mega-collab.v3.<userId>.<identityId>.<authEpoch>.<expMs>[.<roomName>].<base64url-hmac>
- *   HMAC covers every segment before the signature. Enterprise tickets are
- *   intentionally short lived (at most five minutes).
+ *
+ * FSL-134: the former enterprise v3 format is gone. Tickets carry no
+ * enterprise metadata; a v3-prefixed token is not a collab ticket and never
+ * verifies.
  *
  * Pure functions only: the caller supplies `secret` explicitly (no implicit
  * `process.env` reads). This module is Node-only (`node:crypto`); import it
@@ -24,23 +24,17 @@ import { createHmac, timingSafeEqual } from 'node:crypto'
 
 export const COLLAB_TICKET_PREFIX = 'mega-collab.v1.' as const
 export const COLLAB_TICKET_PREFIX_V2 = 'mega-collab.v2.' as const
-export const COLLAB_TICKET_PREFIX_V3 = 'mega-collab.v3.' as const
 export const COLLAB_TICKET_TTL_MS = 3_600_000
-export const COLLAB_TICKET_V3_MAX_TTL_MS = 5 * 60_000
 
 export interface VerifiedCollabTicket {
   userId: string
   roomName: string | null
-  identityId?: string
-  authEpoch?: number
 }
 
 export interface MintCollabTicketOptions {
   nowMs?: number
   ttlMs?: number
   roomName?: string
-  identityId?: string
-  authEpoch?: number
 }
 
 function signBody(body: string, secret: string): string {
@@ -71,26 +65,11 @@ export function mintCollabTicket(
   requireNonEmpty(userId, 'userId')
   const nowMs = options?.nowMs ?? Date.now()
   const ttlMs = options?.ttlMs ?? COLLAB_TICKET_TTL_MS
-  const hasIdentity = options?.identityId !== undefined
-  const hasEpoch = options?.authEpoch !== undefined
-  if (hasIdentity !== hasEpoch) {
-    throw new Error('collab ticket identityId and authEpoch must be provided together')
-  }
   if (!Number.isSafeInteger(nowMs) || !Number.isSafeInteger(ttlMs) || ttlMs <= 0) {
     throw new Error('collab ticket nowMs and ttlMs must be positive safe integers')
   }
-  const expMs = nowMs + (hasIdentity ? Math.min(ttlMs, COLLAB_TICKET_V3_MAX_TTL_MS) : ttlMs)
+  const expMs = nowMs + ttlMs
   const roomName = options?.roomName
-  if (hasIdentity) {
-    const identityId = requireNonEmpty(options!.identityId!, 'identityId')
-    const authEpoch = options!.authEpoch!
-    if (!Number.isSafeInteger(authEpoch) || authEpoch < 0) {
-      throw new Error('collab ticket authEpoch must be a non-negative safe integer')
-    }
-    if (roomName !== undefined) requireNonEmpty(roomName, 'roomName')
-    const body = [userId, identityId, String(authEpoch), String(expMs), ...(roomName === undefined ? [] : [roomName])].join('.')
-    return `${COLLAB_TICKET_PREFIX_V3}${body}.${signBody(body, secret)}`
-  }
   if (roomName !== undefined) {
     requireNonEmpty(roomName, 'roomName')
     const body = `${userId}.${expMs}.${roomName}`
@@ -150,23 +129,6 @@ export function verifyCollabTicket(
     return { userId, roomName }
   }
 
-  const v3Body = parseSignedBody(trimmed, COLLAB_TICKET_PREFIX_V3, secret)
-  if (v3Body) {
-    const segments = v3Body.split('.')
-    if (segments.length !== 4 && segments.length !== 5) return null
-    const [userId, identityId, rawEpoch, rawExpMs, roomName] = segments
-    const authEpoch = Number(rawEpoch)
-    const expMs = parseExpMs(rawExpMs ?? '')
-    if (!userId || !identityId || !Number.isSafeInteger(authEpoch) || authEpoch < 0 || expMs === null || expMs < nowMs) return null
-    if (segments.length === 5 && !roomName) return null
-    return {
-      userId,
-      identityId,
-      authEpoch,
-      roomName: roomName ?? null,
-    }
-  }
-
   const v1Body = parseSignedBody(trimmed, COLLAB_TICKET_PREFIX, secret)
   if (!v1Body) return null
   const sep = v1Body.lastIndexOf('.')
@@ -179,5 +141,5 @@ export function verifyCollabTicket(
 
 export function isCollabTicket(token: string): boolean {
   const trimmed = token.trim()
-  return trimmed.startsWith(COLLAB_TICKET_PREFIX) || trimmed.startsWith(COLLAB_TICKET_PREFIX_V2) || trimmed.startsWith(COLLAB_TICKET_PREFIX_V3)
+  return trimmed.startsWith(COLLAB_TICKET_PREFIX) || trimmed.startsWith(COLLAB_TICKET_PREFIX_V2)
 }

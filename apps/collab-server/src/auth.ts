@@ -3,16 +3,10 @@
  * Doc authz is injectible so CS-01 does not import @megaui/engine (ADR-ARCH-01).
  */
 
-import {
-  resolveAuthMode,
-  type AuthMode,
-  type AuthModeSource,
-  type EnterprisePolicyResponse,
-} from "@megaui/core";
+import { resolveAuthMode, type AuthModeSource } from "@megaui/core";
 import { verifyCollabTicket } from "@megaui/core/collab/ticket";
 
 import { parseRoomName, type ParsedRoom } from "./rooms.js";
-import { assertCollabPolicyCompatible } from "./enterprise-policy.js";
 
 export type CollabDocAccessReason =
   | "unauthenticated"
@@ -35,17 +29,9 @@ export type ResolveDocAccess = (
 
 export interface CollabAuthContext {
   userId: string;
-  identityId?: string;
-  authEpoch?: number;
   room: ParsedRoom;
   role: string;
   readOnly: boolean;
-}
-
-export interface CollabPolicyCheck {
-  readonly localMode: AuthMode;
-  readonly policy: EnterprisePolicyResponse;
-  readonly qualify?: (input: { localUserId: string; identityId: string; authEpoch: number }) => Promise<boolean>;
 }
 
 export class CollabAuthError extends Error {
@@ -93,15 +79,13 @@ export function createMapDocAccess(
  * FSL-128: whether this collab process runs in Feishu mode, decided by
  * `resolveAuthMode` (FSL-116): `AUTH_MODE=enterprise` + `AUTH_PROVIDER=feishu`.
  *
- * In Feishu mode collab checks connections like `legacy` without a policy
- * bridge: the server never builds an enterprise policy bridge (even when
- * enterprise policy keys are set or one is injected) and passes no `policy` to
- * `authenticateCollabConnection`, so the ordinary collab ticket checks
- * (signature, expiry, room binding, document access) are the whole check and
- * no enterprise ticket fields are required. A combination `resolveAuthMode`
- * rejects (such as `legacy` + `feishu` or `enterprise` + `local`) throws its
- * `AuthModeError`, so the server refuses to start. Without `AUTH_PROVIDER` the
- * result is always `false` and the existing parsing is unchanged.
+ * FSL-134: this is the only mode check collab makes; the server calls it once
+ * at startup. Feishu and `legacy` check connections the same way, with the
+ * ordinary collab ticket checks (signature, expiry, room binding, document
+ * access) and no enterprise metadata. A combination `resolveAuthMode` rejects
+ * (such as `legacy` + `feishu`, `enterprise` without a provider, `maintenance`
+ * or an unknown mode) throws its `AuthModeError`, so the server refuses to
+ * start.
  */
 export function isFeishuCollabMode(source: AuthModeSource): boolean {
   const resolved = resolveAuthMode(source);
@@ -118,15 +102,7 @@ export async function authenticateCollabConnection(input: {
   secret?: string | null;
   resolveDocAccess?: ResolveDocAccess;
   nowMs?: number;
-  policy?: CollabPolicyCheck;
 }): Promise<CollabAuthContext> {
-  if (input.policy) {
-    try {
-      assertCollabPolicyCompatible(input.policy.localMode, input.policy.policy);
-    } catch {
-      throw new CollabAuthError("UNAUTHORIZED", "Enterprise policy is incompatible");
-    }
-  }
   const room = parseRoomName(input.documentName);
   if (!room) {
     throw new CollabAuthError("FORBIDDEN", `Unsupported room: ${input.documentName}`);
@@ -147,24 +123,6 @@ export async function authenticateCollabConnection(input: {
     throw new CollabAuthError("UNAUTHORIZED", "Invalid or expired collab ticket");
   }
 
-  if (input.policy && input.policy.localMode !== "legacy") {
-    if (!verified.identityId || verified.authEpoch === undefined ||
-      verified.authEpoch !== input.policy.policy.policy_epoch || !input.policy.qualify) {
-      throw new CollabAuthError("UNAUTHORIZED", "Enterprise collab ticket is stale");
-    }
-    let eligible: boolean;
-    try {
-      eligible = await input.policy.qualify({
-        localUserId: verified.userId,
-        identityId: verified.identityId,
-        authEpoch: verified.authEpoch,
-      });
-    } catch {
-      throw new CollabAuthError("UNAUTHORIZED", "Enterprise eligibility is unavailable");
-    }
-    if (!eligible) throw new CollabAuthError("UNAUTHORIZED", "Enterprise identity is not eligible");
-  }
-
   switch (room.kind) {
     case "collection": {
       // DEV_ALLOW is never consulted here (ADR-RT-02 / DEBT-RT-02).
@@ -176,7 +134,6 @@ export async function authenticateCollabConnection(input: {
       }
       return {
         userId: verified.userId,
-        ...(verified.identityId ? { identityId: verified.identityId, authEpoch: verified.authEpoch } : {}),
         room,
         role: "member",
         readOnly: true,
@@ -190,7 +147,6 @@ export async function authenticateCollabConnection(input: {
       }
       return {
         userId: verified.userId,
-        ...(verified.identityId ? { identityId: verified.identityId, authEpoch: verified.authEpoch } : {}),
         room,
         role: access.role,
         readOnly: access.readOnly,

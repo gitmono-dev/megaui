@@ -90,7 +90,6 @@ export function projectMega2Session(
   options: Readonly<{ feishuPrincipalChecked?: boolean }> = {},
 ): Mega2SessionProjection | null {
   if (!sameSession(session, actor) || !actor) return null;
-  if (actor.kind === "enterprise") return null;
   if (actor.kind === "feishu" && options.feishuPrincipalChecked !== true) return null;
   const name = actor.kind === "feishu"
     ? feishuMega2Principal(actor.userId)

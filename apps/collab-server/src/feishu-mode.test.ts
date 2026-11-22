@@ -5,30 +5,29 @@
  * tickets are accepted; AC3 invalid or expired tickets are rejected.
  * FSL-132 AC24/AC25: `maintenance` and `enterprise` without `AUTH_PROVIDER`
  * refuse to start with `INVALID_AUTH_PROVIDER` (FSL-128's AC4, the old
- * enterprise behaviour without a provider, is gone). Real Hocuspocus server +
- * provider clients.
+ * enterprise behaviour without a provider, is gone).
+ * FSL-134 AC6-AC9: in Feishu and legacy mode a valid ticket is accepted and an
+ * invalid or expired one is rejected; the enterprise policy bridge, the former
+ * v3 tickets and the startup mode check of the old policy module are gone, and
+ * the shared `resolveAuthMode` alone refuses an invalid pair at startup.
+ * Real Hocuspocus server + provider clients.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HocuspocusProvider } from "@hocuspocus/provider";
 import * as Y from "yjs";
 
+import { createHmac } from "node:crypto";
+
 import { AuthModeError } from "@megaui/core";
 import { mintCollabTicket } from "@megaui/core/collab/ticket";
 
 import { createMapDocAccess, isFeishuCollabMode } from "./auth";
-import { EnterprisePolicyError, type EnterprisePolicyBridge } from "./enterprise-policy";
 import { createCollabServer, type CollabServerHandle } from "./server";
 
 const SECRET = "fsl128-ticket-secret";
 const DOC_ROOM = "container:doc:fsl128";
 const CHANNEL_ROOM = "collection:channel:fsl128";
-const POLICY = {
-  schema_version: 1 as const,
-  effective_mode: "enterprise" as const,
-  policy_epoch: 4,
-  instance_id: "fsl128",
-  artifact_sha: "a".repeat(64),
-};
+/** Keys of the removed policy bridge; a leftover value must change nothing. */
 const ENTERPRISE_ENV = [
   "BETTER_AUTH_URL",
   "ENTERPRISE_INTROSPECTION_KEY",
@@ -82,15 +81,12 @@ function waitFor(predicate: () => boolean, timeoutMs = 5_000): Promise<void> {
   });
 }
 
-async function startServer(
-  extra: { enterprisePolicy?: EnterprisePolicyBridge } = {},
-): Promise<CollabServerHandle> {
+async function startServer(): Promise<CollabServerHandle> {
   const handle = createCollabServer({
     port: 0,
     quiet: true,
     ticketSecret: SECRET,
     resolveDocAccess: editorAccess,
-    ...extra,
   });
   handles.push(handle);
   await handle.listen();
@@ -123,15 +119,18 @@ async function connect(handle: CollabServerHandle, room: string, token: string):
   return { outcome: outcome!, doc };
 }
 
-function trackingBridge(): EnterprisePolicyBridge & {
-  read: ReturnType<typeof vi.fn>;
-  qualify: ReturnType<typeof vi.fn>;
-} {
-  return {
-    read: vi.fn(async () => POLICY),
-    qualify: vi.fn(async () => true),
-  };
+/** A correctly signed token in the removed v3 format (user, identity, epoch, expiry, room). */
+function formerV3Token(room: string): string {
+  const body = ["user-a", "identity-a", "4", String(Date.now() + 60_000), room].join(".");
+  return `mega-collab.v3.${body}.${createHmac("sha256", SECRET).update(body).digest("base64url")}`;
 }
+
+/** The two modes collab accepts, as `[label, AUTH_MODE, AUTH_PROVIDER]`. */
+const MODES = [
+  ["Feishu (enterprise + feishu)", "enterprise", "feishu"],
+  ["legacy (AUTH_MODE unset)", undefined, undefined],
+  ["legacy (legacy + local)", "legacy", "local"],
+] as const;
 
 describe("FSL-128 isFeishuCollabMode (resolveAuthMode)", () => {
   it.each([
@@ -177,22 +176,40 @@ describe("FSL-128 collab Feishu mode", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("AC1: leftover or partial enterprise policy keys do not build a bridge", async () => {
+  it("AC1: leftover or partial enterprise policy keys change nothing and contact no service", async () => {
     stubMode("enterprise", "feishu");
     vi.stubEnv("ENTERPRISE_INTROSPECTION_KEY", "fsl128-leftover-key");
     const fetchSpy = vi.spyOn(globalThis, "fetch");
-    const explicit = trackingBridge();
-    const handle = await startServer({ enterprisePolicy: explicit });
+    const handle = await startServer();
 
     const { outcome } = await connect(handle, DOC_ROOM, mintCollabTicket("user-a", SECRET, { roomName: DOC_ROOM }));
     expect(outcome).toBe("synced");
-    expect(explicit.read).not.toHaveBeenCalled();
-    expect(explicit.qualify).not.toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalled();
   });
+});
 
-  it("AC2: accepts valid ordinary tickets without enterprise fields (v1/v2, document and channel rooms)", async () => {
-    stubMode("enterprise", "feishu");
+describe.each(MODES)("FSL-134 collab in %s mode", (_label, mode, provider) => {
+  it("ignores the full old policy configuration: starts, never fetches, /health has no policy fields", async () => {
+    stubMode(mode, provider);
+    vi.stubEnv("BETTER_AUTH_URL", "http://127.0.0.1:1");
+    vi.stubEnv("ENTERPRISE_INTROSPECTION_KEY", "fsl134-leftover-key");
+    vi.stubEnv("ENTERPRISE_DB_INSTANCE_ID", "fsl134");
+    vi.stubEnv("ENTERPRISE_ARTIFACT_SHA", "a".repeat(64));
+    vi.stubEnv("ENTERPRISE_COLLAB_REVOKE_KEY", "fsl134-leftover-revoke-key");
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const handle = await startServer();
+
+    const { outcome } = await connect(handle, DOC_ROOM, mintCollabTicket("user-a", SECRET, { roomName: DOC_ROOM }));
+    expect(outcome).toBe("synced");
+    expect(fetchSpy).not.toHaveBeenCalled();
+    const health = await fetch(httpUrl(handle, "/health"));
+    expect(health.status).toBe(200);
+    expect(Object.keys(await health.json() as Record<string, unknown>).sort())
+      .toEqual(["connections", "documents", "ok", "service"]);
+  });
+
+  it("AC6/AC7: accepts valid ordinary tickets (v1/v2, document and channel rooms)", async () => {
+    stubMode(mode, provider);
     const handle = await startServer();
 
     const a = await connect(handle, DOC_ROOM, mintCollabTicket("user-a", SECRET));
@@ -207,26 +224,44 @@ describe("FSL-128 collab Feishu mode", () => {
     expect(handle.connectionCount()).toBe(3);
   });
 
-  it("AC3: rejects invalid or expired tickets", async () => {
-    stubMode("enterprise", "feishu");
+  it("AC8: rejects invalid tickets, including a correctly signed one in the former v3 format", async () => {
+    stubMode(mode, provider);
     const handle = await startServer();
-    const hourAgo = Date.now() - 2 * 3_600_000;
 
     const rejected: Array<[string, string]> = [
       [DOC_ROOM, "not-a-ticket"],
       [DOC_ROOM, ""],
       [DOC_ROOM, mintCollabTicket("user-a", "another-secret", { roomName: DOC_ROOM })],
-      [DOC_ROOM, mintCollabTicket("user-a", SECRET, { roomName: DOC_ROOM, nowMs: hourAgo })],
-      [DOC_ROOM, mintCollabTicket("user-a", SECRET, { nowMs: hourAgo })],
       [CHANNEL_ROOM, mintCollabTicket("user-a", SECRET, { roomName: "collection:channel:other" })],
       // Valid signature but no document access is still refused.
       ["container:doc:no-access", mintCollabTicket("user-a", SECRET, { roomName: "container:doc:no-access" })],
+      [DOC_ROOM, formerV3Token(DOC_ROOM)],
+      [CHANNEL_ROOM, formerV3Token(CHANNEL_ROOM)],
     ];
     const valid = mintCollabTicket("user-a", SECRET, { roomName: DOC_ROOM });
     const tampered = `${valid.slice(0, -2)}${valid.endsWith("AA") ? "BB" : "AA"}`;
     rejected.push([DOC_ROOM, tampered]);
 
     for (const [room, token] of rejected) {
+      const { outcome } = await connect(handle, room, token);
+      expect(outcome, `${room} ${token.slice(0, 16)}`).toBe("rejected");
+    }
+    expect(handle.connectionCount()).toBe(0);
+  });
+
+  it("AC9: rejects expired tickets (v1 and v2, document and channel rooms)", async () => {
+    stubMode(mode, provider);
+    const handle = await startServer();
+    const twoHoursAgo = Date.now() - 2 * 3_600_000;
+    const justExpired = { nowMs: Date.now() - 2_000, ttlMs: 1_000 };
+
+    const expired: Array<[string, string]> = [
+      [DOC_ROOM, mintCollabTicket("user-a", SECRET, { nowMs: twoHoursAgo })],
+      [DOC_ROOM, mintCollabTicket("user-a", SECRET, { roomName: DOC_ROOM, nowMs: twoHoursAgo })],
+      [DOC_ROOM, mintCollabTicket("user-a", SECRET, justExpired)],
+      [CHANNEL_ROOM, mintCollabTicket("user-a", SECRET, { roomName: CHANNEL_ROOM, ...justExpired })],
+    ];
+    for (const [room, token] of expired) {
       const { outcome } = await connect(handle, room, token);
       expect(outcome).toBe("rejected");
     }
@@ -257,27 +292,33 @@ describe("FSL-132 collab refuses maintenance and enterprise without AUTH_PROVIDE
     expect((error as AuthModeError).code).toBe("INVALID_AUTH_PROVIDER");
   });
 
-  it("AC25: even with the full old policy configuration and an injected bridge it refuses before any policy read", () => {
+  it("AC25: even with the full old policy configuration it refuses without contacting any service", () => {
     stubMode("enterprise", undefined);
     vi.stubEnv("BETTER_AUTH_URL", "http://127.0.0.1:1");
     vi.stubEnv("ENTERPRISE_INTROSPECTION_KEY", "fsl132-key");
     vi.stubEnv("ENTERPRISE_DB_INSTANCE_ID", "fsl132");
     vi.stubEnv("ENTERPRISE_ARTIFACT_SHA", "a".repeat(64));
-    const bridge = trackingBridge();
-    let error: unknown;
-    try {
-      handles.push(createCollabServer({ port: 0, quiet: true, ticketSecret: SECRET, enterprisePolicy: bridge }));
-    } catch (caught) {
-      error = caught;
-    }
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const error = startupError();
     expect(error).toBeInstanceOf(AuthModeError);
     expect((error as AuthModeError).code).toBe("INVALID_AUTH_PROVIDER");
-    expect(bridge.read).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("an unknown AUTH_MODE still fails with the existing error", () => {
-    stubMode("bogus", undefined);
-    expect(startupError()).toBeInstanceOf(EnterprisePolicyError);
+  it("FSL-134: an unknown AUTH_MODE is refused at startup by resolveAuthMode with INVALID_AUTH_MODE", () => {
+    for (const mode of ["bogus", "Enterprise", "LEGACY"]) {
+      stubMode(mode, undefined);
+      const error = startupError();
+      expect(error, mode).toBeInstanceOf(AuthModeError);
+      expect((error as AuthModeError).code, mode).toBe("INVALID_AUTH_MODE");
+    }
+  });
+
+  it("FSL-134: an unknown AUTH_PROVIDER is refused at startup with INVALID_AUTH_PROVIDER", () => {
+    stubMode("bogus", "other");
+    const error = startupError();
+    expect(error).toBeInstanceOf(AuthModeError);
+    expect((error as AuthModeError).code).toBe("INVALID_AUTH_PROVIDER");
   });
 
   it("legacy still starts", async () => {

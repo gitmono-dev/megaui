@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { HocuspocusProvider } from "@hocuspocus/provider";
 import * as Y from "yjs";
 
@@ -146,5 +146,70 @@ describe("internal collection append/bump (RT-06)", () => {
       body: JSON.stringify({ roomName: "collection:channel:chn-1", childId: "" }),
     });
     expect(empty.status).toBe(400);
+  });
+});
+
+describe("FSL-134: the user-revocation endpoint is removed", () => {
+  let handle: CollabServerHandle | null = null;
+  const REVOKE_KEY = "fsl134-old-revoke-key";
+
+  afterEach(async () => {
+    vi.unstubAllEnvs();
+    if (handle) {
+      await handle.destroy();
+      handle = null;
+    }
+  });
+
+  it("AC3: POST /internal/revoke returns 404 and closes no connection", async () => {
+    // A leftover revocation key in the environment grants nothing.
+    vi.stubEnv("ENTERPRISE_COLLAB_REVOKE_KEY", REVOKE_KEY);
+    handle = createCollabServer({ port: 0, quiet: true, ticketSecret: SECRET });
+    await handle.listen();
+    const { httpBase, wsUrl } = boundHttpBase(handle);
+    const roomName = "collection:channel:fsl134";
+
+    const provider = new HocuspocusProvider({
+      url: wsUrl,
+      name: roomName,
+      document: new Y.Doc(),
+      token: mintCollabTicket("member-1", SECRET, { roomName }),
+    });
+    await waitFor(() => provider.synced);
+    expect(handle.connectionCount()).toBe(1);
+
+    const body = JSON.stringify({ userId: "member-1", authEpoch: 1 });
+    // Whatever the caller presents (no bearer, the internal token, the old
+    // revocation key, a wrong token) and whatever the method, the path is 404.
+    const attempts: Array<[string, Record<string, string>]> = [
+      ["POST", {}],
+      ["POST", { Authorization: `Bearer ${SECRET}` }],
+      ["POST", { Authorization: `Bearer ${REVOKE_KEY}` }],
+      ["POST", { Authorization: "Bearer wrong-token" }],
+      ["GET", { Authorization: `Bearer ${SECRET}` }],
+    ];
+    for (const [method, auth] of attempts) {
+      const revoke = await fetch(`${httpBase}/internal/revoke`, {
+        method,
+        headers: { ...auth, "Content-Type": "application/json" },
+        ...(method === "POST" ? { body } : {}),
+      });
+      expect(revoke.status, `${method} ${Object.keys(auth).join()}`).toBe(404);
+      expect(await revoke.json()).toEqual({
+        error: { code: "NOT_FOUND", message: "Unknown internal path: /internal/revoke" },
+      });
+    }
+
+    // The existing internal routes still require the internal token.
+    const unauthorized = await fetch(`${httpBase}/internal/reset`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${REVOKE_KEY}` },
+    });
+    expect(unauthorized.status).toBe(401);
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(provider.synced).toBe(true);
+    expect(handle.connectionCount()).toBe(1);
+    provider.destroy();
   });
 });

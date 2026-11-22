@@ -6,23 +6,22 @@
 import { timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Hocuspocus } from "@hocuspocus/server";
-import {
-  COLLECTION_CHILD_IDS_KEY,
-  COLLECTION_REVISION_KEY,
-  type EnterprisePolicyResponse,
-} from "@megaui/core";
+import { COLLECTION_CHILD_IDS_KEY, COLLECTION_REVISION_KEY } from "@megaui/core";
 
 import { parseRoomName } from "./rooms.js";
 
 export interface InternalApiOptions {
   getToken: () => string | undefined;
-  /** Independent credential for user revocation; never falls back to getToken. */
-  getRevokeToken?: () => string | undefined;
   getHocuspocus: () => Hocuspocus;
   getStats?: () => { documents: number; connections: number };
-  getPolicy?: () => Promise<EnterprisePolicyResponse | null>;
-  revokeUser?: (userId: string, authEpoch: number) => number;
 }
+
+/** The internal routes; each needs the internal bearer token. */
+const INTERNAL_POST_PATHS: ReadonlySet<string> = new Set([
+  "/internal/reset",
+  "/internal/collection/append",
+  "/internal/collection/bump",
+]);
 
 function readBearer(header: string | undefined): string | null {
   if (!header) return null;
@@ -97,25 +96,11 @@ export async function handleInternalRequest(
 
   if (request.method === "GET" && (path === "/health" || path === "/internal/health")) {
     const stats = options.getStats?.() ?? { documents: 0, connections: 0 };
-    let policy: EnterprisePolicyResponse | null = null;
-    if (options.getPolicy) {
-      try {
-        policy = await options.getPolicy();
-      } catch {
-        sendJson(response, 503, { error: { code: "ENTERPRISE_POLICY_UNAVAILABLE" } });
-        return true;
-      }
-      if (!policy) {
-        sendJson(response, 503, { error: { code: "ENTERPRISE_POLICY_UNAVAILABLE" } });
-        return true;
-      }
-    }
     sendJson(response, 200, {
       ok: true,
       service: "megaui-collab",
       documents: stats.documents,
       connections: stats.connections,
-      ...(policy ? { effective_mode: policy.effective_mode, policy_epoch: policy.policy_epoch } : {}),
     });
     return true;
   }
@@ -124,26 +109,17 @@ export async function handleInternalRequest(
     return false;
   }
 
-  const expected = options.getToken();
-  if (request.method === "POST" && path === "/internal/revoke") {
-    const revokeToken = options.getRevokeToken?.();
-    if (!requireInternalAuth(request, revokeToken)) {
-      sendJson(response, 401, { error: { code: "UNAUTHORIZED", message: "Invalid internal token" } });
-      return true;
-    }
-    const body = await readJsonBody(request, 4 * 1024);
-    const record = asRecord(body);
-    if (!record || Object.keys(record).sort().join(",") !== "authEpoch,userId" ||
-      typeof record.userId !== "string" || record.userId.trim() === "" || record.userId.length > 256 ||
-      typeof record.authEpoch !== "number" || !Number.isSafeInteger(record.authEpoch) || record.authEpoch < 0) {
-      sendJson(response, 400, { error: { code: "BAD_REQUEST", message: "Invalid revocation request" } });
-      return true;
-    }
-    const closed = options.revokeUser?.(record.userId, record.authEpoch) ?? 0;
-    sendJson(response, 200, { data: { revoked: true, closed } });
+  // FSL-134: only the routes below exist (there is no user-revocation
+  // endpoint). Any other method and path is 404 for every caller, with or
+  // without a token; every existing route still needs the internal token.
+  if (request.method !== "POST" || !INTERNAL_POST_PATHS.has(path)) {
+    sendJson(response, 404, {
+      error: { code: "NOT_FOUND", message: `Unknown internal path: ${path}` },
+    });
     return true;
   }
 
+  const expected = options.getToken();
   if (!requireInternalAuth(request, expected)) {
     sendJson(response, 401, {
       error: { code: "UNAUTHORIZED", message: "Invalid internal token" },

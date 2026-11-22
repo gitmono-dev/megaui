@@ -5,6 +5,8 @@
 // - Returns `{ token, userId, expiresAtMs }` only (no displayName/publicUrl).
 // - Optional `?room=collection:channel:{id}` mints a v2 ticket after
 //   `assertCanAccessChannel` (ADR-RT-03). Illegal rooms are 400.
+// - FSL-134: legacy and Feishu actors both get an ordinary ticket; there is no
+//   enterprise metadata branch.
 
 import { parseCollectionChannelRoomName } from "@megaui/core";
 import { MegaBadRequestError, MegaUnauthorizedError } from "@megaui/engine";
@@ -18,26 +20,11 @@ import { invalidRoute, only } from "./shared";
 export interface CollabSessionContext {
   readonly userId: string;
   readonly username: string;
-  readonly enterprise?: Readonly<{ identityId: string; authEpoch: number }>;
 }
 
 export function buildCollabSessionContext(actor: WebActor): CollabSessionContext {
-  const username = actor.kind === "enterprise"
-    ? actor.backendUsername
-    : actor.email ?? actor.userId;
+  const username = actor.email ?? actor.userId;
   if (!username?.trim()) throw new MegaUnauthorizedError("Missing backend username for collab");
-  if (actor.kind === "enterprise") {
-    const identityId = actor.identityId?.trim();
-    const authEpoch = actor.authEpoch;
-    if (!identityId || typeof authEpoch !== "number" || !Number.isSafeInteger(authEpoch) || authEpoch < 0) {
-      throw new MegaUnauthorizedError("Missing enterprise collab metadata");
-    }
-    return {
-      userId: actor.userId,
-      username,
-      enterprise: { identityId, authEpoch },
-    };
-  }
   return { userId: actor.userId, username };
 }
 
@@ -57,9 +44,7 @@ async function dispatchCollabTokenGet(context: MegaDispatchContext): Promise<unk
   const userId = sessionContext.userId;
   const room = searchParams.get("room")?.trim();
   if (!room) {
-    return getCollabDomain().token.mintForSession(sessionContext, sessionContext.enterprise
-      ? { enterprise: sessionContext.enterprise }
-      : undefined);
+    return getCollabDomain().token.mintForSession(sessionContext);
   }
 
   const channelId = parseCollectionChannelRoomName(room);
@@ -68,10 +53,7 @@ async function dispatchCollabTokenGet(context: MegaDispatchContext): Promise<unk
   }
 
   await getChatDomain().members.assertCanAccessChannel(channelId, userId);
-  return getCollabDomain().token.mintForSession(sessionContext, {
-    roomName: room,
-    ...(sessionContext.enterprise ? { enterprise: sessionContext.enterprise } : {}),
-  });
+  return getCollabDomain().token.mintForSession(sessionContext, { roomName: room });
 }
 
 registerMegaRoute({

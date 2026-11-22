@@ -9,7 +9,6 @@ import {
 
 export {
   createCollabTokenService,
-  type CollabEnterpriseTicketMetadata,
   type CollabTokenConfig,
   type CollabTokenEnv,
   type CollabTokenService,

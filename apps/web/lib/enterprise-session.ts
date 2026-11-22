@@ -21,16 +21,9 @@ export interface WebSessionSnapshot {
 }
 
 export interface WebActor {
-  /**
-   * `resolveWebActor` produces only `legacy` and `feishu` (FSL-132). The `enterprise`
-   * member stays in the type until FSL-134 removes the enterprise branch of
-   * `adapter/handlers/collab-token.ts`, which still compares against it.
-   */
-  readonly kind: "legacy" | "enterprise" | "feishu";
+  /** `resolveWebActor` produces only these two kinds (FSL-132, FSL-134). */
+  readonly kind: "legacy" | "feishu";
   readonly userId: string;
-  readonly identityId?: string;
-  readonly authEpoch?: number;
-  readonly backendUsername?: string;
   readonly email?: string | null;
   readonly sessionId: string;
 }

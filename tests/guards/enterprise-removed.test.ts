@@ -144,3 +144,52 @@ describe("FSL-133: the @megaui/auth enterprise plugin removed", () => {
     }
   });
 });
+
+describe("FSL-134: collab enterprise metadata removed", () => {
+  // AC1, AC2 and the card's other deletions: these exact paths are gone.
+  const deletedPaths = [
+    ["AC1", "apps/collab-server/src/enterprise-policy.ts"],
+    ["AC2", "apps/collab-server/src/enterprise-revalidation.ts"],
+    ["write set", "apps/collab-server/src/enterprise-revoke.integration.test.ts"],
+    ["write set", "apps/collab-server/src/enterprise-ticket.test.ts"],
+  ] as const;
+
+  it.each(deletedPaths)("%s: %s does not exist", (_ac, path) => {
+    expect(existsSync(join(ROOT, path)), path).toBe(false);
+  });
+
+  // AC10: the card's zero-hit guard, run exactly as written in the card.
+  const PATTERN = "enterprise-policy|enterprise-revalidation|ENTERPRISE_COLLAB_REVOKE_KEY|authEpoch|identityId|/internal/revoke";
+  const TARGETS = ["apps/collab-server/src", "packages/core/src/collab", "packages/engine/src/services/collab",
+    "apps/web/lib/adapter/handlers/collab-token.ts"];
+  const guardArgs = ["-n", PATTERN, ...TARGETS, "--glob", "!**/*.test.ts", "--glob", "!**/*.spec.ts", "--glob", "!**/tests/**"];
+
+  it("AC10: the rg guard over the collab link finds nothing (exit 1)", () => {
+    const result = rg(guardArgs, ROOT);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toBe("");
+    expect(result.status).toBe(1);
+  });
+
+  it("AC10: the same rg guard reports a planted hit (exit 0) and ignores tests (exit 1)", () => {
+    const fixture = mkdtempSync(join(tmpdir(), "megaui-enterprise-removed-"));
+    try {
+      const collab = join(fixture, "apps/collab-server/src");
+      mkdirSync(collab, { recursive: true });
+      mkdirSync(join(fixture, "packages/core/src/collab/tests"), { recursive: true });
+      mkdirSync(join(fixture, "packages/engine/src/services/collab"), { recursive: true });
+      mkdirSync(join(fixture, "apps/web/lib/adapter/handlers"), { recursive: true });
+      writeFileSync(join(fixture, "apps/web/lib/adapter/handlers/collab-token.ts"), "export const ok = true\n");
+      writeFileSync(join(collab, "internal-api.test.ts"), "expect('/internal/revoke').toBeTruthy()\n");
+      writeFileSync(join(fixture, "packages/core/src/collab/ticket.spec.ts"), "const authEpoch = 1\n");
+      writeFileSync(join(fixture, "packages/core/src/collab/tests/a.ts"), "const identityId = 'x'\n");
+      expect(rg(guardArgs, fixture).status).toBe(1);
+      writeFileSync(join(fixture, "packages/engine/src/services/collab/token.ts"), "export const identityId = 'x'\n");
+      const hit = rg(guardArgs, fixture);
+      expect(hit.status).toBe(0);
+      expect(hit.stdout).toContain("packages/engine/src/services/collab/token.ts");
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+});

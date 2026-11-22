@@ -3,7 +3,6 @@
  */
 
 import { Server, type Hocuspocus } from "@hocuspocus/server";
-import type { EnterprisePolicyResponse } from "@megaui/core";
 
 import {
   allowAuthenticatedEditor,
@@ -14,13 +13,6 @@ import {
   type CollabAuthContext,
   type ResolveDocAccess,
 } from "./auth.js";
-import {
-  bridgeFromEnvironment,
-  policyForCollabMode,
-  resolveCollabAuthMode,
-  type EnterprisePolicyBridge,
-} from "./enterprise-policy.js";
-import { createEnterpriseRevalidator, type RevalidationConnection } from "./enterprise-revalidation.js";
 import { handleInternalRequest } from "./internal-api.js";
 
 export interface CollabServerOptions {
@@ -33,16 +25,6 @@ export interface CollabServerOptions {
   ticketSecret?: string;
   maxDocuments?: number;
   maxConnections?: number;
-  /**
-   * Override the Web policy bridge in tests or an explicitly wired host.
-   * Ignored in Feishu mode (`AUTH_MODE=enterprise` + `AUTH_PROVIDER=feishu`,
-   * FSL-128), which never uses a policy bridge.
-   */
-  enterprisePolicy?: EnterprisePolicyBridge;
-  /** Independent credential for the internal user-revoke endpoint. */
-  revokeToken?: string;
-  /** Test-only clock interval override; production remains 15 seconds. */
-  revalidationIntervalMs?: number;
 }
 
 export interface CollabServerHandle {
@@ -95,73 +77,21 @@ export function createCollabServer(options: CollabServerOptions = {}): CollabSer
   );
   const resolveDocAccess = resolveDefaultAuthz(options.resolveDocAccess);
   const ticketSecret = options.ticketSecret;
-  const localMode = resolveCollabAuthMode();
-  // FSL-128: Feishu mode never uses an enterprise policy bridge (unlike legacy,
-  // which still does when policy keys are set or one is injected), so there is
-  // no policy read, revalidation or enterprise ticket field; every connection
-  // is checked as an ordinary collab ticket, as in legacy without a bridge.
+  // FSL-134: the mode is resolved once, here, by the shared rule set
+  // (`resolveAuthMode` via `isFeishuCollabMode`). A pair it refuses throws its
+  // `AuthModeError`, so the server is never built. Feishu and legacy then check
+  // every connection the same way: an ordinary collab ticket, no enterprise
+  // metadata, no policy reads.
   const feishuMode = isFeishuCollabMode({
     AUTH_MODE: process.env.AUTH_MODE,
     AUTH_PROVIDER: process.env.AUTH_PROVIDER,
   });
-  const policyBridge = feishuMode
-    ? undefined
-    : options.enterprisePolicy ?? bridgeFromEnvironment();
-
-  const readPolicy = async (): Promise<EnterprisePolicyResponse | null> => {
-    if (!policyBridge) return null;
-    const policy = await policyBridge.read();
-    return policyForCollabMode(localMode, policy);
-  };
 
   let hocuspocusRef: Hocuspocus | null = null;
   let connectionTotal = 0;
-  const revokedEpochs = new Map<string, number>();
 
   const documentCount = (): number => hocuspocusRef?.documents.size ?? 0;
   const connectionCount = (): number => connectionTotal;
-
-  const listConnections = (): readonly RevalidationConnection[] => {
-    if (!hocuspocusRef) return [];
-    const connections: RevalidationConnection[] = [];
-    for (const document of hocuspocusRef.documents.values()) {
-      for (const connection of document.getConnections()) {
-        const context = connection.context as CollabAuthContext;
-        connections.push({
-          userId: context.userId,
-          ...(context.identityId ? { identityId: context.identityId, authEpoch: context.authEpoch } : {}),
-          close: () => connection.close(),
-        });
-      }
-    }
-    return connections;
-  };
-
-  const revokeUser = (userId: string, authEpoch: number): number => {
-    const previous = revokedEpochs.get(userId);
-    if (previous !== undefined && previous >= authEpoch) return 0;
-    revokedEpochs.set(userId, authEpoch);
-    let closed = 0;
-    for (const connection of listConnections()) {
-      if (connection.userId !== userId ||
-        (connection.authEpoch !== undefined && connection.authEpoch > authEpoch)) continue;
-      connection.close();
-      closed += 1;
-    }
-    return closed;
-  };
-
-  const revalidator = policyBridge ? createEnterpriseRevalidator({
-    localMode,
-    readPolicy: async () => {
-      const policy = await readPolicy();
-      if (!policy) throw new Error("ENTERPRISE_POLICY_UNAVAILABLE");
-      return policy;
-    },
-    qualify: policyBridge.qualify,
-    listConnections,
-    intervalMs: options.revalidationIntervalMs,
-  }) : undefined;
 
   const server = new Server<CollabAuthContext>({
     name: "megaui-collab",
@@ -175,7 +105,6 @@ export function createCollabServer(options: CollabServerOptions = {}): CollabSer
     timeout: 60_000,
     async onAuthenticate(data) {
       try {
-        const policy = await readPolicy();
         if (connectionTotal >= maxConnections) {
           throw new Error("Collab connection limit reached");
         }
@@ -187,19 +116,7 @@ export function createCollabServer(options: CollabServerOptions = {}): CollabSer
           token: data.token,
           secret: ticketSecret,
           resolveDocAccess,
-          ...(policy ? {
-            policy: {
-              localMode,
-              policy,
-              ...(policyBridge?.qualify ? { qualify: policyBridge.qualify } : {}),
-            },
-          } : {}),
         });
-        const revokedEpoch = revokedEpochs.get(context.userId);
-        if (revokedEpoch !== undefined &&
-          (context.authEpoch === undefined || context.authEpoch <= revokedEpoch)) {
-          throw new Error("Collab user has been revoked");
-        }
         if (context.readOnly) {
           data.connectionConfig.readOnly = true;
         }
@@ -222,7 +139,6 @@ export function createCollabServer(options: CollabServerOptions = {}): CollabSer
     async onRequest({ request, response }) {
       const handled = await handleInternalRequest(request, response, {
         getToken: () => ticketSecret ?? process.env.MEGA_COLLAB_INTERNAL_TOKEN,
-        getRevokeToken: () => options.revokeToken ?? process.env.ENTERPRISE_COLLAB_REVOKE_KEY,
         getHocuspocus: () => {
           if (!hocuspocusRef) throw new Error("Hocuspocus not ready");
           return hocuspocusRef;
@@ -231,8 +147,6 @@ export function createCollabServer(options: CollabServerOptions = {}): CollabSer
           documents: documentCount(),
           connections: connectionCount(),
         }),
-        getPolicy: policyBridge ? readPolicy : undefined,
-        revokeUser,
       });
       if (handled) {
         return Promise.reject();
@@ -247,16 +161,13 @@ export function createCollabServer(options: CollabServerOptions = {}): CollabSer
   const destroy = async (): Promise<void> => {
     if (shuttingDown) return;
     shuttingDown = true;
-    revalidator?.stop();
     await server.destroy();
   };
 
   const listen = async (): Promise<void> => {
-    if (policyBridge) await readPolicy();
     await server.listen();
-    revalidator?.start();
     console.log(
-      `[collab-server] listening on ${port} (debounce=${debounce}ms maxDocs=${maxDocuments} maxConn=${maxConnections})`,
+      `[collab-server] listening on ${port} (mode=${feishuMode ? "feishu" : "legacy"} debounce=${debounce}ms maxDocs=${maxDocuments} maxConn=${maxConnections})`,
     );
   };
 

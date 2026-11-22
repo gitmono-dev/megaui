@@ -15,10 +15,11 @@
 // - Drops `assertCanJoinCollab` (upstream's ADR-CE-11 open-editor gate on
 //   minting itself); this repo's `createCollabAuthzService` (`authz.ts`)
 //   judges per-document access only at write time (EG-13 AC2).
+// - FSL-134: tickets carry no enterprise metadata; every session gets an
+//   ordinary v1 (or channel-bound v2) ticket.
 import { parseCollectionChannelRoomName } from "@megaui/core";
 import {
   COLLAB_TICKET_TTL_MS,
-  COLLAB_TICKET_V3_MAX_TTL_MS,
   mintCollabTicket,
   verifyCollabTicket,
 } from "@megaui/core/collab/ticket";
@@ -35,11 +36,6 @@ export interface CollabTokenConfig {
   env?: CollabTokenEnv;
   nowMs?: number;
   ttlMs?: number;
-}
-
-export interface CollabEnterpriseTicketMetadata {
-  readonly identityId: string;
-  readonly authEpoch: number;
 }
 
 export interface MintedCollabToken {
@@ -80,29 +76,21 @@ export function createCollabTokenService(config?: CollabTokenConfig) {
 
   function mintForSession(
     session: Partial<SessionContext> | null | undefined,
-    options?: { roomName?: string; enterprise?: CollabEnterpriseTicketMetadata },
+    options?: { roomName?: string },
   ): MintedCollabToken {
     const { userId } = requireSession(session);
     const secret = secretOrThrow();
     const nowMs = config?.nowMs ?? Date.now();
-    const enterprise = options?.enterprise;
-    const ttlMs = enterprise
-      ? Math.min(config?.ttlMs ?? COLLAB_TICKET_V3_MAX_TTL_MS, COLLAB_TICKET_V3_MAX_TTL_MS)
-      : config?.ttlMs ?? COLLAB_TICKET_TTL_MS;
+    const ttlMs = config?.ttlMs ?? COLLAB_TICKET_TTL_MS;
     const roomName = options?.roomName?.trim();
     if (roomName) {
       if (!parseCollectionChannelRoomName(roomName)) {
         throw new MegaBadRequestError("Invalid collab room");
       }
-      const token = mintCollabTicket(userId, secret, {
-        nowMs,
-        ttlMs,
-        roomName,
-        ...(enterprise ?? {}),
-      });
+      const token = mintCollabTicket(userId, secret, { nowMs, ttlMs, roomName });
       return { token, userId, expiresAtMs: nowMs + ttlMs };
     }
-    const token = mintCollabTicket(userId, secret, { nowMs, ttlMs, ...(enterprise ?? {}) });
+    const token = mintCollabTicket(userId, secret, { nowMs, ttlMs });
     return { token, userId, expiresAtMs: nowMs + ttlMs };
   }
 
