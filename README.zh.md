@@ -23,7 +23,7 @@ megaui 目前是**预发布版本（`0.x`）**：核心工作区已可使用，�
 | Web 应用 | Next.js（App Router），服务端 BFF 位于 `apps/web/app/api/mega/**` |
 | 实时协作 | Hocuspocus 协作服务（`apps/collab-server`，默认端口 `7002`） |
 | 数据 | 通过 Drizzle ORM 使用 PostgreSQL；上传使用 S3 兼容对象存储 |
-| 认证 | [Better Auth](https://www.better-auth.com)：邮箱密码，可选 Google 与 GitHub；**企业模式**支持飞书私聊配对登录 |
+| 认证 | [Better Auth](https://www.better-auth.com)：邮箱密码，可选 Google 与 GitHub；**飞书登录**（`AUTH_MODE=enterprise`、`AUTH_PROVIDER=feishu`）以飞书发送的邮箱验证码登录 |
 | 语言 | 英文与简体中文（`en`、`zh-CN`） |
 | 后端 | [mega2](https://github.com/gitmono-dev/mega2)（OpenAPI 契约） |
 | 测试 | Vitest 单元与契约测试，Playwright E2E |
@@ -94,9 +94,9 @@ docker build -f apps/collab-server/Dockerfile -t megaui-collab:local .
 
 **双仓协同发布：** mega2 与 MegaUI 使用同一稳定版本号。发布前两个仓库必须存在同名 tag，且最新 `main` CI 均为 `success`。任一仓库缺少同名 tag、CI 运行中或失败时，`release-gate` 会阻止镜像发布。
 
-### 企业登录（可选）
+### 飞书登录（可选）
 
-设置 `AUTH_MODE=enterprise` 后，密码登录被飞书私聊配对取代：用户向机器人发送一次性 `/login` 指令，再输入机器人返回的 8 位验证码。本地开发可使用 `apps/feishu-mock` 提供的回环模拟器，无需真实的飞书租户。详见[企业身份：配置合同](docs/implementation/enterprise-auth.md)与[飞书 Mock](docs/implementation/feishu-simulator.md)。
+设置 `AUTH_MODE=enterprise` 与 `AUTH_PROVIDER=feishu`（并配置 `FEISHU_APP_ID`、`FEISHU_APP_SECRET` 与 `ENTERPRISE_OTP_HMAC_KEY`）后，密码登录被飞书登录取代：`/[lang]/signin` 转到 `/[lang]/signin/feishu`，用户输入工作邮箱，再输入飞书机器人通过私聊发送的 8 位验证码。此模式下注册、找回密码与重置密码页面返回 404。本地开发可设置 `FEISHU_PROVIDER=simulator` 与 `FEISHU_SIMULATOR_ORIGIN`，使用 `apps/feishu-mock` 提供的回环模拟器，无需真实的飞书租户。详见[飞书邮箱验证码登录](docs/implementation/feishu-login.md)与[飞书 Mock](docs/implementation/feishu-simulator.md)。
 
 ## 开发
 

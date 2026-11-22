@@ -23,7 +23,7 @@ Start with the [Quick start](#quick-start), then see the [Configuration referenc
 | Web app | Next.js (App Router) with a server-side BFF under `apps/web/app/api/mega/**` |
 | Real-time | Hocuspocus collaboration server (`apps/collab-server`, default port `7002`) |
 | Data | PostgreSQL via Drizzle ORM; S3-compatible object storage for uploads |
-| Authentication | [Better Auth](https://www.better-auth.com): email and password, optional Google and GitHub; **enterprise mode** with Feishu private-chat pairing |
+| Authentication | [Better Auth](https://www.better-auth.com): email and password, optional Google and GitHub; **Feishu sign-in** (`AUTH_MODE=enterprise`, `AUTH_PROVIDER=feishu`) with an email code sent over Feishu |
 | Languages | English and Simplified Chinese (`en`, `zh-CN`) |
 | Backend | [mega2](https://github.com/gitmono-dev/mega2) (OpenAPI contract) |
 | Tests | Vitest unit and contract tests, Playwright E2E |
@@ -94,9 +94,9 @@ Pushing a stable `v<major>.<minor>.<patch>` tag runs `.github/workflows/docker.y
 
 **Coordinated releases:** mega2 and MegaUI use the same stable version number. Before publishing, both repositories must have the same tag and successful latest CI on `main`. The `release-gate` job blocks image publication if either repository is missing the matching tag or has failing or incomplete CI.
 
-### Enterprise sign-in (optional)
+### Feishu sign-in (optional)
 
-Set `AUTH_MODE=enterprise` to replace password sign-in with Feishu private-chat pairing: the user sends a one-time `/login` command to the bot and enters the 8-character code it returns. For local development, `apps/feishu-mock` provides a loopback simulator so no real Feishu tenant is needed. See [Enterprise identity: configuration contract](docs/implementation/enterprise-auth.md) and [Feishu mock](docs/implementation/feishu-simulator.md) (Chinese).
+Set `AUTH_MODE=enterprise` and `AUTH_PROVIDER=feishu` (plus `FEISHU_APP_ID`, `FEISHU_APP_SECRET` and `ENTERPRISE_OTP_HMAC_KEY`) to replace password sign-in with Feishu sign-in: `/[lang]/signin` redirects to `/[lang]/signin/feishu`, where the user enters their work email and then the 8-character code that the Feishu bot sends them in a private chat. Sign-up, forgot-password and reset-password pages return 404 in this mode. For local development, set `FEISHU_PROVIDER=simulator` and `FEISHU_SIMULATOR_ORIGIN` to use the loopback simulator in `apps/feishu-mock`, so no real Feishu tenant is needed. See [Feishu email-code sign-in](docs/implementation/feishu-login.md) and [Feishu mock](docs/implementation/feishu-simulator.md) (Chinese).
 
 ## Development
 
