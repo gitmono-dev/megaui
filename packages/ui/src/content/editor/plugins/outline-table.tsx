@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { $createParagraphNode, $getNodeByKey, $getRoot, REDO_COMMAND, UNDO_COMMAND } from "lexical";
+import { $createParagraphNode, $getNodeByKey, $getRoot, $getSelection, $isRangeSelection, REDO_COMMAND, UNDO_COMMAND, type LexicalEditor } from "lexical";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import {
   $createMegaBlock, $ensureTableCell, $findMegaBlockById, $isMegaBlockNode,
@@ -16,6 +16,11 @@ type TableView = { rows: Cell[][]; columns: number; sourceExists: boolean };
 type ActiveCell = { row: number; column: number } | null;
 type Action = "addRow" | "addColumn" | "deleteRow" | "deleteColumn" | "deleteTable";
 const ACTIONS: readonly Action[] = ["addRow", "addColumn", "deleteRow", "deleteColumn", "deleteTable"];
+const pendingTableFocus = new WeakMap<LexicalEditor, { sourceId: string; cellId: string }>();
+
+export function requestNewTableFocus(editor: LexicalEditor, sourceId: string, cellId: string): void {
+  pendingTableFocus.set(editor, { sourceId, cellId });
+}
 
 function TableCellEditor({ cell, row, column, columns, rowCount, isChinese, editable, onEdit, onFocus, onAction }: {
   cell: Cell | undefined;
@@ -120,6 +125,7 @@ export function OutlineTableView({ sourceBlockId, nodeKey }: { sourceBlockId: st
   const [editor] = useLexicalComposerContext();
   const [view, setView] = useState<TableView>({ rows: [], columns: 1, sourceExists: false });
   const [active, setActive] = useState<ActiveCell>(null);
+  const tableRef = useRef<HTMLDivElement>(null);
   const sourceKey = useRef<string | null>(null);
   const isChinese = typeof document !== "undefined" && document.documentElement.lang.startsWith("zh");
   const labels = (isChinese ? zhCN : en).workspace.docEdit.tableControls;
@@ -157,6 +163,25 @@ export function OutlineTableView({ sourceBlockId, nodeKey }: { sourceBlockId: st
     sync();
     return editor.registerUpdateListener(sync);
   }, [editor, sync]);
+
+  useEffect(() => {
+    const pending = pendingTableFocus.get(editor);
+    if (!pending || pending.sourceId !== sourceBlockId || !view.sourceExists || !view.rows[0]?.[0]) return;
+    pendingTableFocus.delete(editor);
+    const stillSelected = editor.getEditorState().read(() => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) return false;
+      let node = selection.anchor.getNode();
+      while (node) {
+        if ($isMegaBlockNode(node) && node.getBlockId() === pending.cellId) return true;
+        const parent = node.getParent();
+        if (!parent) break;
+        node = parent;
+      }
+      return false;
+    });
+    if (stillSelected) tableRef.current?.querySelector<HTMLTextAreaElement>('[data-mega-content="outline-table-cell"]')?.focus();
+  }, [editor, sourceBlockId, view]);
 
   const editCell = useCallback((row: number, column: number, value: string) => {
     editor.update(() => {
@@ -209,6 +234,7 @@ export function OutlineTableView({ sourceBlockId, nodeKey }: { sourceBlockId: st
   return <div
     contentEditable={false}
     data-mega-content="outline-table-view"
+    ref={tableRef}
     onBlurCapture={(event) => {
       if (!event.currentTarget.contains(event.relatedTarget)) setActive(null);
     }}

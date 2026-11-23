@@ -5,7 +5,7 @@
   --mega-outliner-child-offset: 27px;
   --mega-outliner-guide: #bdcbd4;
   --mega-outliner-leading: 24px;
-  --mega-outliner-todo-leading: 40px;
+  --mega-outliner-todo-leading: 34px;
   color: #283744;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
   font-size: 14px;
@@ -404,7 +404,7 @@
   border-radius: 2px;
   height: 14px;
   left: 12px;
-  top: 9px;
+  top: 7px;
   width: 14px;
 }
 

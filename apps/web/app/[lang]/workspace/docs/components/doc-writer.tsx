@@ -78,10 +78,11 @@ export function canMountDocWriter(userId: string | undefined, hasVersionQuery: b
 function saveChipLabel(
   saveState: DocWriterSaveState,
   collabMode: CollabMode,
+  collabSynced: boolean,
   labels: DocWriterLabels,
   conflictMessage: string,
 ): string {
-  if (collabMode === "collab") return labels.collabLive;
+  if (collabMode === "collab") return collabSynced ? labels.collabLive : labels.collabConnecting;
   switch (saveState) {
     case "saving":
       return labels.saving;
@@ -102,11 +103,12 @@ function saveChipLabel(
 function collabChipLabel(
   collabMode: CollabMode,
   tokenPending: boolean,
+  collabSynced: boolean,
   labels: DocWriterLabels,
 ): string {
   switch (collabMode) {
     case "collab":
-      return labels.collabLive;
+      return collabSynced ? labels.collabLive : labels.collabConnecting;
     case "readonly":
       return tokenPending ? labels.collabConnecting : labels.collabReadonly;
     case "local":
@@ -254,8 +256,8 @@ export function DocWriter({
     [collabMode, collabSynced, flushSave, onBodyChange],
   );
 
-  const saveLabel = saveChipLabel(saveState, collabMode, labels, conflictMessage);
-  const collabLabel = collabChipLabel(collabMode, collabTokenQuery.isPending, labels);
+  const saveLabel = saveChipLabel(saveState, collabMode, collabSynced, labels, conflictMessage);
+  const collabLabel = collabChipLabel(collabMode, collabTokenQuery.isPending, collabSynced, labels);
 
   useEffect(() => {
     onChromeChange?.({

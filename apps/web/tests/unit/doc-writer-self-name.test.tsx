@@ -116,16 +116,26 @@ async function flush(): Promise<void> {
   expect(queryClient.isFetching()).toBe(0);
 }
 
-async function renderWriter(): Promise<void> {
+async function renderWriter(onChromeChange?: (chrome: import("@/app/[lang]/workspace/docs/components/doc-writer").DocWriterChrome) => void): Promise<void> {
   await act(async () => {
     root.render(createElement(StrictMode, null,
       createElement(QueryClientProvider, { client: queryClient },
         createElement(DocWriter, {
-          conflictMessage: "conflict", doc, forbiddenError: "forbidden", genericError: "error", labels, onToast: vi.fn(),
+          conflictMessage: "conflict", doc, forbiddenError: "forbidden", genericError: "error", labels, onToast: vi.fn(), onChromeChange,
         }))));
   });
   await flush();
 }
+
+it("reports live collaboration only after document synchronization", async () => {
+  const onChromeChange = vi.fn();
+  await renderWriter(onChromeChange);
+  expect(onChromeChange.mock.lastCall?.[0]).toMatchObject({ collabMode: "collab", collabLabel: "connecting", saveLabel: "connecting", canPublish: false });
+  await act(async () => lastCollab().onConnectionStatus?.("connected"));
+  expect(onChromeChange.mock.lastCall?.[0]).toMatchObject({ collabLabel: "live", saveLabel: "live", canPublish: true });
+  await act(async () => lastCollab().onConnectionStatus?.("offline"));
+  expect(onChromeChange.mock.lastCall?.[0]).toMatchObject({ collabLabel: "connecting", saveLabel: "connecting", canPublish: false });
+});
 
 async function setSession(user: Record<string, unknown> | null): Promise<void> {
   await act(async () => {

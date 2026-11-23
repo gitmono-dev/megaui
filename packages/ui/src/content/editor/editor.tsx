@@ -249,7 +249,7 @@ export function MegaContentEditor({
   );
 
   const editorTree = (
-    <LexicalComposer key={`mega-content-editor-${preset}-${collabMode}`} initialConfig={initialConfig}>
+    <LexicalComposer key={`mega-content-editor-${preset}-${collabMode}-${collabActive ? collab?.documentName : ""}`} initialConfig={initialConfig}>
       <div
         className="mega-doc-typography"
         data-mega-content="editor"

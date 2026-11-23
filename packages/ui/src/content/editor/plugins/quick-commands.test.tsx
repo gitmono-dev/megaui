@@ -4,12 +4,13 @@ import { useEffect } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
-import { $createTextNode, $getRoot, KEY_ARROW_DOWN_COMMAND, KEY_ENTER_COMMAND, type LexicalEditor } from "lexical";
+import { $createParagraphNode, $createTextNode, $getRoot, KEY_ARROW_DOWN_COMMAND, KEY_ENTER_COMMAND, type LexicalEditor } from "lexical";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { $createOutlineTable, $findMegaBlockById, $isMegaBlockNode, $setTableCellText, createEmptyMegaDocumentEditorStateJSON, type MegaBlockNode } from "@megaui/content";
 import { MegaContentEditor } from "../editor";
 import { EditorOutlineTableNode } from "../outline-table-node";
 import { QuickCommandsPlugin } from "./quick-commands";
+import { ImagePlugin } from "./images";
 
 afterEach(cleanup);
 
@@ -60,6 +61,41 @@ function readFirstBlock(editor: LexicalEditor): { text: string; variant: MegaBlo
 }
 
 describe("QuickCommandsPlugin (/ typeahead)", () => {
+  it.each(["TODO", "Table", "Image"] as const)("activates %s in a root paragraph without losing text", async (action) => {
+    let editor!: LexicalEditor;
+    render(
+      <MegaContentEditor initialStateJSON={createEmptyMegaDocumentEditorStateJSON()} placeholder="Write" preset="document">
+        <QuickCommandsPlugin labels={LABELS} />
+        <ImagePlugin labels={{ dialog: "Insert image", url: "Image URL", alt: "Description", file: "Upload", insert: "Insert", cancel: "Cancel", invalid: "Invalid", uploading: "Uploading" }} upload={async () => "https://example.com/image.png"} onError={() => {}} />
+        <EditorCapture onReady={(ready) => { editor = ready; }} />
+      </MegaContentEditor>,
+    );
+    act(() => editor.update(() => {
+      const text = $createTextNode("Existing /");
+      $getRoot().clear().append($createParagraphNode().append(text));
+      text.selectEnd();
+    }, { discrete: true }));
+    fireEvent.pointerDown(await screen.findByRole("option", { name: action }), { button: 0, pointerType: "mouse" });
+    await waitFor(() => expect(readFirstBlock(editor).text).toBe("Existing "));
+    if (action === "TODO") expect(readFirstBlock(editor).variant).toBe("todo");
+    if (action === "Table") await waitFor(() => expect(editor.getRootElement()?.querySelectorAll("[data-mega-outline-table] td")).toHaveLength(4));
+    if (action === "Image") await screen.findByRole("dialog", { name: "Insert image" });
+  });
+  it.each(["TODO", "Table", "Image"] as const)("activates %s with a pointer", async (action) => {
+    let editor!: LexicalEditor;
+    render(
+      <MegaContentEditor initialStateJSON={createEmptyMegaDocumentEditorStateJSON()} placeholder="Write" preset="document">
+        <QuickCommandsPlugin labels={LABELS} />
+        <ImagePlugin labels={{ dialog: "Insert image", url: "Image URL", alt: "Description", file: "Upload", insert: "Insert", cancel: "Cancel", invalid: "Invalid", uploading: "Uploading" }} upload={async () => "https://example.com/image.png"} onError={() => {}} />
+        <EditorCapture onReady={(ready) => { editor = ready; }} />
+      </MegaContentEditor>,
+    );
+    seedText(editor, "/");
+    fireEvent.pointerDown(await screen.findByRole("option", { name: action }), { button: 0, pointerType: "mouse" });
+    if (action === "TODO") await waitFor(() => expect(readFirstBlock(editor).variant).toBe("todo"));
+    if (action === "Table") await waitFor(() => expect(editor.getRootElement()?.querySelectorAll("[data-mega-outline-table] td")).toHaveLength(4));
+    if (action === "Image") await screen.findByRole("dialog", { name: "Insert image" });
+  });
   it("restores empty first-column lines when collaboration loads a table without running transforms", async () => {
     let editor!: LexicalEditor;
     render(
@@ -100,8 +136,7 @@ describe("QuickCommandsPlugin (/ typeahead)", () => {
 
     const pageReference = screen.getByRole("option", { name: "Page reference" });
     await act(async () => {
-      pageReference.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
-      pageReference.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      fireEvent.pointerDown(pageReference, { button: 0, pointerType: "mouse" });
     });
 
     expect(readFirstBlock(editor).text).toBe("[[");
@@ -166,13 +201,13 @@ describe("QuickCommandsPlugin (/ typeahead)", () => {
     seedText(editor, "/table");
     const option = await screen.findByRole("option", { name: "Table" });
     await act(async () => {
-      option.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
-      option.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      fireEvent.pointerDown(option, { button: 0, pointerType: "mouse" });
     });
     await waitFor(() => expect(editor.getRootElement()?.querySelectorAll("[data-mega-outline-table] tr")).toHaveLength(2));
     expect(editor.getRootElement()?.querySelectorAll("[data-mega-outline-table] td")).toHaveLength(4);
     expect(editor.getRootElement()?.querySelectorAll("[data-mega-table-source] [data-mega-block]")).toHaveLength(4);
     const firstCell = screen.getByRole("textbox", { name: "Row 1, column 1" });
+    await waitFor(() => expect(firstCell).toHaveFocus());
     fireEvent.change(firstCell, { target: { value: "Table edit" } });
     await waitFor(() => expect(editor.getRootElement()?.querySelector("[data-mega-table-source] [data-mega-block]")).toHaveTextContent("Table edit"));
     const sourceId = editor.getRootElement()?.querySelector<HTMLElement>("[data-mega-table-source]")?.dataset.blockId;

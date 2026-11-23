@@ -6,6 +6,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom";
 import {
   $createTextNode,
+  $isParagraphNode,
+  $isRootNode,
   COMMAND_PRIORITY_CRITICAL,
   COMMAND_PRIORITY_HIGH,
   KEY_ARROW_DOWN_COMMAND,
@@ -16,9 +18,10 @@ import {
 } from "lexical";
 import { LexicalTypeaheadMenuPlugin, MenuOption } from "@lexical/react/LexicalTypeaheadMenuPlugin";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { $createOutlineTable, $isMegaBlockNode, type MegaBlockNode } from "@megaui/content";
+import { $createMegaBlock, $createOutlineTable, $isMegaBlockNode, generateBlockId, type MegaBlockNode } from "@megaui/content";
 import { OPEN_IMAGE_DIALOG_COMMAND } from "./image-command";
 import { EditorOutlineTableNode } from "../outline-table-node";
+import { requestNewTableFocus } from "./outline-table";
 
 export interface QuickCommandsPluginLabels {
   ariaLabel: string;
@@ -82,8 +85,8 @@ function QuickCommandMenu({
           data-mega-content="quick-command-option"
           id={`typeahead-item-${index}`}
           key={option.key}
-          onPointerDown={(event) => event.preventDefault()}
-          onMouseDown={(event) => {
+          onPointerDown={(event) => {
+            if (event.button !== 0) return;
             event.preventDefault();
             onHighlight(index);
             setHighlightedIndex(index);
@@ -111,6 +114,12 @@ function owningMegaBlock(node: LexicalNode): MegaBlockNode | null {
   let current: LexicalNode | null = node;
   while (current) {
     if ($isMegaBlockNode(current)) return current;
+    if ($isParagraphNode(current) && $isRootNode(current.getParent())) {
+      const block = $createMegaBlock("text", generateBlockId());
+      block.append(...current.getChildren());
+      current.replace(block);
+      return block;
+    }
     current = current.getParent();
   }
   return null;
@@ -194,6 +203,7 @@ export function QuickCommandsPlugin({ labels }: { labels: QuickCommandsPluginLab
       block.insertAfter(source);
       block.insertAfter(table);
       if (block.getChildrenSize() === 0) block.remove();
+      requestNewTableFocus(editor, source.getBlockId(), firstCell.getBlockId());
       firstCell.selectStart();
       return true;
     }
@@ -301,7 +311,6 @@ export function QuickCommandsPlugin({ labels }: { labels: QuickCommandsPluginLab
       onQueryChange={() => {}}
       onSelectOption={onSelectOption}
       options={options}
-      shouldSplitNodeWithQuery
       triggerFn={(text) => {
         const found = TRIGGER_PATTERN.exec(text);
         if (!found) {

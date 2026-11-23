@@ -21,17 +21,14 @@
  *   browser `online` handler, which also resets the counter).
  * - `awarenessRef` / block-hover-menu focus wiring is dropped (UI-07 / hover-menu concern,
  *   out of this card's write set).
- * - Lexical CollaborationPlugin only calls `provider.disconnect()` on unmount (not
- *   `destroy()`), and StrictMode reuses the same provider via `isProviderInitialized`.
- *   Soft `disconnect` (pause reconnect + websocket close) must stay distinct from full
- *   `destroy`. MegaDocCollabPlugin defers `destroy()` to a macrotask on Lexical's
- *   unmount `disconnect` so a same-tick StrictMode `connect()` can cancel it, while a
- *   true unmount still frees Hocuspocus/IndexedDB. Browser `offline` uses the raw soft
- *   path (no deferred destroy); `online` → `connect()` resets the reconnect budget.
+ * - Soft `disconnect` (pause reconnect + websocket close) stays distinct from full
+ *   `destroy`. The plugin owns final teardown on unmount, deferred across StrictMode
+ *   effect replay, while Lexical may disconnect before the binding connects. Browser
+ *   `offline` uses the soft path; `online` → `connect()` resets the reconnect budget.
  */
 "use client";
 
-import React, { useCallback, useRef } from "react";
+import React, { useCallback, useEffect, useRef } from "react";
 import type { Provider as LexicalYjsProvider } from "@lexical/yjs";
 import { LexicalCollaboration } from "@lexical/react/LexicalCollaborationContext";
 import { CollaborationPlugin } from "@lexical/react/LexicalCollaborationPlugin";
@@ -435,9 +432,26 @@ function resolveDocFromMap(id: string, yjsDocMap: Map<string, YDoc>): YDoc {
  */
 export function MegaDocCollabPlugin({ config }: { config: MegaDocCollabConfig }): React.JSX.Element {
   const configRef = useRef(config);
+  const providersRef = useRef(new Set<LexicalHocuspocusProviderHandle>());
+  const cleanupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   configRef.current = config;
 
+  useEffect(() => {
+    if (cleanupTimerRef.current !== null) clearTimeout(cleanupTimerRef.current);
+    cleanupTimerRef.current = null;
+    return () => {
+      cleanupTimerRef.current = setTimeout(() => {
+        for (const provider of providersRef.current) provider.destroy();
+        providersRef.current.clear();
+        cleanupTimerRef.current = null;
+      }, 0);
+    };
+  }, []);
+
   const providerFactory = useCallback((id: string, yjsDocMap: Map<string, YDoc>) => {
+    // Lexical calls the factory again when its document or doc map changes.
+    // Dispose the old provider before its callbacks can observe the new config.
+    for (const previous of providersRef.current) previous.destroy();
     const doc = resolveDocFromMap(id, yjsDocMap);
     const current = configRef.current;
     const provider = createLexicalHocuspocusProvider({
@@ -446,6 +460,7 @@ export function MegaDocCollabPlugin({ config }: { config: MegaDocCollabConfig })
       document: doc,
       token: current.token ?? "",
     });
+    providersRef.current.add(provider);
 
     const report = (status: DocCollabConnectionStatus) => {
       configRef.current.onConnectionStatus?.(status);
@@ -513,24 +528,11 @@ export function MegaDocCollabPlugin({ config }: { config: MegaDocCollabConfig })
       emitPresence();
     });
 
-    // Soft websocket disconnect only — must not run full teardown synchronously:
-    // Lexical StrictMode cleanup disconnects then remounts and reuses the same
-    // provider (`isProviderInitialized`). Browser offline also uses soft
-    // disconnect and must keep the online listener. Lexical's unmount path
-    // (wrapped `provider.disconnect`) schedules a deferred `destroy()` so a
-    // true unmount still frees Hocuspocus/IndexedDB; a same-tick `connect()`
-    // cancels that timer.
+    // Lexical and browser offline events use soft disconnect. The owning
+    // component handles final teardown separately.
     const previousConnect = provider.connect.bind(provider);
     const softDisconnect = provider.disconnect.bind(provider);
     const previousDestroy = provider.destroy.bind(provider);
-    let deferredDestroyTimer: ReturnType<typeof setTimeout> | null = null;
-
-    const cancelDeferredDestroy = () => {
-      if (deferredDestroyTimer) {
-        clearTimeout(deferredDestroyTimer);
-        deferredDestroyTimer = null;
-      }
-    };
 
     const onBrowserOffline = () => {
       report("offline");
@@ -561,21 +563,15 @@ export function MegaDocCollabPlugin({ config }: { config: MegaDocCollabConfig })
     };
 
     provider.connect = () => {
-      cancelDeferredDestroy();
       attachBrowserListeners();
       previousConnect();
     };
     provider.disconnect = () => {
       detachBrowserListeners();
       softDisconnect();
-      cancelDeferredDestroy();
-      deferredDestroyTimer = setTimeout(() => {
-        deferredDestroyTimer = null;
-        previousDestroy();
-      }, 0);
     };
     provider.destroy = () => {
-      cancelDeferredDestroy();
+      providersRef.current.delete(provider);
       awareness?.off("change", emitPresence);
       detachBrowserListeners();
       previousDestroy();
@@ -584,10 +580,9 @@ export function MegaDocCollabPlugin({ config }: { config: MegaDocCollabConfig })
     return provider;
   }, []);
 
-  // Do not destroy the provider in a React effect — CollaborationPlugin owns
-  // provider.disconnect() on unmount. An effect cleanup that calls destroy()
-  // races Strict Mode remounts (isProviderInitialized skips recreating the
-  // provider after cleanup).
+  // CollaborationPlugin can disconnect before its binding mounts. The parent
+  // owns final destruction so a Strict Mode effect replay cannot dispose a
+  // provider that Lexical will subsequently connect.
 
   const resolvedCursorColor = (() => {
     if (config.cursorColor) return config.cursorColor;
