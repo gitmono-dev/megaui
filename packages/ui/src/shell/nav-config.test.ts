@@ -14,10 +14,9 @@ import {
 } from "./nav-config"
 
 describe("nav-config (UI-05 AC1: rail nav items / active state / path-collapse parity)", () => {
-  it("defines eight localized routes in the nav-approved order", () => {
-    expect(MEGA_NAV_ITEMS).toHaveLength(8)
+  it("defines the localized routes in the nav-approved order", () => {
     expect(MEGA_NAV_ITEMS.map((item) => item.id)).toEqual([
-      "home", "inbox", "docs", "agent", "code", "tags", "cls", "issues",
+      "home", "inbox", "docs", "code", "tags", "cls", "issues",
     ])
   })
 
@@ -36,9 +35,7 @@ describe("nav-config (UI-05 AC1: rail nav items / active state / path-collapse p
     expect(activeNavId("/en/workspace/code/project/mega", "/en/workspace")).toBe("code")
     // "codebook" is not a segment-boundary match for "code".
     expect(activeNavId("/en/workspace/codebook", "/en/workspace")).toBeUndefined()
-    // The agent surface's sub-route lives under /sessions/*, not /agent/*.
-    expect(activeNavId("/en/workspace/sessions/thread-1", "/en/workspace")).toBe("agent")
-    expect(activeNavId("/en/workspace/agent/agent_pack_decode", "/en/workspace")).toBe("agent")
+    expect(activeNavId("/en/workspace/sessions/thread-1", "/en/workspace")).toBeUndefined()
   })
 
   it("isPathWithin matches at the boundary and rejects partial-segment prefixes", () => {

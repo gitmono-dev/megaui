@@ -155,8 +155,10 @@ test.describe("FSL-129 Feishu sign-in page", () => {
       const step = page.getByTestId("feishu-login-code-step");
       await expect(step).toBeVisible();
       await expect(page.getByTestId("feishu-login-email-step")).toHaveCount(0);
-      await expect(page.getByTestId("feishu-login-code")).toBeVisible();
-      await expect(page.getByTestId("feishu-login-verify")).toBeEnabled();
+      await expect(page.getByTestId("feishu-login-code").locator("input")).toHaveCount(8);
+      await expect(page.getByTestId("feishu-login-verify")).toHaveCount(0);
+      await expect(page.getByTestId("feishu-login-change-email")).toHaveCount(0);
+      await expect(page.getByTestId("feishu-login-resend")).toBeVisible();
       await expect(page.getByTestId("feishu-login-code-sent")).toHaveText(
         en.auth.signin.feishu.codeSent.replace("{email}", email));
       seen.push({
@@ -212,10 +214,19 @@ test.describe("FSL-129 Feishu sign-in page", () => {
 
     const verified = page.waitForResponse(response =>
       new URL(response.url()).pathname === "/api/auth/feishu-login/verify" && response.request().method() === "POST");
-    // Pasted in lower case with a space in the middle: the field keeps all 8 characters.
-    await page.getByTestId("feishu-login-code").fill(`${code.slice(0, 4).toLowerCase()} ${code.slice(4).toLowerCase()}`);
-    await expect(page.getByTestId("feishu-login-code")).toHaveValue(code);
-    await page.getByTestId("feishu-login-verify").click();
+    // Pasted in lower case with a space in the middle. The boxes keep all 8 characters and
+    // submit on their own. The code stays inside `evaluate` (ER-11).
+    const accepted = await page.getByTestId("feishu-login-code").evaluate((root: HTMLElement, value: string) => {
+      const input = root.querySelector("input");
+      if (!input) return false;
+      const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      setValue.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      return true;
+    }, `${code.slice(0, 4).toLowerCase()} ${code.slice(4).toLowerCase()}`);
+    expect(accepted, "the code boxes received the paste").toBe(true);
+    await expect.poll(() => page.getByTestId("feishu-login-code").evaluate((root: HTMLElement, value: string) =>
+      [...root.querySelectorAll("input")].map(input => input.value).join("") === value, code)).toBe(true);
     expect((await verified).status()).toBe(200);
     // FSL-184: a successful sign-in goes straight into the workspace.
     await page.waitForURL(url => url.pathname === "/en/workspace");

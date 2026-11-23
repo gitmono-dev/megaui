@@ -7,7 +7,6 @@ const MAX_PURE_LINES = 250;
 const WORKSPACE_ROUTE_FILES = [
   "apps/web/app/[lang]/workspace/issues/page.tsx",
   "apps/web/app/[lang]/workspace/issues/[n]/page.tsx",
-  "apps/web/app/[lang]/workspace/agent/[threadId]/page.tsx",
   "apps/web/app/[lang]/workspace/code/[...path]/page.tsx",
 ] as const;
 

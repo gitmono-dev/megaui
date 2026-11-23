@@ -18,6 +18,14 @@ import { MEGA_CODE_THEMES, useMegaCodeThemeType, type MegaCodeThemeType } from "
 export interface MegaBlobViewFile {
   name: string
   contents: string
+  /** Shiki language id. Omitted or `plaintext` leaves language inference to the filename. */
+  language?: string
+}
+
+function highlightLanguage(language: string | undefined): string | undefined {
+  const normalized = language?.trim().toLowerCase()
+  if (!normalized || normalized === "plain" || normalized === "plaintext" || normalized === "text") return undefined
+  return normalized
 }
 
 export interface MegaBlobViewLabels {
@@ -138,11 +146,17 @@ export function MegaBlobView({
         <PlainTextBlob contents={file.contents} onSelectedLinesChange={onSelectedLinesChange} selectedLines={selectedLines ?? null} />
       ) : (
         <File
-          file={{ contents: file.contents, name: file.name }}
+          disableWorkerPool
+          file={{
+            contents: file.contents,
+            lang: highlightLanguage(file.language),
+            name: file.name,
+          }}
           options={{
             disableFileHeader: true,
             enableLineSelection: true,
             onLineSelected: onSelectedLinesChange,
+            preferredHighlighter: "shiki-js",
             theme: MEGA_CODE_THEMES,
             themeType: resolvedThemeType,
           }}

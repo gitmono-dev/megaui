@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { TreeNode } from "@megaui/core";
 
-import { ancestorPaths, findNode, mergeTreeNodes, toFileTreeNodes } from "./code-path-tree";
+import { ancestorPaths, findNode, mergeTreeNodes, pathPrefixes, toFileTreeNodes } from "./code-path-tree";
 
 const TREE: readonly TreeNode[] = [
   {
@@ -29,6 +29,8 @@ describe("code path tree model", () => {
 
     // Then: tree lookups, display conversion, and directory ancestry agree.
     expect(ancestorPaths("src/index.ts")).toEqual(["src"]);
+    expect(pathPrefixes("src")).toEqual(["src"]);
+    expect(pathPrefixes("src/index.ts")).toEqual(["src", "src/index.ts"]);
     expect(findNode(merged, "src/index.ts")?.name).toBe("index.ts");
     expect(toFileTreeNodes(merged)[0]?.children?.[0]?.path).toBe("src/index.ts");
   });

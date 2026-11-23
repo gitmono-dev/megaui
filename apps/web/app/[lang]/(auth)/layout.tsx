@@ -8,6 +8,8 @@
 import Link from "next/link";
 import { use } from "react";
 
+import { getSiteName } from "@/lib/site-name";
+
 export default function AuthLayout({
   children,
   params,
@@ -24,7 +26,7 @@ export default function AuthLayout({
           href={`/${lang}`}
           className="self-center text-lg font-semibold tracking-tight"
         >
-          Mega
+          {getSiteName()}
         </Link>
         {children}
       </div>

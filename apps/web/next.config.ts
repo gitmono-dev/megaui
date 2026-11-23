@@ -3,7 +3,12 @@ import { env } from "./lib/env";
 
 void env;
 
+const siteName = process.env.MEGA_SITE_NAME?.trim() || "Mega";
+
 const nextConfig: NextConfig = {
+  env: {
+    NEXT_PUBLIC_MEGA_SITE_NAME: siteName,
+  },
   // Required for apps/web/Dockerfile `runner` target (SC-03): emits
   // .next/standalone so the production image ships a minimal server
   // bundle without the full node_modules tree.

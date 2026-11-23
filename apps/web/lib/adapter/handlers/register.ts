@@ -10,8 +10,6 @@ import "./search";
 import "./settings";
 import "./credentials";
 import "./collab-token";
-import "./agent-stream";
-import "./agent";
 import "./sessions";
 import "./home";
 import "./code";

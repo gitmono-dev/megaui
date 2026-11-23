@@ -106,7 +106,7 @@ export default function WorkspaceHomePage() {
       <div style={heroSectionStyle}>
         <HomeHero
           displayName={displayName}
-          labels={{ askAgent: home.askAgent, greetings: home.greetings, newDoc: home.newDoc }}
+          labels={{ greetings: home.greetings, newDoc: home.newDoc }}
           workspace={workspaceQuery.data}
           workspaceBase={workspaceBase}
         />

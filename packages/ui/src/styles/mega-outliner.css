@@ -182,20 +182,15 @@
 }
 
 [data-mega-content="todo-check"] {
-  align-items: center;
-  background: var(--mega-bg);
-  border: 1px solid #aabcca;
-  border-radius: 2px;
+  background: transparent;
+  border: 0;
   box-sizing: border-box;
   cursor: pointer;
-  display: flex;
-  height: 12px;
-  justify-content: center;
-  line-height: 1;
+  height: 14px;
   padding: 0;
   pointer-events: auto;
   position: absolute;
-  width: 12px;
+  width: 14px;
 }
 
 [data-mega-content="todo-check"][aria-pressed="true"] {
@@ -400,6 +395,22 @@
 
 [data-mega-content="outliner"] [data-mega-block="todo"]:not([data-mega-content="reader"] *) {
   padding-left: var(--mega-outliner-todo-leading);
+}
+
+/* Roam-style checkbox replaces the bullet as soon as a block becomes a todo. */
+[data-mega-content="outliner"] [data-mega-block="todo"]:not([data-mega-content="reader"] *)::before {
+  background: var(--mega-bg);
+  border: 1.5px solid #aabcca;
+  border-radius: 2px;
+  height: 14px;
+  left: 12px;
+  top: 9px;
+  width: 14px;
+}
+
+[data-mega-content="outliner"] [data-mega-block="todo"][data-todo-checked="true"]:not([data-mega-content="reader"] *)::before {
+  background: var(--mega-accent) center / 10px 10px no-repeat url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2 6.2 4.6 9 10 3' fill='none' stroke='white' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  border-color: var(--mega-accent);
 }
 
 [data-mega-content="outliner"] [data-mega-block]:not([data-mega-content="reader"] *) > [data-mega-block] {

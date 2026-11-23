@@ -82,35 +82,37 @@ async function requestOnEmailStep(page: Page, email: string): Promise<void> {
 }
 
 /**
- * Puts `code` into the code field as one input event (as a paste does), submits it and
+ * Pastes `code` into the boxes as one input event. A complete code submits itself and this
  * answers the verify status. The code is passed only as an `evaluate` argument and compared
  * inside the page: `locator.fill` would write the value into Playwright's call log, and
  * `toHaveValue` into its failure message (ER-11).
  */
 async function submitCode(page: Page, code: string): Promise<number> {
-  await putCode(page, code);
   const verified = page.waitForResponse(isPost(VERIFY_PATH));
-  await page.getByTestId("feishu-login-verify").click();
+  await putCode(page, code);
   return (await verified).status();
 }
 
-/** Puts `code` into the code field as one input event; the value goes only into `evaluate`. */
+/** Puts `code` into the boxes as one input event; the value goes only into `evaluate`. */
 async function putCode(page: Page, code: string): Promise<void> {
   const field = page.getByTestId("feishu-login-code");
-  const accepted = await field.evaluate((input: HTMLInputElement, value: string) => {
+  const accepted = await field.evaluate((root: HTMLElement, value: string) => {
+    const input = root.querySelector("input");
+    if (!input) return false;
     const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
     setValue.call(input, value);
     input.dispatchEvent(new Event("input", { bubbles: true }));
-    return input.value === value;
+    return true;
   }, code);
-  expect(accepted, "the code field holds the code").toBe(true);
+  expect(accepted, "the code boxes received the code").toBe(true);
   // React has rendered the controlled value before anything reads it.
   await expect.poll(() => fieldHolds(page, code)).toBe(true);
 }
 
-/** Whether the code field holds `code`, compared in the page (ER-11). */
+/** Whether the boxes join to `code`, compared in the page (ER-11). */
 async function fieldHolds(page: Page, code: string): Promise<boolean> {
-  return page.getByTestId("feishu-login-code").evaluate((input: HTMLInputElement, value: string) => input.value === value, code);
+  return page.getByTestId("feishu-login-code").evaluate((root: HTMLElement, value: string) =>
+    [...root.querySelectorAll("input")].map(input => input.value).join("") === value, code);
 }
 
 /** The code step shows "invalid or expired" and stays usable, without a session. */
@@ -118,13 +120,16 @@ async function expectCodeInvalid(page: Page, context: BrowserContext, copy: Copy
   const step = page.getByTestId("feishu-login-code-step");
   await expect(step.getByRole("alert")).toHaveText(copy.codeInvalid);
   await expect(step).toBeVisible();
-  await expect(page.getByTestId("feishu-login-code")).toBeEnabled();
+  await expect(page.getByTestId("feishu-login-code").locator("input").first()).toBeEnabled();
   expect((await context.cookies()).map(cookie => cookie.name)).not.toContain(SESSION_COOKIE);
 }
 
-/** The code field is empty, checked in the page so no value reaches a failure message. */
+/** The named field is empty, checked in the page so no value reaches a failure message. */
 async function fieldIsEmpty(page: Page, testId: string): Promise<boolean> {
-  return page.getByTestId(testId).evaluate((input: HTMLInputElement) => input.value === "");
+  return page.getByTestId(testId).evaluate((root: HTMLElement) => {
+    if (root instanceof HTMLInputElement) return root.value === "";
+    return [...root.querySelectorAll("input")].every(input => input.value === "");
+  });
 }
 
 /** The SHA-256 of the context's flow cookie, as the request endpoint stores it; never logged. */
@@ -224,9 +229,10 @@ test.describe("FSL-155 code step resend and change email", () => {
       await expect(resend).toBeEnabled({ timeout: 1_000 });
       await expect(resend).toHaveText(en.resend);
 
-      // The resend: the same flow, a new row reserved before the 202, the old row void. The
-      // field holds the first code until then.
-      await putCode(page, first);
+      // The resend: the same flow, a new row reserved before the 202, the old row void.
+      // Seven characters stay on the step (a complete code would submit itself) and the
+      // resend clears them.
+      await putCode(page, first.slice(0, 7));
       const resent = page.waitForResponse(isPost(REQUEST_PATH));
       await resend.click();
       expect((await resent).status()).toBe(202);
@@ -275,7 +281,7 @@ test.describe("FSL-155 code step resend and change email", () => {
       const countdown = new RegExp(`^${en.resendWait.replace("{seconds}", "(\\d+)")}$`);
       await until(entered + 61_000);
       await expect(resend).toBeEnabled({ timeout: 1_000 });
-      await putCode(page, code);
+      await putCode(page, code.slice(0, 7));
 
       // The reservation fails inside its transaction, so the request answers 503 and nothing
       // of the flow changes.
@@ -298,7 +304,7 @@ test.describe("FSL-155 code step resend and change email", () => {
       // The failure does not prove that nothing was reserved, so the countdown starts again.
       await expect(resend).toBeDisabled();
       await expect(resend).toHaveText(countdown);
-      expect(await fieldHolds(page, code), "the field keeps the code").toBe(true);
+      expect(await fieldHolds(page, code.slice(0, 7)), "the field keeps the code").toBe(true);
       expect(await flowRows(harness!, flow)).toEqual([{ seq: 1, state: "active" }]);
       expect(await harness!.inboxSize(ALICE.openId)).toBe(seen + 1);
 
@@ -317,10 +323,8 @@ test.describe("FSL-155 code step resend and change email", () => {
       const flow = await flowHash(context);
       await expect.poll(() => flowRows(harness!, flow)).toEqual([{ seq: 1, state: "active" }]);
 
-      // AC5: "change email" shows the empty email step again, in the same flow.
-      const changeEmail = page.getByTestId("feishu-login-change-email");
-      await expect(changeEmail).toHaveText(zh.changeEmail);
-      await changeEmail.click();
+      // Reloading leaves the code step and shows the empty email step again, in the same flow.
+      await page.reload();
       await expect(page.getByTestId("feishu-login-email-step")).toBeVisible();
       await expect(page.getByTestId("feishu-login-code-step")).toHaveCount(0);
       await expect(page.getByTestId("feishu-login-email")).toBeEnabled();
@@ -357,7 +361,7 @@ test.describe("FSL-155 code step resend and change email", () => {
       const flow = await flowHash(context);
       await expect.poll(() => flowRows(harness!, flow)).toEqual([{ seq: 1, state: "active" }]);
 
-      await page.getByTestId("feishu-login-change-email").click();
+      await page.reload();
       await expect(page.getByTestId("feishu-login-email-step")).toBeVisible();
       await expect(page.getByTestId("feishu-login-email")).toBeEnabled();
 

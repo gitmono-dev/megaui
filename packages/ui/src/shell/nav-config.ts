@@ -12,7 +12,6 @@ export const MEGA_NAV_IDS = [
   "home",
   "inbox",
   "docs",
-  "agent",
   "code",
   "tags",
   "cls",
@@ -34,7 +33,6 @@ export const MEGA_NAV_ITEMS: readonly MegaNavItemConfig[] = [
   { id: "home", icon: "home", path: "" },
   { id: "inbox", icon: "inbox", path: "inbox" },
   { id: "docs", icon: "book", path: "docs" },
-  { id: "agent", icon: "sparkle", path: "agent" },
   { id: "code", icon: "code", path: "code" },
   { id: "tags", icon: "tag", path: "tags" },
   { id: "cls", icon: "git-pull", path: "cls" },
@@ -67,7 +65,6 @@ export function activeNavId(pathname: string, workspaceBase: string): MegaNavId 
   const base = workspaceHref(workspaceBase)
 
   if (current === base) return "home"
-  if (isPathWithin(current, workspaceHref(base, "sessions"))) return "agent"
 
   return MEGA_NAV_ITEMS
     .filter((item) => item.id !== "home")

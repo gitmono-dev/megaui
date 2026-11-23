@@ -18,7 +18,7 @@ type TodoCheckboxControl = Readonly<{
   top: number;
 }>;
 
-const TODO_CHECKBOX_SIZE = 12;
+const TODO_CHECKBOX_SIZE = 14;
 
 function collectTodoControls(root: HTMLElement, overlay: HTMLElement): readonly TodoCheckboxControl[] {
   const overlayRect = overlay.getBoundingClientRect();
@@ -29,15 +29,11 @@ function collectTodoControls(root: HTMLElement, overlay: HTMLElement): readonly 
     if (root.closest('[data-mega-content="outliner"]')?.hasAttribute("data-mega-block-focus") && !block.hasAttribute("data-mega-block-focus")) return [];
     if (block.parentElement?.closest('[data-mega-block][data-collapsed="true"]')) return [];
     const rect = block.getBoundingClientRect();
-    const style = window.getComputedStyle(block);
-    const firstRowHeight = Number.parseFloat(style.lineHeight)
-      + Number.parseFloat(style.paddingTop)
-      + Number.parseFloat(style.paddingBottom);
     return [{
       blockId,
       checked: block.dataset.todoChecked === "true",
-      left: rect.left - overlayRect.left + 23,
-      top: rect.top - overlayRect.top + Math.max(0, (firstRowHeight - TODO_CHECKBOX_SIZE) / 2),
+      left: rect.left - overlayRect.left + 12,
+      top: rect.top - overlayRect.top + 9,
     }];
   });
 }

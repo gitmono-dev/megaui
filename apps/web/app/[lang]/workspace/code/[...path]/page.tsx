@@ -19,7 +19,7 @@ import { CodePathContent, type CodePathContentState } from "./components/code-pa
 import { CodePathHeader } from "./components/code-path-header";
 import { CodePathTree } from "./components/code-path-tree";
 import { CodePathLoading, CodePathTreeError } from "./components/code-path-tree-state";
-import { ancestorPaths, findNode, mergeTreeNodes } from "./lib/code-path-tree";
+import { ancestorPaths, findNode, mergeTreeNodes, readRememberedDirectories, rememberDirectory } from "./lib/code-path-tree";
 import { shouldForcePlainText, type SourceFilePayload } from "./lib/code-path-source";
 
 // megaui-only (FS-92): wait for navigation before mounting actionable content.
@@ -48,7 +48,9 @@ function ReadyCodePathPage({ params, searchParams }: {
     currentContext.current = contextKey;
     return () => { currentContext.current = null; };
   }, [contextKey]);
-  const [loadedDirs, setLoadedDirs] = useState(() => new Set(["", ...ancestorPaths(fullPath)]));
+  const [loadedDirs, setLoadedDirs] = useState(
+    () => new Set(["", ...ancestorPaths(fullPath), ...readRememberedDirectories()]),
+  );
 
   useEffect(() => {
     setLoadedDirs((current) => new Set([...current, "", ...ancestorPaths(fullPath)]));
@@ -138,8 +140,9 @@ function ReadyCodePathPage({ params, searchParams }: {
     [contextKey, router, workspaceBase],
   );
   const onDirectoryToggle = useCallback((path: string, expanded: boolean) => {
-    if (expanded)
-      setLoadedDirs((current) => (current.has(path) ? current : new Set([...current, path])));
+    rememberDirectory(path, expanded);
+    if (!expanded) return;
+    setLoadedDirs((current) => (current.has(path) ? current : new Set([...current, path])));
   }, []);
 
   if (treePending && mergedTree.length === 0) {

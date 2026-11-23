@@ -11,6 +11,7 @@ import { getTranslation, isValidLocale } from "@megaui/i18n";
 import { MegaQueryProvider } from "@megaui/ui/query";
 
 import { MegaSettingsProvider } from "@/lib/mega-settings/provider";
+import { applySiteName } from "@/lib/site-name";
 
 import { WorkspaceShellClient } from "./workspace-shell-client";
 
@@ -33,9 +34,9 @@ export async function generateMetadata({
   const locale = isValidLocale(lang) ? lang : "en";
   const t = getTranslation(locale);
   return {
-    title: t.workspace.metadata.title,
-    description: t.workspace.metadata.description,
-    keywords: t.workspace.metadata.keywords,
+    title: applySiteName(t.workspace.metadata.title),
+    description: applySiteName(t.workspace.metadata.description),
+    keywords: applySiteName(t.workspace.metadata.keywords),
   };
 }
 

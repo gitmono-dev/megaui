@@ -8,7 +8,6 @@
 import { NextResponse } from "next/server";
 
 import "@/lib/adapter/handlers/register";
-import { maybeHandleAgentStreamPost } from "@/lib/adapter/handlers/agent-stream";
 import {
   dispatchMegaRequest,
   readMegaRequestBody,
@@ -64,8 +63,6 @@ export async function POST(request: Request, context: MegaRouteContext) {
       context.params,
       readMegaRequestBody(request),
     ]);
-    const streamResponse = await maybeHandleAgentStreamPost(request, segments, body);
-    if (streamResponse) return streamResponse;
     const data = await dispatchMegaRequest({
       method: "POST",
       segments,

@@ -28,6 +28,8 @@ import {
   type WorkspaceRailLinkProps,
 } from "@megaui/ui/shell";
 
+import { accountAvatarName } from "@/app/[lang]/workspace/account-avatar-name";
+import { AccountMenu } from "@/app/[lang]/workspace/account-menu";
 import { useTranslation } from "@/hooks/use-translation";
 import { authClient } from "@/lib/auth-client";
 import { selfDisplayName } from "@/lib/self-display-name";
@@ -315,6 +317,14 @@ export function WorkspaceShellClient({ children }: { children: ReactNode }) {
     renderLink: renderWorkspaceLink,
     userLoading,
     workspaceBase,
+    accountMenu: userLoading ? undefined : (
+      <AccountMenu
+        displayName={displayName}
+        imageUrl={session?.user?.image}
+        initials={accountAvatarName(displayName)}
+        settingsHref={`${workspaceBase}/settings`}
+      />
+    ),
   };
 
   const rail = channelsQuery.isPending ? (

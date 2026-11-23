@@ -26,7 +26,7 @@ afterEach(() => {
 })
 
 const NAV_LABELS: Record<MegaNavId, string> = {
-  home: "Home", inbox: "Inbox", docs: "Doc", agent: "Agent",
+  home: "Home", inbox: "Inbox", docs: "Doc",
   code: "Code", tags: "Tag", cls: "Change List", issues: "Issue",
 }
 
@@ -84,7 +84,6 @@ describe("favorites pure functions (UI-05 AC4)", () => {
     expect(derive("/en/workspace/dm/rafael")).toEqual({ href: "/en/workspace/dm/rafael", icon: "chat", title: "@rafael" })
     expect(derive("/en/workspace/docs/d6")).toEqual({ href: "/en/workspace/docs/d6", icon: "book", title: "Doc · d6" })
     expect(derive("/en/workspace/sessions/thr_a5ecd9")).toEqual({ href: "/en/workspace/sessions/thr_a5ecd9", icon: "terminal", title: "thr_a5ecd9" })
-    expect(derive("/en/workspace/agent/agent_pack_decode")?.title).toBe("Agent · agent_pack_decode")
     expect(derive("/en/workspace/code/project/git-internal/src/pack.rs")).toEqual({ href: "/en/workspace/code/project/git-internal/src/pack.rs", icon: "code", title: "pack.rs" })
     expect(derive("/en/workspace/tags")).toEqual({ href: "/en/workspace/tags", icon: "tag", title: "Tag" })
     expect(derive("/en/workspace/settings")?.icon).toBe("star")

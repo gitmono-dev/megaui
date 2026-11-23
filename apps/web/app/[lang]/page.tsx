@@ -5,6 +5,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { resolveWebActor } from "@/lib/enterprise-session";
+import { getSiteName } from "@/lib/site-name";
 
 // megaui-only (WA-01 / ADR-ARCH-09): session-aware single CTA homepage.
 // Not a port of upstream SaaS marketing `app/[lang]/(root)/page.tsx`.
@@ -42,7 +43,7 @@ export default async function HomePage({
 
   return (
     <main data-mega-surface="landing" className="flex min-h-screen flex-col items-center justify-center gap-6 p-8">
-      <h1 className="text-3xl font-semibold tracking-tight">{t.common.siteName}</h1>
+      <h1 className="text-3xl font-semibold tracking-tight">{getSiteName()}</h1>
       <Button asChild size="lg" data-testid="home-cta">
         <Link href={href}>{label}</Link>
       </Button>

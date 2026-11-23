@@ -71,25 +71,31 @@ async function onCodeStep(
   }
 }
 
+/** Whether the eight boxes join to `code`, compared in the page (ER-11). */
+function codeIs(page: Page, code: string): Promise<boolean> {
+  return page.getByTestId("feishu-login-code").evaluate((root: HTMLElement, value: string) =>
+    [...root.querySelectorAll("input")].map(input => input.value).join("") === value, code);
+}
+
 /**
- * Puts `code` into the code field as one input event (as a paste does), submits it and
- * answers the verify status. The code (and every value derived from it) is passed only as
- * an `evaluate` argument and compared inside the page: `locator.fill` would write the value
- * into Playwright's call log, and `toHaveValue` into its failure message (ER-11).
+ * Pastes `code` into the boxes as one input event. A complete code submits itself and this
+ * answers the verify status. The code is passed only as an `evaluate` argument and compared
+ * inside the page: `locator.fill` would write the value into Playwright's call log, and
+ * `toHaveValue` into its failure message (ER-11).
  */
 async function submitCode(page: Page, code: string): Promise<number> {
+  const verified = page.waitForResponse(isPost("/api/auth/feishu-login/verify"));
   const field = page.getByTestId("feishu-login-code");
-  const accepted = await field.evaluate((input: HTMLInputElement, value: string) => {
+  const accepted = await field.evaluate((root: HTMLElement, value: string) => {
+    const input = root.querySelector("input");
+    if (!input) return false;
     const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
     setValue.call(input, value);
     input.dispatchEvent(new Event("input", { bubbles: true }));
-    return input.value === value;
+    return true;
   }, code);
-  expect(accepted, "the code field holds the submitted code").toBe(true);
-  // React has rendered the controlled value before the submit reads it.
-  await expect.poll(() => field.evaluate((input: HTMLInputElement, value: string) => input.value === value, code)).toBe(true);
-  const verified = page.waitForResponse(isPost("/api/auth/feishu-login/verify"));
-  await page.getByTestId("feishu-login-verify").click();
+  expect(accepted, "the code boxes received the code").toBe(true);
+  await expect.poll(() => codeIs(page, code)).toBe(true);
   return (await verified).status();
 }
 
@@ -99,8 +105,8 @@ async function expectCodeStepError(page: Page, context: BrowserContext, text: st
   await expect(step.getByRole("alert")).toHaveText(text);
   await expect(step).toBeVisible();
   await expect(page.getByTestId("feishu-login-email-step")).toHaveCount(0);
-  await expect(page.getByTestId("feishu-login-code")).toBeEnabled();
-  await expect(page.getByTestId("feishu-login-verify")).toBeEnabled();
+  await expect(page.getByTestId("feishu-login-code").locator("input").first()).toBeEnabled();
+  await expect(page.getByTestId("feishu-login-resend")).toBeVisible();
   expect(new URL(page.url()).pathname).toMatch(/\/signin\/feishu$/);
   expect((await context.cookies()).map(cookie => cookie.name)).not.toContain(SESSION_COOKIE);
 }
@@ -157,8 +163,8 @@ test.describe("FSL-130 code step error messages", () => {
       expect(await submitCode(page, wrongCode(code))).toBe(401);
       await expectCodeStepError(page, context, en.codeInvalid);
 
-      // A malformed code (seven characters, answered 400) shows the same text.
-      expect(await submitCode(page, code.slice(0, 7))).toBe(400);
+      // A complete code outside the alphabet is answered 400 and shows the same text.
+      expect(await submitCode(page, "00000000")).toBe(400);
       await expectCodeStepError(page, context, en.codeInvalid);
 
       // Still the same step and flow: the right code now signs in.

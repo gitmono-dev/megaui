@@ -11,18 +11,8 @@ type CardLabels = {
   assignedIssues: { title: string; action: string; empty: string };
   activity: { title: string; action: string; empty: string; updated: string };
   latestRelease: { title: string; action: string; latest: string; empty: string };
-  agentSessions: { title: string; action: string; empty: string };
   recentDocs: { title: string; action: string; empty: string };
   activeChannels: { title: string; unread: string; empty: string };
-  quickActions: {
-    title: string;
-    newCl: string;
-    reportIssue: string;
-    askAgent: string;
-    writeDoc: string;
-    searchCode: string;
-    draftRelease: string;
-  };
 };
 
 function Card({
@@ -60,7 +50,7 @@ function Card({
         ) : null}
       </header>
       {empty ? (
-        <p data-mega-home="card-empty" style={{ color: MEGA_TOKENS.muted, margin: 0 }}>
+        <p data-mega-home="card-empty" style={{ margin: 0 }}>
           {children}
         </p>
       ) : (
@@ -150,21 +140,6 @@ export function HomeCardGrid({
             ))}
       </Card>
       <Card
-        actionHref={`${workspaceBase}/agent`}
-        actionLabel={labels.agentSessions.action}
-        empty={cards.agentThreads.length === 0}
-        testId="agent"
-        title={labels.agentSessions.title}
-      >
-        {cards.agentThreads.length === 0
-          ? labels.agentSessions.empty
-          : cards.agentThreads.map((thread) => (
-              <Link href={`${workspaceBase}/agent/${thread.id}`} key={thread.id} style={{ display: "block", marginBottom: MEGA_SPACING_TOKENS[6] }}>
-                {thread.title}
-              </Link>
-            ))}
-      </Card>
-      <Card
         actionHref={`${workspaceBase}/docs`}
         actionLabel={labels.recentDocs.action}
         empty={cards.docs.length === 0}
@@ -191,16 +166,6 @@ export function HomeCardGrid({
                 #{channel.name}
               </Link>
             ))}
-      </Card>
-      <Card testId="quick" title={labels.quickActions.title}>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: MEGA_SPACING_TOKENS[6] }}>
-          <Link href={`${workspaceBase}/cls`}>{labels.quickActions.newCl}</Link>
-          <Link href={`${workspaceBase}/issues`}>{labels.quickActions.reportIssue}</Link>
-          <Link href={`${workspaceBase}/agent`}>{labels.quickActions.askAgent}</Link>
-          <Link href={`${workspaceBase}/docs`}>{labels.quickActions.writeDoc}</Link>
-          <Link href={`${workspaceBase}/code`}>{labels.quickActions.searchCode}</Link>
-          <Link href={`${workspaceBase}/tags`}>{labels.quickActions.draftRelease}</Link>
-        </div>
       </Card>
     </div>
   );

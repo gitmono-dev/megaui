@@ -16,7 +16,7 @@ describe("MegaBlobView", () => {
     const { container } = render(<MegaBlobView file={{ contents: "const x = 1\n", name: "a.ts" }} labels={LABELS} />)
     await waitFor(() => {
       const host = container.querySelector("diffs-container")
-      expect(host?.shadowRoot?.innerHTML.length ?? 0).toBeGreaterThan(0)
+      expect(host?.shadowRoot?.innerHTML ?? "").toMatch(/color:/)
     })
   })
 

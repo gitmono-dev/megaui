@@ -13,6 +13,22 @@ import { MEGA_RADIUS_TOKENS, MEGA_SPACING_TOKENS, MEGA_TOKENS } from "@megaui/ui
 
 import { useTranslation } from "@/hooks/use-translation";
 
+const bodyFont = {
+  color: MEGA_TOKENS.text,
+  fontSize: "var(--mega-density-font-size)",
+  fontWeight: 400,
+} as const;
+
+function shortSha(sha: string): string {
+  return sha.slice(0, 7);
+}
+
+function formatBytes(size: number): string {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export default function TagsPage() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -20,6 +36,7 @@ export default function TagsPage() {
   const [draftOpen, setDraftOpen] = useState(false);
   const [tag, setTag] = useState("");
   const [title, setTitle] = useState("");
+  const [notes, setNotes] = useState("");
   const [toast, setToast] = useState<{ tone: "success" | "error"; message: string } | null>(null);
 
   const listQuery = useQuery({
@@ -28,11 +45,17 @@ export default function TagsPage() {
   });
 
   const createMutation = useMutation({
-    mutationFn: () => megaPost<Release>("releases", { tag: tag.trim(), title: title.trim() }),
+    mutationFn: () =>
+      megaPost<Release>("releases", {
+        tag: tag.trim(),
+        title: title.trim(),
+        ...(notes.trim() ? { notes: [notes.trim()] } : {}),
+      }),
     onSuccess: () => {
       setDraftOpen(false);
       setTag("");
       setTitle("");
+      setNotes("");
       void queryClient.invalidateQueries({ queryKey: megaQueryKeys.releases() });
     },
     onError: () => setToast({ tone: "error", message: tags.draftDialog.genericError }),
@@ -56,7 +79,7 @@ export default function TagsPage() {
   if (listQuery.isPending) {
     return (
       <main aria-busy="true" data-mega-tags="page">
-        <p style={{ color: MEGA_TOKENS.muted, padding: `calc(${MEGA_SPACING_TOKENS[8]} * 3)` }}>{tags.loading}</p>
+        <p style={{ ...bodyFont, padding: `calc(${MEGA_SPACING_TOKENS[8]} * 3)` }}>{tags.loading}</p>
       </main>
     );
   }
@@ -65,7 +88,7 @@ export default function TagsPage() {
     return (
       <main data-mega-tags="page">
         <div role="alert" style={{ display: "flex", gap: MEGA_SPACING_TOKENS[8], padding: `calc(${MEGA_SPACING_TOKENS[8]} * 3)` }}>
-          <p style={{ margin: 0 }}>{tags.error}</p>
+          <p style={{ ...bodyFont, margin: 0 }}>{tags.error}</p>
           <button data-mega-tags="retry" onClick={() => void listQuery.refetch()} type="button">
             {tags.retry}
           </button>
@@ -77,13 +100,13 @@ export default function TagsPage() {
   const releases = listQuery.data?.items ?? [];
 
   return (
-    <main data-mega-tags="page" style={{ padding: `calc(${MEGA_SPACING_TOKENS[8]} * 3)` }}>
-      <header style={{ alignItems: "center", display: "flex", gap: MEGA_SPACING_TOKENS[8], marginBottom: MEGA_SPACING_TOKENS[8] }}>
-        <div>
-          <h1 style={{ fontSize: "1.4rem", fontWeight: 700, margin: 0 }}>{tags.title}</h1>
-          <p style={{ color: MEGA_TOKENS.muted, margin: 0 }}>{tags.subtitle}</p>
+    <main data-mega-tags="page" style={{ ...bodyFont, padding: `calc(${MEGA_SPACING_TOKENS[8]} * 3)` }}>
+      <header style={{ alignItems: "flex-start", display: "flex", gap: MEGA_SPACING_TOKENS[8], marginBottom: `calc(${MEGA_SPACING_TOKENS[8]} * 2)` }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <h1 style={{ margin: 0 }}>{tags.title}</h1>
+          <p style={{ color: MEGA_TOKENS.muted, fontSize: "var(--mega-density-font-size)", fontWeight: 400, margin: `${MEGA_SPACING_TOKENS[4]} 0 0` }}>{tags.subtitle}</p>
         </div>
-        <button data-mega-tags="open-draft" onClick={() => setDraftOpen(true)} style={{ marginLeft: "auto" }} type="button">
+        <button data-mega-tags="open-draft" onClick={() => setDraftOpen(true)} type="button">
           {tags.draftRelease}
         </button>
       </header>
@@ -113,25 +136,29 @@ export default function TagsPage() {
             createMutation.mutate();
           }}
           style={{
+            background: MEGA_TOKENS.bg,
             border: `1px solid ${MEGA_TOKENS.border}`,
             borderRadius: MEGA_RADIUS_TOKENS.md,
-            display: "flex",
-            flexDirection: "column",
+            display: "grid",
             gap: MEGA_SPACING_TOKENS[8],
-            marginBottom: MEGA_SPACING_TOKENS[8],
-            padding: MEGA_SPACING_TOKENS[8],
+            marginBottom: `calc(${MEGA_SPACING_TOKENS[8]} * 2)`,
+            padding: `calc(${MEGA_SPACING_TOKENS[8]} * 2)`,
           }}
         >
-          <h2 style={{ margin: 0 }}>{tags.draftDialog.title}</h2>
-          <label>
+          <h2 style={{ fontSize: "var(--mega-section-title-size)", fontWeight: 650, margin: 0 }}>{tags.draftDialog.title}</h2>
+          <label style={{ display: "grid", gap: MEGA_SPACING_TOKENS[4] }}>
             {tags.draftDialog.tagLabel}
-            <input data-mega-tags="draft-tag" onChange={(event) => setTag(event.target.value)} placeholder={tags.draftDialog.tagPlaceholder} required value={tag} />
+            <input data-mega-tags="draft-tag" onChange={(event) => setTag(event.target.value)} placeholder={tags.draftDialog.tagPlaceholder} required style={{ font: "inherit" }} value={tag} />
           </label>
-          <label>
+          <label style={{ display: "grid", gap: MEGA_SPACING_TOKENS[4] }}>
             {tags.draftDialog.titleLabel}
-            <input data-mega-tags="draft-title" onChange={(event) => setTitle(event.target.value)} placeholder={tags.draftDialog.titlePlaceholder} required value={title} />
+            <input data-mega-tags="draft-title" onChange={(event) => setTitle(event.target.value)} placeholder={tags.draftDialog.titlePlaceholder} required style={{ font: "inherit" }} value={title} />
           </label>
-          <div style={{ display: "flex", gap: MEGA_SPACING_TOKENS[8] }}>
+          <label style={{ display: "grid", gap: MEGA_SPACING_TOKENS[4] }}>
+            {tags.draftDialog.notesLabel}
+            <textarea data-mega-tags="draft-notes" onChange={(event) => setNotes(event.target.value)} placeholder={tags.draftDialog.notesPlaceholder} rows={5} style={{ font: "inherit" }} value={notes} />
+          </label>
+          <div style={{ display: "flex", gap: MEGA_SPACING_TOKENS[8], justifyContent: "flex-end" }}>
             <button data-mega-tags="draft-cancel" onClick={() => setDraftOpen(false)} type="button">
               {tags.draftDialog.cancel}
             </button>
@@ -142,34 +169,86 @@ export default function TagsPage() {
         </form>
       ) : null}
 
-      <ul data-mega-tags="list" style={{ listStyle: "none", margin: 0, padding: 0 }}>
+      <ul data-mega-tags="list" style={{ background: "transparent", border: 0, display: "grid", gap: `calc(${MEGA_SPACING_TOKENS[8]} * 2)`, listStyle: "none", margin: 0, padding: 0 }}>
         {releases.map((release) => (
           <li
             data-mega-tags="card"
             data-status={release.state}
             key={release.id}
-            style={{ border: `1px solid ${MEGA_TOKENS.border}`, borderRadius: MEGA_RADIUS_TOKENS.md, marginBottom: MEGA_SPACING_TOKENS[8], padding: MEGA_SPACING_TOKENS[8] }}
+            style={{
+              display: "grid",
+              gap: MEGA_SPACING_TOKENS[8],
+              gridTemplateColumns: "minmax(140px, 200px) minmax(0, 1fr)",
+            }}
           >
-            <strong data-mega-tags="card-tag">{release.tag}</strong> — {release.title}
-            {release.state === "draft" ? (
-              <span data-mega-tags="draft-badge" style={{ color: MEGA_TOKENS.muted, marginLeft: MEGA_SPACING_TOKENS[8] }}>
-                {tags.card.draft}
-              </span>
-            ) : (
-              <span data-mega-tags="published-badge" style={{ color: MEGA_TOKENS.muted, marginLeft: MEGA_SPACING_TOKENS[8] }}>
-                {tags.pillLatest}
-              </span>
-            )}
-            <button
-              data-mega-tags="publish"
-              data-state={release.state}
-              disabled={publishMutation.isPending}
-              onClick={() => publishMutation.mutate(release.id)}
-              style={{ marginLeft: MEGA_SPACING_TOKENS[8] }}
-              type="button"
+            <div style={{ paddingTop: MEGA_SPACING_TOKENS[8] }}>
+              <div data-mega-tags="card-tag" style={{ fontWeight: 650 }}>{release.tag}</div>
+              {release.targetSha ? (
+                <div style={{ color: MEGA_TOKENS.muted, fontFamily: MEGA_TOKENS.fontMono, marginTop: MEGA_SPACING_TOKENS[4] }}>{shortSha(release.targetSha)}</div>
+              ) : null}
+              {release.publishedAt ? (
+                <div style={{ color: MEGA_TOKENS.muted, marginTop: MEGA_SPACING_TOKENS[4] }}>{new Date(release.publishedAt).toLocaleDateString()}</div>
+              ) : null}
+            </div>
+            <div
+              style={{
+                background: MEGA_TOKENS.bg,
+                border: `1px solid ${MEGA_TOKENS.border}`,
+                borderRadius: MEGA_RADIUS_TOKENS.md,
+                minWidth: 0,
+              }}
             >
-              {tags.publish}
-            </button>
+              <div style={{ borderBottom: `1px solid ${MEGA_TOKENS.border}`, display: "flex", flexWrap: "wrap", gap: MEGA_SPACING_TOKENS[8], padding: MEGA_SPACING_TOKENS[8] }}>
+                <h2 style={{ flex: 1, fontSize: "var(--mega-section-title-size)", fontWeight: 650, margin: 0, minWidth: 0 }}>{release.title}</h2>
+                {release.state === "draft" ? (
+                  <span data-mega-tags="draft-badge" style={{ color: MEGA_TOKENS.muted }}>{tags.card.draft}</span>
+                ) : (
+                  <span data-mega-tags="published-badge" style={{ color: MEGA_TOKENS.muted }}>{tags.pillLatest}</span>
+                )}
+                {release.state === "draft" ? (
+                  <button
+                    data-mega-tags="publish"
+                    data-state={release.state}
+                    disabled={publishMutation.isPending}
+                    onClick={() => publishMutation.mutate(release.id)}
+                    type="button"
+                  >
+                    {tags.publish}
+                  </button>
+                ) : null}
+              </div>
+              <div style={{ padding: MEGA_SPACING_TOKENS[8] }}>
+                <p style={{ margin: `0 0 ${MEGA_SPACING_TOKENS[8]}` }}>
+                  {release.author.displayName}
+                  {release.publishedAt ? ` · ${new Date(release.publishedAt).toLocaleString()}` : ""}
+                </p>
+                {release.commitsSince > 0 ? (
+                  <p style={{ color: MEGA_TOKENS.muted, margin: `0 0 ${MEGA_SPACING_TOKENS[8]}` }}>
+                    {tags.card.commitsSince.replace("{count}", String(release.commitsSince)).replace("{since}", release.sinceTag ?? release.tag)}
+                  </p>
+                ) : null}
+                {release.notes.length > 0 ? (
+                  <ul style={{ margin: `0 0 ${MEGA_SPACING_TOKENS[8]}`, paddingLeft: `calc(${MEGA_SPACING_TOKENS[8]} * 2)` }}>
+                    {release.notes.map((note) => (
+                      <li key={note.id}>{note.text}</li>
+                    ))}
+                  </ul>
+                ) : null}
+                {release.assets.length > 0 ? (
+                  <div>
+                    <h3 style={{ fontSize: "var(--mega-density-font-size)", fontWeight: 650, margin: `0 0 ${MEGA_SPACING_TOKENS[6]}` }}>{tags.card.assets.title}</h3>
+                    <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+                      {release.assets.map((asset) => (
+                        <li key={asset.id} style={{ alignItems: "center", borderTop: `1px solid ${MEGA_TOKENS.border}`, display: "flex", gap: MEGA_SPACING_TOKENS[8], padding: `${MEGA_SPACING_TOKENS[6]} 0` }}>
+                          <a href={asset.downloadUrl}>{asset.name}</a>
+                          <span style={{ color: MEGA_TOKENS.muted, marginLeft: "auto" }}>{formatBytes(asset.sizeBytes)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+              </div>
+            </div>
           </li>
         ))}
       </ul>

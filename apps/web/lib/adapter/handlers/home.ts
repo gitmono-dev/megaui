@@ -4,19 +4,22 @@ import type { Workspace } from "@megaui/core";
 import { fetchWorkspace } from "@megaui/engine";
 
 import { getHomeDashboard } from "@/lib/adapter/home";
+import { getSiteName } from "@/lib/site-name";
 import { registerMegaRoute, type MegaDispatchContext } from "../dispatch";
 import { resolveActorUserId } from "../session";
 import { only } from "./shared";
 
-const LOCAL_WORKSPACE: Workspace = {
-  id: "mega",
-  name: "Mega",
-  description: "",
-  defaultBranch: "main",
-  headSha: "",
-  starred: false,
-  packages: [],
-};
+function localWorkspace(): Workspace {
+  return {
+    id: "mega",
+    name: getSiteName(),
+    description: "",
+    defaultBranch: "main",
+    headSha: "",
+    starred: false,
+    packages: [],
+  };
+}
 
 registerMegaRoute({
   match: (method, segments) => method === "GET" && only(segments, ["home"]),
@@ -33,7 +36,7 @@ registerMegaRoute({
       return await fetchWorkspace({ headers: context.headers });
     } catch {
       // Home shell needs a workspace name without live mega2 (WA-08 owns code fail-closed).
-      return LOCAL_WORKSPACE;
+      return localWorkspace();
     }
   },
 });

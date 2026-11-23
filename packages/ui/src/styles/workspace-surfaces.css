@@ -151,12 +151,11 @@
 /* White panels use the comment card's quiet border, radius and padding. */
 :is(
   [data-mega-home="card"], [data-mega-settings="card"],
-  [data-mega-agent="conversation"], [data-mega-agent="sources"],
-  [data-mega-tags="card"], [data-mega-code="quick-card"],
+  [data-mega-agent="sources"],
+  [data-mega-code="quick-card"],
   [data-mega-session="usage"], [data-mega-session="decisions"],
   [data-mega-session="evidence"], [data-mega-session="citations"]
 ),
-[data-mega-inbox="page"] > section,
 [data-mega-surface] [data-slot="card"] {
   background: var(--mega-bg);
   border: 1px solid var(--mega-border) !important;
@@ -205,13 +204,234 @@
 [data-mega-home="hero"] > div { min-width: min(100%, 240px); }
 
 [data-mega-inbox="page"] {
-  gap: 20px !important;
-  padding: var(--mega-page-gutter) !important;
+  display: flex;
+  flex-direction: column;
+  gap: 0 !important;
+  min-height: 100%;
+  padding: 0 !important;
 }
 
-:is([data-mega-agent="thread"], [data-mega-chat="channel"], [data-mega-chat="dm"]) {
+[data-mega-inbox="chrome"] {
+  padding: var(--mega-page-gutter) var(--mega-page-gutter) 0;
+}
+
+[data-mega-inbox="chrome"] > div {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+[data-mega-inbox="chrome"] h1 { margin: 0; }
+
+[data-mega-inbox="unread-count"] {
+  color: var(--mega-muted);
+  font-size: var(--mega-field-font-size);
+}
+
+[data-mega-inbox="filters"] { margin-top: 12px; }
+
+:is([data-mega-inbox="filter-all"], [data-mega-inbox="filter-unread"])[data-active="true"] {
+  background: var(--mega-active-bg) !important;
+  border-color: var(--mega-accent-tint-44);
+  color: var(--mega-active-fg) !important;
+}
+
+[data-mega-inbox="board"] {
+  background: var(--mega-bg);
+  border: 1px solid var(--mega-border);
+  border-radius: var(--mega-panel-radius);
+  display: flex;
+  flex: 1;
+  margin: 16px var(--mega-page-gutter) var(--mega-page-gutter);
+  min-height: 480px;
+  overflow: hidden;
+}
+
+[data-mega-inbox="board"] > section {
+  min-width: 0;
+}
+
+[data-mega-inbox="board"] > section:first-child {
+  border-right: 1px solid var(--mega-border);
+  flex: 1;
+}
+
+[data-mega-inbox="pane"] { flex: 1.2; padding: 20px; }
+
+:is([data-mega-inbox="empty"], [data-mega-inbox="pane-empty"]) { margin: 0; }
+
+[data-mega-inbox="empty"] { padding: 20px; }
+
+/* Empty copy uses the rail navigation type: density size, regular weight, body color. */
+:is(
+  [data-mega-home="card-empty"],
+  [data-mega-inbox="empty"],
+  [data-mega-inbox="pane-empty"],
+  [data-mega-issues="empty"],
+  [data-mega-cls="empty"],
+  [data-mega-cls="inline-empty"],
+  [data-mega-cls="commits-empty"],
+  [data-mega-cls="checks-empty"],
+  [data-mega-cls="files-empty"],
+  [data-mega-cls="revisions-empty"],
+  [data-mega-cls="deps-empty"],
+  [data-mega-code="empty"],
+  [data-mega-docs="empty"],
+  [data-mega-docs="comments-empty"],
+  [data-mega-docs="share-empty"],
+  [data-mega-docs="graph-empty"],
+  [data-mega-docs="empty-body"],
+  [data-mega-settings="tokens-empty"],
+  [data-mega-settings="ssh-empty"],
+  [data-mega-agent="citations-empty"],
+  [data-mega-chat="members-empty"],
+  [data-mega-shell="rail-empty"],
+  [data-mega-palette="empty"],
+  [data-slot="empty-state"][data-tone="empty"] :is(h3, p)
+) {
+  color: var(--mega-text) !important;
+  font-size: var(--mega-density-font-size) !important;
+  font-weight: 400 !important;
+}
+
+[data-mega-inbox="list"] { list-style: none; margin: 0; padding: 0; }
+
+[data-mega-inbox="page"] > :is(p, [role="alert"]) { padding: var(--mega-page-gutter); }
+
+:is([data-mega-chat="channel"], [data-mega-chat="dm"]) {
   gap: 16px !important;
   padding: 24px !important;
+}
+
+[data-mega-agent="thread"] {
+  background: var(--mega-bg) !important;
+  color: var(--mega-text);
+  font-size: var(--mega-density-font-size);
+  font-weight: 400;
+  gap: 0 !important;
+  height: 100%;
+  padding: 0 !important;
+}
+
+[data-mega-agent="thread"] h1 {
+  font-size: var(--mega-density-font-size) !important;
+  font-weight: 600 !important;
+  letter-spacing: 0 !important;
+  line-height: 1.5 !important;
+}
+
+[data-mega-agent="rail"] {
+  background: var(--mega-subtle);
+  border-right: 1px solid var(--mega-border);
+  font-size: var(--mega-density-font-size);
+  padding: 12px;
+  width: 220px;
+}
+
+[data-mega-agent="rail-item"] {
+  border-radius: var(--mega-radius-md);
+  color: var(--mega-text);
+  display: block;
+  font-size: var(--mega-density-font-size);
+  font-weight: 400;
+  padding: 8px 10px;
+  text-decoration: none;
+}
+
+[data-mega-agent="rail-item"][data-active="true"] {
+  background: var(--mega-active-bg);
+  color: var(--mega-active-fg);
+}
+
+[data-mega-agent="thread"] > section {
+  background: var(--mega-bg);
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+[data-mega-agent="conversation"] {
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  flex: 1;
+  padding: 8px 0 0 !important;
+}
+
+[data-mega-agent="conversation"] > [data-message-role] {
+  box-sizing: border-box;
+  color: var(--mega-text);
+  font-size: var(--mega-density-font-size) !important;
+  font-weight: 400;
+  margin-inline: auto;
+  padding-inline: 16px;
+  width: min(768px, 100%);
+}
+
+[data-mega-agent="conversation"] [data-message-role="user"] > div {
+  background: var(--mega-subtle) !important;
+  border-radius: 18px;
+  color: var(--mega-text) !important;
+  font-size: var(--mega-density-font-size) !important;
+  font-weight: 400;
+  max-width: min(80%, 560px);
+}
+
+[data-mega-agent="conversation"] [data-message-role="assistant"] > div {
+  background: transparent !important;
+  color: var(--mega-text) !important;
+  font-size: var(--mega-density-font-size) !important;
+  font-weight: 400;
+  max-width: 100%;
+}
+
+[data-mega-agent="composer-dock"] {
+  margin: 0 auto 16px;
+  width: min(768px, calc(100% - 32px));
+}
+
+[data-mega-agent="composer"] {
+  align-items: flex-end;
+  background: var(--mega-bg);
+  border: 1px solid var(--mega-border) !important;
+  border-radius: 24px;
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--mega-text) 8%, transparent);
+  gap: 8px;
+  margin: 0;
+  padding: 8px 8px 8px 16px;
+}
+
+[data-mega-agent="composer-input"] {
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  font-size: var(--mega-density-font-size) !important;
+  font-weight: 400;
+  min-height: 40px;
+  padding: 8px 0 !important;
+  resize: none;
+}
+
+[data-mega-agent="regenerate"] {
+  background: transparent;
+  border: 0;
+  color: var(--mega-muted);
+  font-size: var(--mega-density-font-size);
+  font-weight: 400;
+  margin: 0 0 8px;
+  padding: 0;
+}
+
+[data-mega-agent="sources"] {
+  background: var(--mega-subtle);
+  border-left: 1px solid var(--mega-border);
+  font-size: var(--mega-density-font-size);
+  font-weight: 400;
+  width: 280px;
 }
 
 :is([data-mega-agent="rail"], [data-mega-code="tree"]) { background: var(--mega-subtle); }
@@ -277,11 +497,13 @@
 }
 
 @media (max-width: 840px) {
-  [data-mega-settings="page"], [data-mega-inbox="page"] { flex-direction: column !important; }
-  [data-mega-agent="composer-input"], [data-mega-chat="composer-input"], [data-mega-chat="thread-composer-input"] { flex-basis: 100% !important; width: 100%; min-height: 80px; }
+  [data-mega-settings="page"], [data-mega-inbox="board"] { flex-direction: column !important; }
+  [data-mega-tags="card"] { grid-template-columns: 1fr !important; }
+  [data-mega-chat="composer-input"], [data-mega-chat="thread-composer-input"] { flex-basis: 100% !important; width: 100%; min-height: 80px; }
   [data-mega-chat="composer"], [data-mega-chat="thread-composer"] { flex-wrap: wrap; }
   [data-mega-settings="nav"] { flex-direction: row !important; flex-wrap: wrap; min-width: 0 !important; }
-  [data-mega-inbox="page"] > section { min-width: 0 !important; width: 100% !important; }
+  [data-mega-inbox="board"] > section { border-right: 0 !important; min-width: 0 !important; width: 100% !important; }
+  [data-mega-inbox="board"] > section:first-child { border-bottom: 1px solid var(--mega-border); }
   [data-mega-code="page"]:has([data-mega-code="tree"]) { grid-template-columns: minmax(0, 1fr) !important; }
   [data-mega-code="tree"] { border-bottom: 1px solid var(--mega-border); border-right: 0 !important; max-height: 180px; }
 }

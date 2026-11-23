@@ -47,15 +47,11 @@ for (const width of [320, 768, 1024, 1440]) {
     await context.addCookies(mintSessionCookies().cookies);
     await page.setViewportSize({ width, height: 900 });
     await stubSurfaceApis(page);
-    for (const path of ['/issues', '/cls', '/tags', '/settings?section=appearance', '/channels/new', '/agent/surface-thread']) {
+    for (const path of ['/issues', '/cls', '/tags', '/settings?section=appearance', '/channels/new']) {
       await page.goto(`/en/workspace${path}`);
       const surface = page.locator('[data-mega-shell="workspace-content"]');
       await expect(surface.locator('h1').first()).toBeVisible();
       await expect.poll(() => surface.evaluate(el => el.scrollWidth - el.clientWidth), { message: `Overflow on ${path} at ${width}px` }).toBeLessThanOrEqual(1);
-    }
-    if (width <= 840) {
-      const composer = await page.locator('[data-mega-agent="composer-input"]').boundingBox();
-      expect(composer!.width).toBeGreaterThan(200);
     }
     await page.screenshot({ path: testInfo.outputPath(`workspace-${width}.png`) });
   });

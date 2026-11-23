@@ -148,8 +148,6 @@ export const zhCN = {
         requestFailed: "验证码未能发送，请重试。",
         codeSent: "如果 {email} 属于本组织成员，登录验证码已通过飞书发送。",
         code: "验证码",
-        codePlaceholder: "8 位验证码",
-        verify: "登录",
         verifying: "登录中…",
         verifyFailed: "登录未完成，请重试。",
         codeInvalid: "验证码无效或已过期。",
@@ -157,8 +155,7 @@ export const zhCN = {
         codeRetry: "登录未完成，请重新获取验证码。",
         resend: "重新发送",
         resendWait: "{seconds} 秒后可重新发送",
-        codeResent: "已重新请求验证码，此前发送的验证码不再有效。",
-        changeEmail: "更换邮箱"
+        codeResent: "已重新请求验证码，此前发送的验证码不再有效。"
       }
     },
     signup: {
@@ -314,8 +311,8 @@ export const zhCN = {
         docs: "文档",
         agent: "智能助手",
         code: "代码",
-        tags: "标签",
-        cls: "变更列表",
+        tags: "版本",
+        cls: "变更",
         issues: "议题"
       },
       favorites: "收藏",
@@ -335,7 +332,7 @@ export const zhCN = {
       countsError: "未读计数暂时不可用。",
       retry: "重试",
       unread: "未读",
-      openChangeLists: "个开放变更列表",
+      openChangeLists: "个开放变更",
       mentions: "提及",
       presence: {
         online: "在线",
@@ -345,6 +342,7 @@ export const zhCN = {
       },
       currentUser: "当前用户",
       openProfile: "打开个人资料设置",
+      accountMenu: "账号菜单",
       userLoading: "正在加载用户"
     },
     palette: {
@@ -357,12 +355,12 @@ export const zhCN = {
         navigation: "导航",
         actions: "快捷动作",
         issues: "议题",
-        cls: "变更列表",
+        cls: "变更",
         docs: "文档",
         files: "文件",
         bodyDocs: "文档正文",
         bodyIssues: "议题正文",
-        bodyCls: "变更列表正文",
+        bodyCls: "变更正文",
         bodyComments: "评论",
         bodyMessages: "消息"
       },
@@ -376,7 +374,7 @@ export const zhCN = {
         chat_message: "消息"
       },
       actions: {
-        newCl: "新建变更列表",
+        newCl: "新建变更",
         reportIssue: "报告议题",
         askAgent: "询问智能助手",
         writeDoc: "撰写文档"
@@ -414,7 +412,7 @@ export const zhCN = {
         reviewCls: {
           title: "待我 review 的 CL",
           action: "全部",
-          empty: "暂无待你 review 的变更列表。"
+          empty: "暂无待你 review 的变更。"
         },
         assignedIssues: {
           title: "指派给我的 Issue",
@@ -429,7 +427,7 @@ export const zhCN = {
         },
         latestRelease: {
           title: "最新发布",
-          action: "标签",
+          action: "版本",
           latest: "最新",
           empty: "暂无发布。"
         },
@@ -447,15 +445,6 @@ export const zhCN = {
           title: "活跃频道",
           unread: "未读",
           empty: "暂无活跃频道。"
-        },
-        quickActions: {
-          title: "快捷入口",
-          newCl: "新建 CL",
-          reportIssue: "报 Issue",
-          askAgent: "问 Agent",
-          writeDoc: "写文档",
-          searchCode: "搜索代码",
-          draftRelease: "草拟 release"
         }
       }
     },
@@ -471,7 +460,7 @@ export const zhCN = {
         starUnavailable: "Code 使用 mega2 后端时暂不支持收藏。",
         unstarAriaLabel: "取消收藏此工作区",
         packagesCount: "{count} 个包",
-        activeCls: "{count} 个进行中的变更列表",
+        activeCls: "{count} 个进行中的变更",
         newCl: "新建 CL"
       },
       stats: {
@@ -503,7 +492,7 @@ export const zhCN = {
         }
       },
       quickLinks: {
-        openClsTitle: "{count} 个开放变更列表",
+        openClsTitle: "{count} 个开放变更",
         openIssuesTitle: "{count} 个开放议题",
         p1Count: "{count} 个 P1",
         assignedToYou: "{count} 个指派给你"
@@ -537,7 +526,7 @@ export const zhCN = {
           copied: "已复制！",
           download: "下载",
           edit: "编辑",
-          editTooltip: "编辑经由变更列表进行",
+          editTooltip: "编辑经由变更进行",
           newCl: "新建 CL",
           contentUnavailable: "内容不可用"
         }
@@ -567,19 +556,19 @@ export const zhCN = {
         updatedActivity: "{actor} 更新了 {ref}",
         noPackage: "此路径不属于任何包。",
         noData: "—",
-        loadError: "变更列表暂时不可用。",
+        loadError: "变更暂时不可用。",
         retry: "重试"
       }
     },
     tags: {
-      title: "Tags",
+      title: "版本",
       subtitle: "发布版本 · git tag",
       loading: "正在加载版本",
       error: "版本暂时不可用。",
       retry: "重试",
-      viewAriaLabel: "Tags 视图",
+      viewAriaLabel: "版本视图",
       viewReleases: "Releases",
-      viewTags: "Tags",
+      viewTags: "版本",
       draftRelease: "草拟 release",
       draftDate: "草稿",
       pillLatest: "Latest",
@@ -598,7 +587,7 @@ export const zhCN = {
         }
       },
       flat: {
-        tableAriaLabel: "标签列表",
+        tableAriaLabel: "版本列表",
         tag: "Tag",
         sha: "SHA",
         date: "日期"
@@ -1180,7 +1169,7 @@ export const zhCN = {
           reply: "打开会话",
           dm: "打开私信",
           invite: "打开频道",
-          review: "打开变更列表",
+          review: "打开变更",
           ci: "打开检查",
           cifail: "打开检查",
           issue: "打开议题"
@@ -1603,15 +1592,15 @@ export const zhCN = {
       }
     },
     clsList: {
-      title: "变更列表",
+      title: "变更",
       replacesPr: "CL 取代 Pull Request",
       newCl: "新建 CL",
-      filterAriaLabel: "过滤变更列表",
+      filterAriaLabel: "过滤变更",
       filterPlaceholder: "is:open reviewer:@me pkg:*",
-      loading: "正在加载变更列表",
-      error: "变更列表暂时不可用。",
+      loading: "正在加载变更",
+      error: "变更暂时不可用。",
       retry: "重试",
-      empty: "没有符合过滤条件的变更列表。",
+      empty: "没有符合过滤条件的变更。",
 
       pageSize: 20,
       pagination: {
@@ -1671,7 +1660,7 @@ export const zhCN = {
         }
       },
       newDialog: {
-        title: "新建变更列表",
+        title: "新建变更",
         titleLabel: "标题",
         titlePlaceholder: "这个 CL 改了什么？",
         packageLabel: "所属包",
@@ -1684,14 +1673,14 @@ export const zhCN = {
       }
     },
     clDetail: {
-      notFoundTitle: "变更列表不存在",
+      notFoundTitle: "变更不存在",
       notFoundBody: "CL !{number} 不存在。",
-      backToList: "返回变更列表",
-      loading: "正在加载变更列表",
-      error: "变更列表暂时不可用。",
+      backToList: "返回变更",
+      loading: "正在加载变更",
+      error: "变更暂时不可用。",
       retry: "重试",
       chrome: {
-        breadcrumbCls: "变更列表",
+        breadcrumbCls: "变更",
         states: {
           wip: "WIP",
           ready: "就绪",
@@ -1906,7 +1895,7 @@ export const zhCN = {
           saving: "保存中…",
           saved: "已保存",
           autoSaveHint: "2 秒后自动保存",
-          placeholder: "描述此变更列表…",
+          placeholder: "描述此变更…",
           saveFailed: "保存失败 — 请重试"
         },
         thread: {
@@ -2085,7 +2074,7 @@ export const zhCN = {
           labels: "标签",
           package: "Package",
           milestone: "里程碑",
-          linkedCls: "关联变更列表",
+          linkedCls: "关联变更",
           participants: "参与者",
           progress: "完成 {percent}%",
           none: "无",

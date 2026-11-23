@@ -1,6 +1,6 @@
 // megaui-only (FSL-129 AC2): every text of the Feishu sign-in page has a key in both the
 // `zh-CN` and the `en` dictionaries (`auth.signin.feishu`, GC-14). FSL-130 adds the code
-// step's per-status verify messages, FSL-155 its resend and change-email texts.
+// step's per-status verify messages, FSL-155 its resend texts.
 //
 // The keys the page and its two step components read are collected from their source
 // (`copy.<key>`, where `copy` is `auth.signin.feishu`), so a new text cannot be added
@@ -37,13 +37,13 @@ describe("FSL-129 Feishu sign-in page texts", () => {
   it("the page reads its texts from the dictionary", () => {
     expect(used).toEqual(expect.arrayContaining([
       "title", "description", "email", "emailPlaceholder", "request", "requesting", "invalidEmail",
-      "requestFailed", "codeSent", "code", "codePlaceholder", "verify", "verifying", "verifyFailed",
+      "requestFailed", "codeSent", "code", "verifying", "verifyFailed",
       "codeInvalid", "accountConflict", "codeRetry",
     ]));
   });
 
   it("FSL-155: the code step reads its resend and change-email texts from the dictionary", () => {
-    expect(used).toEqual(expect.arrayContaining(["resend", "resendWait", "codeResent", "changeEmail"]));
+    expect(used).toEqual(expect.arrayContaining(["resend", "resendWait", "codeResent"]));
     for (const locale of LOCALES) {
       const copy = getTranslation(locale).auth.signin.feishu;
       // The countdown keeps exactly one seconds placeholder, and the two resend labels differ.

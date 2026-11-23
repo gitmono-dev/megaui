@@ -141,26 +141,31 @@ export default function InboxPage() {
     toast === inbox.error || toast === inbox.rail.markAllReadError || toast === inbox.pane.quickReply.failed;
 
   return (
-    <main data-mega-inbox="page" style={{ display: "flex", gap: MEGA_SPACING_TOKENS[8], minHeight: 480, padding: `calc(${MEGA_SPACING_TOKENS[8]} * 2)` }}>
-      <section style={{ borderRight: `1px solid ${MEGA_TOKENS.border}`, flex: 1, minWidth: 280, paddingRight: MEGA_SPACING_TOKENS[8] }}>
-        <header style={{ alignItems: "center", display: "flex", flexWrap: "wrap", gap: MEGA_SPACING_TOKENS[8], marginBottom: MEGA_SPACING_TOKENS[8] }}>
-          <h1 style={{ fontSize: "1.2rem", fontWeight: 700, margin: 0 }}>{inbox.rail.title}</h1>
+    <main data-mega-inbox="page">
+      <header data-mega-inbox="chrome">
+        <div>
+          <h1>{inbox.rail.title}</h1>
           <span data-mega-inbox="unread-count">{inbox.list.unreadSummary.replace("{count}", String(unreadCount))}</span>
+        </div>
+        <div data-mega-inbox="filters">
           <button data-mega-inbox="filter-all" data-active={filter === "all" ? "true" : "false"} onClick={() => setFilter("all")} type="button">
             {inbox.rail.all}
           </button>
           <button data-mega-inbox="filter-unread" data-active={filter === "unread" ? "true" : "false"} onClick={() => setFilter("unread")} type="button">
             {inbox.list.sortUnreadFirst}
           </button>
+          <span style={{ flex: 1 }} />
           <button data-mega-inbox="mark-all-read" disabled={markAllMutation.isPending} onClick={() => markAllMutation.mutate()} type="button">
             {inbox.rail.markAllRead}
           </button>
-        </header>
-
+        </div>
+      </header>
+      <div data-mega-inbox="board">
+      <section>
         {items.length === 0 ? (
           <p data-mega-inbox="empty">{inbox.list.empty}</p>
         ) : (
-          <ul aria-label={inbox.list.listAriaLabel} data-mega-inbox="list" style={{ listStyle: "none", margin: 0, padding: 0 }}>
+          <ul aria-label={inbox.list.listAriaLabel} data-mega-inbox="list">
             {items.map((item) => (
               <li data-mega-inbox="row" data-read={item.readAt ? "true" : "false"} key={item.id}>
                 <NotificationListItem
@@ -180,7 +185,7 @@ export default function InboxPage() {
         )}
       </section>
 
-      <section data-mega-inbox="pane" style={{ flex: 1.2, minWidth: 280 }}>
+      <section data-mega-inbox="pane">
         {toast ? (
           <div
             data-mega-inbox="toast"
@@ -229,6 +234,7 @@ export default function InboxPage() {
           </div>
         )}
       </section>
+      </div>
     </main>
   );
 }

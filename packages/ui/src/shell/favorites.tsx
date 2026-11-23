@@ -89,8 +89,6 @@ export function deriveFavorite(
         return { href, icon: "book", title: `${navLabels.docs} · ${second}` }
       case "sessions":
         return { href, icon: "terminal", title: second }
-      case "agent":
-        return { href, icon: "sparkle", title: `${navLabels.agent} · ${second}` }
       case "code":
         return { href, icon: "code", title: segments.at(-1) ?? first }
       default:

@@ -11,6 +11,7 @@ import type { ReactNode } from "react";
 
 import { ThemeScript } from "@/components/theme-script";
 import { i18n } from "@/lib/i18n-config";
+import { applySiteName, getSiteName } from "@/lib/site-name";
 
 type LangParams = { params: Promise<{ lang: string }> };
 
@@ -20,10 +21,10 @@ export function generateStaticParams() {
 
 export async function generateMetadata({ params }: LangParams): Promise<Metadata> {
   const { lang } = await params;
-  if (!isValidLocale(lang)) return { title: "Mega" };
+  if (!isValidLocale(lang)) return { title: getSiteName() };
 
   const { title, description } = getTranslation(lang).home.metadata;
-  return { title, description };
+  return { title: applySiteName(title), description: applySiteName(description) };
 }
 
 export default async function LangLayout({ children, params }: LangParams & { children: ReactNode }) {

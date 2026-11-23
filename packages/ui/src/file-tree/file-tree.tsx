@@ -50,7 +50,7 @@ interface TreeRowProps {
   active: boolean
   focused: boolean
   id: string
-  onRowClick(row: FlatTreeRow): void
+  onRowClick(row: FlatTreeRow, chevron: boolean): void
   row: FlatTreeRow
   rowHeight: number
   treeState: TreeState
@@ -69,7 +69,7 @@ function TreeRow({ active, focused, id, onRowClick, row, rowHeight, treeState }:
       data-focused={focused ? "true" : "false"}
       data-mega-tree="row"
       id={id}
-      onClick={() => onRowClick(row)}
+      onClick={(event) => onRowClick(row, event.target instanceof Element && event.target.closest("[data-mega-tree='chevron']") != null)}
       role="treeitem"
       style={{
         alignItems: "center",
@@ -141,13 +141,13 @@ export function MegaFileTree({
     virtualizer.measure()
   }, [rowHeight])
 
-  // URL sync: whenever the active path changes (e.g. a jump/search result),
-  // its ancestor directories expand so the highlighted row is visible.
-  // `treeState.expand` is stable across renders; this intentionally only reruns per `activePath`.
+  // URL sync: the active file's ancestors, and the active directory itself, stay
+  // open the way GitHub's file tree does after a click navigates.
+  // `treeState.expand` is stable; this intentionally only reruns per `activePath`.
   useEffect(() => {
     if (!activePath) return
-    const segments = activePath.split("/")
-    for (let index = 1; index < segments.length; index += 1) {
+    const segments = activePath.split("/").filter(Boolean)
+    for (let index = 1; index <= segments.length; index += 1) {
       treeState.expand(segments.slice(0, index).join("/"))
     }
   }, [activePath])
@@ -181,19 +181,27 @@ export function MegaFileTree({
   }, [rows])
 
   const handleRowClick = useCallback(
-    (row: FlatTreeRow) => {
+    (row: FlatTreeRow, chevron: boolean) => {
       const index = findRowIndex(rows, row.node.path)
       if (index >= 0) focusRow(index)
-      if (row.isDirectory) {
-        const expanded = treeState.isExpanded(row.node.path)
-        if (!expanded) {
-          treeState.expand(row.node.path)
-          onDirectoryToggle?.(row.node.path, true)
-        }
+      if (!row.isDirectory) {
         onSelect(row.node)
-      } else {
-        onSelect(row.node)
+        return
       }
+      const expanded = treeState.isExpanded(row.node.path)
+      // The chevron only opens or closes the folder. The name navigates, like GitHub,
+      // and opens a collapsed folder so its entries appear in the tree.
+      if (chevron) {
+        if (expanded) treeState.collapse(row.node.path)
+        else treeState.expand(row.node.path)
+        onDirectoryToggle?.(row.node.path, !expanded)
+        return
+      }
+      if (!expanded) {
+        treeState.expand(row.node.path)
+        onDirectoryToggle?.(row.node.path, true)
+      }
+      onSelect(row.node)
     },
     [focusRow, onDirectoryToggle, onSelect, rows, treeState]
   )
@@ -214,7 +222,7 @@ export function MegaFileTree({
         treeState.collapse(action.path)
         onDirectoryToggle?.(action.path, false)
       } else {
-        handleRowClick(action.row)
+        handleRowClick(action.row, false)
       }
     },
     [focusIndex, focusRow, handleRowClick, onDirectoryToggle, rows, treeState, virtualizer]

@@ -2,6 +2,8 @@
 import { getTranslation, isValidLocale, type Translations } from "@megaui/i18n";
 import type { Metadata } from "next";
 
+import { applySiteName } from "@/lib/site-name";
+
 type AuthPage = keyof Translations["auth"]["metadata"];
 
 type LayoutParams = { params: Promise<{ lang: string }> };
@@ -15,6 +17,10 @@ export function authPageMetadata(page: AuthPage) {
   return async function generateMetadata({ params }: LayoutParams): Promise<Metadata> {
     const { lang } = await params;
     const { title, description, keywords } = getTranslation(isValidLocale(lang) ? lang : "en").auth.metadata[page];
-    return { title, description, keywords };
+    return {
+      title: applySiteName(title),
+      description: applySiteName(description),
+      keywords: applySiteName(keywords),
+    };
   };
 }

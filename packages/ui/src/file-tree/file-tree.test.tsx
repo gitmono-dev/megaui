@@ -81,6 +81,31 @@ describe("MegaFileTree", () => {
     expect(screen.getByText("util.ts")).toBeInTheDocument()
   })
 
+  it("opens the active directory itself, even when its data is not flagged expanded", async () => {
+    const nodes: readonly FileTreeNode[] = [
+      {
+        name: "project",
+        path: "project",
+        kind: "directory",
+        children: [{ name: ".gitkeep", path: "project/.gitkeep", kind: "file" }],
+      },
+    ]
+    render(<MegaFileTree activePath="project" labels={LABELS} nodes={nodes} onSelect={vi.fn()} />)
+    expect(await screen.findByText(".gitkeep")).toBeInTheDocument()
+  })
+
+  it("toggles a directory from its chevron without selecting it", () => {
+    const onDirectoryToggle = vi.fn()
+    const onSelect = vi.fn()
+    render(<MegaFileTree labels={LABELS} nodes={SMALL_TREE} onDirectoryToggle={onDirectoryToggle} onSelect={onSelect} />)
+    const chevron = document.querySelector("[data-mega-tree='chevron']")
+    if (!chevron) throw new Error("expected a directory chevron")
+    fireEvent.click(chevron)
+    expect(onDirectoryToggle).toHaveBeenCalledWith("src", false)
+    expect(onSelect).not.toHaveBeenCalled()
+    expect(screen.queryByText("index.ts")).not.toBeInTheDocument()
+  })
+
   it("supports keyboard navigation (ArrowDown moves focus, Enter selects)", () => {
     const onSelect = vi.fn()
     render(<MegaFileTree labels={LABELS} nodes={SMALL_TREE} onSelect={onSelect} />)

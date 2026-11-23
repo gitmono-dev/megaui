@@ -238,7 +238,7 @@ export async function handleInternalNotificationEmail(request: Request): Promise
     || (typeof payloadRecord.referencedLink === "string" && payloadRecord.referencedLink)
     || (typeof payloadRecord.sourceLink === "string" && payloadRecord.sourceLink)
     || "https://example.com";
-  const appName = process.env.MEGA_PRODUCT_NAME?.trim() || "Mega";
+  const appName = process.env.MEGA_SITE_NAME?.trim() || process.env.MEGA_PRODUCT_NAME?.trim() || "Mega";
 
   const rendered = generateProductNotificationEmail({
     eventType,

@@ -148,8 +148,6 @@ export const en = {
         requestFailed: "The code could not be sent. Please try again.",
         codeSent: "If {email} belongs to a member, a sign-in code has been sent to your Feishu.",
         code: "Verification code",
-        codePlaceholder: "8-character code",
-        verify: "Sign in",
         verifying: "Signing in...",
         verifyFailed: "Sign-in could not be completed. Please try again.",
         codeInvalid: "The code is invalid or has expired.",
@@ -157,8 +155,7 @@ export const en = {
         codeRetry: "Sign-in could not be completed. Please request a new code.",
         resend: "Resend code",
         resendWait: "Resend in {seconds}s",
-        codeResent: "A new code has been requested. Codes sent before it no longer work.",
-        changeEmail: "Use a different email"
+        codeResent: "A new code has been requested. Codes sent before it no longer work."
       }
     },
     signup: {
@@ -345,6 +342,7 @@ export const en = {
       },
       currentUser: "Current user",
       openProfile: "Open profile settings",
+      accountMenu: "Account menu",
       userLoading: "Loading user"
     },
     palette: {
@@ -447,15 +445,6 @@ export const en = {
           title: "Active channels",
           unread: "unread",
           empty: "No active channels."
-        },
-        quickActions: {
-          title: "Quick actions",
-          newCl: "New CL",
-          reportIssue: "Report Issue",
-          askAgent: "Ask Agent",
-          writeDoc: "Write doc",
-          searchCode: "Search code",
-          draftRelease: "Draft release"
         }
       }
     },

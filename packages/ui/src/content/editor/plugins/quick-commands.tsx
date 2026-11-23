@@ -5,16 +5,18 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
+  $createTextNode,
   COMMAND_PRIORITY_CRITICAL,
   COMMAND_PRIORITY_HIGH,
   KEY_ARROW_DOWN_COMMAND,
   KEY_ARROW_UP_COMMAND,
   KEY_ENTER_COMMAND,
+  type LexicalNode,
   type TextNode,
 } from "lexical";
 import { LexicalTypeaheadMenuPlugin, MenuOption } from "@lexical/react/LexicalTypeaheadMenuPlugin";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { $createOutlineTable, $isMegaBlockNode } from "@megaui/content";
+import { $createOutlineTable, $isMegaBlockNode, type MegaBlockNode } from "@megaui/content";
 import { OPEN_IMAGE_DIALOG_COMMAND } from "./image-command";
 import { EditorOutlineTableNode } from "../outline-table-node";
 
@@ -80,7 +82,9 @@ function QuickCommandMenu({
           data-mega-content="quick-command-option"
           id={`typeahead-item-${index}`}
           key={option.key}
-          onClick={() => {
+          onPointerDown={(event) => event.preventDefault()}
+          onMouseDown={(event) => {
+            event.preventDefault();
             onHighlight(index);
             setHighlightedIndex(index);
             selectOptionAndCleanUp(option);
@@ -90,7 +94,6 @@ function QuickCommandMenu({
             onHighlight(index);
             setHighlightedIndex(index);
           }}
-          onMouseDown={(event) => event.preventDefault()}
           ref={option.setRefElement}
           role="option"
         >
@@ -102,6 +105,15 @@ function QuickCommandMenu({
       ))}
     </ul>
   );
+}
+
+function owningMegaBlock(node: LexicalNode): MegaBlockNode | null {
+  let current: LexicalNode | null = node;
+  while (current) {
+    if ($isMegaBlockNode(current)) return current;
+    current = current.getParent();
+  }
+  return null;
 }
 
 function triggerForAction(action: QuickCommandAction): string | null {
@@ -167,16 +179,16 @@ export function QuickCommandsPlugin({ labels }: { labels: QuickCommandsPluginLab
 
   const applyCommandToTextNode = useCallback((node: TextNode, action: QuickCommandAction): boolean => {
     if (action === "image") {
-      const block = node.getParent();
-      if (!$isMegaBlockNode(block)) return false;
+      const block = owningMegaBlock(node);
+      if (!block) return false;
       const blockId = block.getBlockId();
       node.remove();
       queueMicrotask(() => editor.dispatchCommand(OPEN_IMAGE_DIALOG_COMMAND, blockId));
       return true;
     }
     if (action === "table") {
-      const block = node.getParent();
-      if (!$isMegaBlockNode(block)) return false;
+      const block = owningMegaBlock(node);
+      if (!block) return false;
       const { table, source, firstCell } = $createOutlineTable(2, 2, (id, sourceId) => new EditorOutlineTableNode(id, sourceId));
       node.remove();
       block.insertAfter(source);
@@ -186,10 +198,18 @@ export function QuickCommandsPlugin({ labels }: { labels: QuickCommandsPluginLab
       return true;
     }
     if (action === "todo") {
-      const block = node.getParent();
-      if (!$isMegaBlockNode(block)) return false;
+      const block = owningMegaBlock(node);
+      if (!block) return false;
       block.setVariant("todo");
+      block.setTodoChecked(false);
       node.remove();
+      if (block.getChildrenSize() === 0) {
+        const text = $createTextNode("");
+        block.append(text);
+        text.select(0, 0);
+      } else {
+        block.selectEnd();
+      }
       return true;
     }
 
@@ -281,6 +301,7 @@ export function QuickCommandsPlugin({ labels }: { labels: QuickCommandsPluginLab
       onQueryChange={() => {}}
       onSelectOption={onSelectOption}
       options={options}
+      shouldSplitNodeWithQuery
       triggerFn={(text) => {
         const found = TRIGGER_PATTERN.exec(text);
         if (!found) {

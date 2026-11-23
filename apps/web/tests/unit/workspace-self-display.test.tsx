@@ -26,7 +26,7 @@ vi.mock("@/lib/auth-client", () => ({
 }));
 
 import { getTranslation } from "@megaui/i18n";
-import { getInitials } from "@megaui/ui/shell";
+import { accountAvatarName } from "@/app/[lang]/workspace/account-avatar-name";
 import WorkspaceHomePage from "@/app/[lang]/workspace/page";
 import { ProfileForm } from "@/app/[lang]/workspace/settings/components/profile-form";
 import { sessionDisplayName, WorkspaceShellClient } from "@/app/[lang]/workspace/workspace-shell-client";
@@ -169,7 +169,7 @@ describe("Feishu session: own name from the projection displayName", () => {
     const shown = await renderRail();
     expect(shown.name).toBe(rail);
     expect(shown.name).toBe(sessionDisplayName(displayName, undefined, prefs ?? RAIL_FALLBACK));
-    expect(shown.initials).toBe(getInitials(rail));
+    expect(shown.initials).toBe(accountAvatarName(rail));
     expect(container.textContent).not.toContain("fs_");
   });
 
@@ -191,16 +191,16 @@ describe("Feishu session: own name from the projection displayName", () => {
   it("initials of a plain display name", async () => {
     boundary.user = feishuUser("Synthetic Person");
     boundary.prefsUsername = PREFS_USERNAME;
-    expect((await renderRail()).initials).toBe("SP");
+    expect((await renderRail()).initials).toBe("P");
   });
 });
 
 // Legacy: no `displayName`, so the output equals the earlier result for `user.name`.
 const legacyCases = [
-  { label: "plain name, profile username", name: "Legacy Person", prefs: PREFS_USERNAME, rail: "Legacy Person", home: "Legacy Person", initials: "LP" },
-  { label: "plain name, no profile username", name: "Legacy Person", prefs: undefined, rail: "Legacy Person", home: "Legacy Person", initials: "LP" },
-  { label: "surrounding whitespace, profile username", name: "  Legacy Person  ", prefs: PREFS_USERNAME, rail: "Legacy Person", home: "Legacy Person", initials: "LP" },
-  { label: "surrounding whitespace, no profile username", name: "  Legacy Person  ", prefs: undefined, rail: "Legacy Person", home: "Legacy Person", initials: "LP" },
+  { label: "plain name, profile username", name: "Legacy Person", prefs: PREFS_USERNAME, rail: "Legacy Person", home: "Legacy Person", initials: "P" },
+  { label: "plain name, no profile username", name: "Legacy Person", prefs: undefined, rail: "Legacy Person", home: "Legacy Person", initials: "P" },
+  { label: "surrounding whitespace, profile username", name: "  Legacy Person  ", prefs: PREFS_USERNAME, rail: "Legacy Person", home: "Legacy Person", initials: "P" },
+  { label: "surrounding whitespace, no profile username", name: "  Legacy Person  ", prefs: undefined, rail: "Legacy Person", home: "Legacy Person", initials: "P" },
 ] as const;
 
 describe("legacy session: unchanged own name", () => {

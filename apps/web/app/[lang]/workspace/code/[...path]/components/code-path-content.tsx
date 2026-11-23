@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 import type { ProseBlock, TreeNode } from "@megaui/core";
-import { MegaBlobView, MegaDiffsWorkerProvider } from "@megaui/ui/code-view";
+import { MegaBlobView } from "@megaui/ui/code-view";
 import { MEGA_SPACING_TOKENS, MEGA_TOKENS } from "@megaui/ui/tokens";
 
 import { useTranslation } from "@/hooks/use-translation";
@@ -96,22 +96,21 @@ export function CodePathContent({ fullPath, state, workspaceBase }: CodePathCont
       return <ReadmeProse blocks={[...state.blocks]} />;
     case "blob":
       return (
-        <MegaDiffsWorkerProvider>
-          <div data-mega-code="blob">
-            <MegaBlobView
-              file={{
-                name: state.sourceFile.path.split("/").at(-1) ?? state.sourceFile.path,
-                contents: state.sourceFile.content,
-              }}
-              forcePlainText={state.forcePlainText}
-              labels={{
-                binaryFallback: code.file.contentUnavailable,
-                copy: code.file.header.copy,
-                copied: code.file.header.copied,
-              }}
-            />
-          </div>
-        </MegaDiffsWorkerProvider>
+        <div data-mega-code="blob">
+          <MegaBlobView
+            file={{
+              contents: state.sourceFile.content,
+              language: state.sourceFile.language,
+              name: state.sourceFile.path.split("/").at(-1) ?? state.sourceFile.path,
+            }}
+            forcePlainText={state.forcePlainText}
+            labels={{
+              binaryFallback: code.file.contentUnavailable,
+              copy: code.file.header.copy,
+              copied: code.file.header.copied,
+            }}
+          />
+        </div>
       );
     default: {
       const unreachable: never = state;

@@ -7,13 +7,11 @@ import { MEGA_RADIUS_TOKENS, MEGA_SPACING_TOKENS, MEGA_TOKENS } from "@megaui/ui
 import type { HomeKpis } from "@/lib/adapter/home";
 
 export interface KpiStripLabels {
-  agentSessions: string;
   ci: Record<HomeKpis["mainCI"], string>;
   mainCI: string;
   mentions: string;
   myOpenIssues: string;
   reviewsRequested: string;
-  sessionsToday: string;
 }
 
 function StatTile({
@@ -53,7 +51,7 @@ export function KpiStrip({ kpis, labels }: { kpis: HomeKpis; labels: KpiStripLab
       style={{
         display: "grid",
         gap: `calc(${MEGA_SPACING_TOKENS[8]} + ${MEGA_SPACING_TOKENS[1]} + ${MEGA_SPACING_TOKENS[1]})`,
-        gridTemplateColumns: "repeat(5, 1fr)",
+        gridTemplateColumns: "repeat(4, 1fr)",
         marginTop: `calc(${MEGA_SPACING_TOKENS[8]} * 2 + ${MEGA_SPACING_TOKENS[1]} * 2)`,
       }}
     >
@@ -61,11 +59,6 @@ export function KpiStrip({ kpis, labels }: { kpis: HomeKpis; labels: KpiStripLab
       <StatTile icon="chat" label={labels.mentions} value={kpis.mentions} />
       <StatTile icon="diamond" label={labels.myOpenIssues} value={kpis.myOpenIssues} />
       <StatTile icon="code" label={labels.mainCI} value={labels.ci[kpis.mainCI]} />
-      <StatTile
-        icon="sparkle"
-        label={labels.agentSessions}
-        value={labels.sessionsToday.replace("{count}", String(kpis.agentSessionsToday))}
-      />
     </div>
   );
 }

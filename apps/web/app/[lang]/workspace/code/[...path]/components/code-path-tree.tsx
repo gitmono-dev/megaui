@@ -2,7 +2,7 @@ import type { TreeNode } from "@megaui/core";
 import { defaultExpandedPaths, MegaFileTree, type FileTreeNode } from "@megaui/ui/file-tree";
 import { MEGA_TOKENS } from "@megaui/ui/tokens";
 
-import { ancestorPaths, toFileTreeNodes } from "../lib/code-path-tree";
+import { pathPrefixes, readRememberedDirectories, toFileTreeNodes } from "../lib/code-path-tree";
 
 interface CodePathTreeProps {
   readonly activePath: string;
@@ -23,7 +23,8 @@ export function CodePathTree({
 }: CodePathTreeProps) {
   const fileTreeNodes = toFileTreeNodes(nodes);
   const expandedPaths = defaultExpandedPaths(fileTreeNodes);
-  for (const path of ancestorPaths(activePath)) expandedPaths.add(path);
+  for (const path of pathPrefixes(activePath)) expandedPaths.add(path);
+  for (const path of readRememberedDirectories()) expandedPaths.add(path);
 
   return (
     <aside

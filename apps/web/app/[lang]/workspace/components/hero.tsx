@@ -8,7 +8,6 @@ import { ShellIcon } from "@megaui/ui/shell";
 import { MEGA_RADIUS_TOKENS, MEGA_SPACING_TOKENS, MEGA_TOKENS } from "@megaui/ui/tokens";
 
 export interface HomeHeroLabels {
-  askAgent: string;
   greetings: {
     day: string;
     evening: string;
@@ -103,10 +102,6 @@ export function HomeHero({
           {greeting}
         </h1>
       </div>
-      <Link href={`${workspaceBase}/agent`} style={{ ...actionStyle, color: MEGA_TOKENS.text }}>
-        <ShellIcon name="sparkle" size={14} />
-        {labels.askAgent}
-      </Link>
       <Link href={`${workspaceBase}/docs`} style={{ ...actionStyle, color: MEGA_TOKENS.text }}>
         <ShellIcon name="book" size={14} />
         {labels.newDoc}

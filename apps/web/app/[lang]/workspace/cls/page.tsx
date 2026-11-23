@@ -6,16 +6,15 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Suspense, useMemo, useState, type CSSProperties } from "react";
 
 import type { CL } from "@megaui/core";
-import { matchesCLFilter, parseQuery } from "@megaui/core";
-import { megaGet, megaPost, megaQueryKeys } from "@megaui/ui/query";
+import { parseQuery } from "@megaui/core";
+import { megaGet, megaQueryKeys } from "@megaui/ui/query";
 import { MEGA_RADIUS_TOKENS, MEGA_SPACING_TOKENS, MEGA_TOKENS } from "@megaui/ui/tokens";
 
 import { useTranslation } from "@/hooks/use-translation";
-import { authClient } from "@/lib/auth-client";
 
 const sectionPad: CSSProperties = {
   padding: `calc(${MEGA_SPACING_TOKENS[8]} * 2.25) calc(${MEGA_SPACING_TOKENS[8]} * 3.5)`,
@@ -26,16 +25,10 @@ function CLListContent() {
   const router = useRouter();
   const pathname = usePathname() ?? "";
   const searchParams = useSearchParams();
-  const queryClient = useQueryClient();
-  const { data: session } = authClient.useSession();
   const workspaceBase = `/${locale}/workspace`;
   const clsText = t.workspace.clsList;
   const pageSize = typeof clsText.pageSize === "number" ? clsText.pageSize : 20;
   const [page, setPage] = useState(1);
-  const [dialogOpen, setDialogOpen] = useState(searchParams?.get("new") === "1");
-  const [draftTitle, setDraftTitle] = useState("");
-  const [draftBranch, setDraftBranch] = useState("feat/");
-  const [draftPackage, setDraftPackage] = useState("pkg_engine");
 
   const query = searchParams?.get("q") ?? "";
   const filter = useMemo(() => parseQuery(query), [query]);
@@ -44,7 +37,6 @@ function CLListContent() {
     const params = new URLSearchParams(searchParams?.toString() ?? "");
     if (nextQuery.trim()) params.set("q", nextQuery);
     else params.delete("q");
-    params.delete("new");
     setPage(1);
     router.replace(`${pathname}?${params.toString()}`, { scroll: false });
   };
@@ -52,21 +44,6 @@ function CLListContent() {
   const listQuery = useQuery({
     queryKey: megaQueryKeys.cls(query ? filter : undefined),
     queryFn: () => megaGet<CL[]>("cls", query ? { filter } : undefined),
-  });
-
-  const createMutation = useMutation({
-    mutationFn: (input: { branch: string; packageId: string; title: string }) => megaPost<CL>("cls", input),
-    onSuccess: (cl) => {
-      const actorId = session?.user?.id ?? "";
-      if (matchesCLFilter(cl, filter, actorId)) {
-        queryClient.setQueryData<CL[]>(megaQueryKeys.cls(query ? filter : undefined), (current) =>
-          current ? [cl, ...current] : current,
-        );
-      }
-      void queryClient.invalidateQueries({ queryKey: megaQueryKeys.cls() });
-      setDialogOpen(false);
-      router.push(`${workspaceBase}/cls/${cl.number}`);
-    },
   });
 
   if (listQuery.isPending) {
@@ -105,10 +82,6 @@ function CLListContent() {
           <span style={{ color: MEGA_TOKENS.muted, fontSize: "calc(var(--mega-density-font-size) - 1px)" }}>
             {clsText.replacesPr}
           </span>
-          <span style={{ flex: 1 }} />
-          <button data-mega-cls="new" onClick={() => setDialogOpen(true)} type="button">
-            {clsText.newCl}
-          </button>
         </div>
 
         <label style={{ display: "block", marginTop: `calc(${MEGA_SPACING_TOKENS[8]} * 2)` }}>
@@ -166,63 +139,6 @@ function CLListContent() {
           </div>
         ) : null}
       </div>
-
-      {dialogOpen ? (
-        <div
-          data-mega-cls="new-dialog"
-          role="dialog"
-          style={{
-            background: "rgba(0,0,0,0.35)",
-            inset: 0,
-            position: "fixed",
-            zIndex: 40,
-          }}
-        >
-          <form
-            onSubmit={(event) => {
-              event.preventDefault();
-              createMutation.mutate({
-                branch: draftBranch,
-                packageId: draftPackage,
-                title: draftTitle,
-              });
-            }}
-            style={{
-              background: MEGA_TOKENS.bg,
-              borderRadius: MEGA_RADIUS_TOKENS.md,
-              left: "50%",
-              maxWidth: 420,
-              padding: `calc(${MEGA_SPACING_TOKENS[8]} * 2)`,
-              position: "absolute",
-              top: "20%",
-              transform: "translateX(-50%)",
-              width: "90%",
-            }}
-          >
-            <h2 style={{ marginTop: 0 }}>{clsText.newDialog.title}</h2>
-            <label style={{ display: "block", marginBottom: MEGA_SPACING_TOKENS[8] }}>
-              {clsText.newDialog.titleLabel}
-              <input data-mega-cls="new-title" onChange={(e) => setDraftTitle(e.target.value)} required value={draftTitle} style={{ display: "block", width: "100%" }} />
-            </label>
-            <label style={{ display: "block", marginBottom: MEGA_SPACING_TOKENS[8] }}>
-              {clsText.newDialog.packageLabel}
-              <input data-mega-cls="new-package" onChange={(e) => setDraftPackage(e.target.value)} required value={draftPackage} style={{ display: "block", width: "100%" }} />
-            </label>
-            <label style={{ display: "block", marginBottom: MEGA_SPACING_TOKENS[8] }}>
-              {clsText.newDialog.branchLabel}
-              <input data-mega-cls="new-branch" onChange={(e) => setDraftBranch(e.target.value)} required value={draftBranch} style={{ display: "block", width: "100%" }} />
-            </label>
-            <div style={{ display: "flex", gap: MEGA_SPACING_TOKENS[8], justifyContent: "flex-end" }}>
-              <button onClick={() => setDialogOpen(false)} type="button">
-                {clsText.newDialog.cancel}
-              </button>
-              <button data-mega-cls="new-submit" disabled={createMutation.isPending} type="submit">
-                {createMutation.isPending ? clsText.newDialog.submitting : clsText.newDialog.submit}
-              </button>
-            </div>
-          </form>
-        </div>
-      ) : null}
     </main>
   );
 }

@@ -12,7 +12,7 @@
 import { MEGA_NAV_ITEMS, workspaceHref } from "../nav-config"
 import type { ShellIconName } from "../icons"
 
-export const MEGA_PALETTE_ACTION_IDS = ["newCl", "reportIssue", "askAgent", "writeDoc"] as const
+export const MEGA_PALETTE_ACTION_IDS = ["reportIssue", "writeDoc"] as const
 
 export type MegaPaletteActionId = (typeof MEGA_PALETTE_ACTION_IDS)[number]
 
@@ -22,11 +22,9 @@ export interface MegaPaletteActionConfig {
   path: string
 }
 
-/** The four designed quick actions; each routes to its target surface (Out of scope: full form flows). */
+/** Quick actions; each routes to its target surface. */
 export const MEGA_PALETTE_ACTIONS: readonly MegaPaletteActionConfig[] = [
-  { id: "newCl", icon: "plus", path: "cls" },
   { id: "reportIssue", icon: "bug", path: "issues" },
-  { id: "askAgent", icon: "sparkle", path: "agent" },
   { id: "writeDoc", icon: "book", path: "docs" },
 ]
 

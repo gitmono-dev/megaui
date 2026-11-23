@@ -66,6 +66,8 @@ interface WorkspaceRailBaseProps {
   pathname: string
   renderLink: WorkspaceRailLinkRenderer
   userLoading?: boolean
+  /** Bottom-left account control. When set, it replaces the profile link. */
+  accountMenu?: ReactNode
   workspaceBase: string
 }
 
@@ -117,6 +119,7 @@ export function WorkspaceRail(props: WorkspaceRailProps) {
     channels = [],
     channelsState,
     countsState,
+    accountMenu,
     currentUser,
     labels,
     onSearch,
@@ -328,6 +331,8 @@ export function WorkspaceRail(props: WorkspaceRailProps) {
               {labels.userLoading}
             </span>
           </>
+        ) : accountMenu ? (
+          <div data-mega-shell="rail-account" style={{ display: "flex", flex: 1, minWidth: 0 }}>{accountMenu}</div>
         ) : renderLink({
           "aria-current": profileActive ? "page" : undefined,
           "aria-label": labels.openProfile,

@@ -4,8 +4,8 @@
 // process, all owned by `helpers/feishu-login-harness.ts`. Nothing on the page is
 // intercepted: the expected values come from the real `get-session` projection.
 //
-// AC1 rail name = `sessionDisplayName(displayName)` (trimmed), initials = `getInitials` of
-// it; AC2 greeting = the same name; AC3 the profile form's name input starts from the raw
+// AC1 rail name = `sessionDisplayName(displayName)` (trimmed), the avatar shows that
+// name's surname; AC2 greeting = the same name; AC3 the profile form's name input starts from the raw
 // `displayName`. Both FSL-153 branches are covered: the Mock name contains the login
 // email's local part (`displayName` is the user ID), and a local name that does not
 // (`displayName` is that name as stored, here with surrounding whitespace).
@@ -13,7 +13,7 @@ import { expect, test, type Browser, type BrowserContext, type Page } from "@pla
 
 import { feishuUserDisplayName } from "@megaui/engine";
 import { getTranslation } from "@megaui/i18n";
-import { getInitials } from "@megaui/ui/shell";
+import { accountAvatarName } from "../../app/[lang]/workspace/account-avatar-name";
 
 import {
   FeishuLoginHarnessSetupError,
@@ -33,23 +33,25 @@ function isPost(path: string) {
 }
 
 /**
- * Puts `code` into the code field as one input event (as a paste does), submits it and
+ * Pastes `code` into the boxes as one input event. A complete code submits itself and this
  * answers the verify status. The code is passed only as an `evaluate` argument and compared
  * inside the page: `locator.fill` would write it into Playwright's call log, and
  * `toHaveValue` into its failure message (ER-11, FSL-130).
  */
 async function submitCode(page: Page, code: string): Promise<number> {
+  const verified = page.waitForResponse(isPost("/api/auth/feishu-login/verify"));
   const field = page.getByTestId("feishu-login-code");
-  const accepted = await field.evaluate((input: HTMLInputElement, value: string) => {
+  const accepted = await field.evaluate((root: HTMLElement, value: string) => {
+    const input = root.querySelector("input");
+    if (!input) return false;
     const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
     setValue.call(input, value);
     input.dispatchEvent(new Event("input", { bubbles: true }));
-    return input.value === value;
+    return true;
   }, code);
-  expect(accepted, "the code field holds the submitted code").toBe(true);
-  await expect.poll(() => field.evaluate((input: HTMLInputElement, value: string) => input.value === value, code)).toBe(true);
-  const verified = page.waitForResponse(isPost("/api/auth/feishu-login/verify"));
-  await page.getByTestId("feishu-login-verify").click();
+  expect(accepted, "the code boxes received the code").toBe(true);
+  await expect.poll(() => field.evaluate((root: HTMLElement, value: string) =>
+    [...root.querySelectorAll("input")].map(input => input.value).join("") === value, code)).toBe(true);
   return (await verified).status();
 }
 
@@ -107,7 +109,7 @@ async function expectOwnName(page: Page, displayName: string): Promise<void> {
   expect((await page.goto("/en/workspace"))?.status()).toBe(200);
   const profileLink = page.locator('[data-mega-shell="rail-profile-link"]');
   await expect(profileLink.locator("span:not([data-mega-atom])")).toHaveText(shown);
-  await expect(profileLink.locator('[data-mega-atom="shell-avatar"]')).toHaveText(getInitials(shown));
+  await expect(profileLink.locator('[data-mega-atom="shell-avatar"]')).toHaveText(accountAvatarName(shown));
   const greeting = page.locator('[data-mega-home="hero-greeting"]');
   await expect(greeting).toBeVisible();
   const greetings = Object.values(home.greetings).map(template => template.replace("{name}", shown));
