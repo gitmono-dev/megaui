@@ -7,11 +7,29 @@
 
 import { eq } from "drizzle-orm";
 import { getDb, megaCls } from "@megaui/database";
-import { fetchClCommits } from "@megaui/engine";
+import {
+  fetchClCommits,
+  fetchMega2ClMergeBox,
+  MegaBadRequestError,
+  MegaUnauthorizedError,
+  normalizeCLDescriptionJson,
+  type CLChecksView,
+  type CLDependencyGraphResult,
+  type CLDescriptionPayload,
+} from "@megaui/engine";
 import { z } from "zod";
 
 import { getClsDomain } from "@/lib/engine";
 import { registerMegaRoute, type MegaDispatchContext } from "../dispatch";
+import {
+  addLiveMega2ClComment,
+  getLiveMega2ClDetail,
+  isMega2ClBackendEnabled,
+  listLiveMega2ClComments,
+  listLiveMega2Cls,
+  resolveMegaClLinkByNumber,
+  transitionLiveMega2Cl,
+} from "../mega2/cl-projection";
 import { resolveActorUserId } from "../session";
 import {
   clStateSchema,
@@ -26,6 +44,65 @@ import {
 async function dispatchClsGet(context: MegaDispatchContext): Promise<unknown> {
   const { segments, searchParams, headers } = context;
   const actorUserId = await resolveActorUserId(headers);
+
+  if (isMega2ClBackendEnabled()) {
+    if (!actorUserId) {
+      throw new MegaUnauthorizedError("Authentication required");
+    }
+    const database = getDb();
+    if (only(segments, ["cls"])) {
+      const filter = filterSchema.parse(readJsonQuery(searchParams.get("filter"), {}));
+      return listLiveMega2Cls(database, filter, { headers, actorUserId });
+    }
+    if (segments[0] === "cls" && segments[2] === "commits" && segments.length === 3) {
+      const number = segmentNumber(segments[1]);
+      const link = await resolveMegaClLinkByNumber(database, number);
+      return fetchClCommits(link, { headers });
+    }
+    if (segments[0] === "cls" && segments[2] === "comments" && segments.length === 3) {
+      return listLiveMega2ClComments(database, segmentNumber(segments[1]), { headers });
+    }
+    if (segments[0] === "cls" && segments[2] === "description" && segments.length === 3) {
+      const link = await resolveMegaClLinkByNumber(database, segmentNumber(segments[1]));
+      await fetchMega2ClMergeBox(link, { headers });
+      return {
+        body: normalizeCLDescriptionJson(null),
+      } satisfies CLDescriptionPayload;
+    }
+    if (segments[0] === "cls" && segments[2] === "inline-comments" && segments.length === 3) {
+      const link = await resolveMegaClLinkByNumber(database, segmentNumber(segments[1]));
+      await fetchMega2ClMergeBox(link, { headers });
+      return [];
+    }
+    if (segments[0] === "cls" && segments[2] === "checks" && segments.length === 3) {
+      const link = await resolveMegaClLinkByNumber(database, segmentNumber(segments[1]));
+      await fetchMega2ClMergeBox(link, { headers });
+      return {
+        pipeline: [],
+        runner: "",
+        checks: [],
+        logTail: [],
+        benchmarks: [],
+      } satisfies CLChecksView;
+    }
+    if (segments[0] === "cls" && segments[2] === "dependency-graph" && segments.length === 3) {
+      const link = await resolveMegaClLinkByNumber(database, segmentNumber(segments[1]));
+      await fetchMega2ClMergeBox(link, { headers });
+      return {
+        nodes: [],
+        edges: [],
+        apiChanges: [],
+        relatedCLs: [],
+        symbolUsage: [],
+        cycles: [],
+      } satisfies CLDependencyGraphResult;
+    }
+    if (segments[0] === "cls" && segments.length === 2) {
+      return getLiveMega2ClDetail(database, segmentNumber(segments[1]), { headers });
+    }
+    return invalidRoute(segments);
+  }
+
   const { cls } = getClsDomain();
 
   if (only(segments, ["cls"])) {
@@ -73,6 +150,28 @@ async function dispatchClsGet(context: MegaDispatchContext): Promise<unknown> {
 async function dispatchClsPost(context: MegaDispatchContext): Promise<unknown> {
   const { segments, body, headers } = context;
   const actorUserId = await resolveActorUserId(headers);
+
+  if (isMega2ClBackendEnabled()) {
+    if (!actorUserId) {
+      throw new MegaUnauthorizedError("Authentication required");
+    }
+    const database = getDb();
+    if (segments[0] === "cls" && segments[2] === "transition" && segments.length === 3) {
+      const state = z.object({ state: clStateSchema }).parse(body).state;
+      return transitionLiveMega2Cl(database, segmentNumber(segments[1]), state, { headers });
+    }
+    if (segments[0] === "cls" && segments[2] === "comments" && segments.length === 3) {
+      const commentBody = z.object({ body: z.string().trim().min(1) }).parse(body).body;
+      return addLiveMega2ClComment(database, segmentNumber(segments[1]), commentBody, {
+        headers,
+        actorUserId,
+      });
+    }
+    throw new MegaBadRequestError(
+      "CL mutation is not supported in live mega2 backend mode",
+    );
+  }
+
   const { cls } = getClsDomain();
 
   if (segments[0] === "cls" && segments[2] === "viewed" && segments.length === 3) {

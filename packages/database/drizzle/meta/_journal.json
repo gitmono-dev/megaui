@@ -155,6 +155,13 @@
       "when": 1795342758481,
       "tag": "0021_absurd_loa",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1795560954776,
+      "tag": "0022_mega_cl_links",
+      "breakpoints": true
     }
   ]
 }

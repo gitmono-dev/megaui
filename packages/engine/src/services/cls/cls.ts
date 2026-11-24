@@ -37,6 +37,7 @@ import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import {
   megaClCiStatuses,
   megaClComments,
+  megaClLinks,
   megaClMergeStates,
   megaCls,
   megaClStates,
@@ -255,7 +256,12 @@ export function createClsService(database: Database) {
     await database.transaction(async (tx) => {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(${CL_NUMBER_LOCK_NS})`);
       const [maxRow] = await tx.select({ number: megaCls.number }).from(megaCls).orderBy(desc(megaCls.number)).limit(1);
-      number = (maxRow?.number ?? 0) + 1;
+      const [maxLinkRow] = await tx
+        .select({ number: megaClLinks.number })
+        .from(megaClLinks)
+        .orderBy(desc(megaClLinks.number))
+        .limit(1);
+      number = Math.max(maxRow?.number ?? 0, maxLinkRow?.number ?? 0) + 1;
       await tx.insert(megaCls).values({
         id,
         number,

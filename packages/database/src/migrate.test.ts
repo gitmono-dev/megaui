@@ -38,6 +38,7 @@ const EXPECTED_PUBLIC_TABLES = [
   "mega_channel_members",
   "mega_channels",
   "mega_cl_comments",
+  "mega_cl_links",
   "mega_cls",
   "mega_content",
   "mega_content_blocks",
