@@ -22,6 +22,7 @@ import { getTranslation, resolveApiLocale, type SupportedLocale } from "@megaui/
 import { z } from "zod";
 
 import type { MegaHttpFailureBody } from "./envelope";
+import { OrionAuthzError } from "./orion-authz";
 
 export class MegaApiInputError extends Error {
   constructor(message: string) {
@@ -79,6 +80,30 @@ export function mapMegaErrorToHttpResponse(
   request?: Request,
 ): { status: number; body: MegaHttpFailureBody } {
   const locale = request ? resolveApiLocale(request) : ("en" as SupportedLocale);
+
+  if (error instanceof OrionAuthzError) {
+    const statusMessageKey =
+      error.status === 400
+        ? "errors.mega.badRequest"
+        : error.status === 401
+          ? "errors.auth.unauthorized"
+          : error.status === 403
+            ? "errors.mega.forbidden"
+            : error.status === 404
+              ? "errors.mega.notFound"
+              : "errors.mega.internal";
+    return {
+      status: error.status,
+      body: {
+        error: {
+          code: error.code,
+          messageKey: statusMessageKey,
+          message: readNestedMessage(getTranslation(locale), statusMessageKey),
+        },
+      },
+    };
+  }
+
   const serialized = serializeMegaError(error);
   const code = serialized.error.code;
 

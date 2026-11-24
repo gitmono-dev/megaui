@@ -6,7 +6,7 @@
 //   (empty array when link is unset; 404 when CL number missing).
 
 import { eq } from "drizzle-orm";
-import { getDb, megaCls } from "@megaui/database";
+import { getDb, megaClLinks, megaCls } from "@megaui/database";
 import {
   fetchClCommits,
   fetchMega2ClMergeBox,
@@ -17,9 +17,11 @@ import {
   type CLDependencyGraphResult,
   type CLDescriptionPayload,
 } from "@megaui/engine";
+import { isOrion2Configured } from "@megaui/engine/services/orion2";
 import { z } from "zod";
 
 import { getClsDomain } from "@/lib/engine";
+import { resolveWebActor } from "@/lib/enterprise-session";
 import { registerMegaRoute, type MegaDispatchContext } from "../dispatch";
 import {
   addLiveMega2ClComment,
@@ -30,6 +32,7 @@ import {
   resolveMegaClLinkByNumber,
   transitionLiveMega2Cl,
 } from "../mega2/cl-projection";
+import { getOrionBackedClChecks } from "../orion-checks";
 import { resolveActorUserId } from "../session";
 import {
   clStateSchema,
@@ -43,7 +46,8 @@ import {
 
 async function dispatchClsGet(context: MegaDispatchContext): Promise<unknown> {
   const { segments, searchParams, headers } = context;
-  const actorUserId = await resolveActorUserId(headers);
+  const actor = await resolveWebActor(headers);
+  const actorUserId = actor?.userId ?? null;
 
   if (isMega2ClBackendEnabled()) {
     if (!actorUserId) {
@@ -76,6 +80,14 @@ async function dispatchClsGet(context: MegaDispatchContext): Promise<unknown> {
     }
     if (segments[0] === "cls" && segments[2] === "checks" && segments.length === 3) {
       const link = await resolveMegaClLinkByNumber(database, segmentNumber(segments[1]));
+      if (isOrion2Configured()) {
+        return getOrionBackedClChecks({
+          actor,
+          clLink: link,
+          headers,
+          db: database,
+        });
+      }
       await fetchMega2ClMergeBox(link, { headers });
       return {
         pipeline: [],
@@ -138,7 +150,34 @@ async function dispatchClsGet(context: MegaDispatchContext): Promise<unknown> {
     return cls.listCLComments(segmentNumber(segments[1]));
   }
   if (segments[0] === "cls" && segments[2] === "checks" && segments.length === 3) {
-    return cls.getCLChecks(segmentNumber(segments[1]));
+    const number = segmentNumber(segments[1]);
+    if (isOrion2Configured()) {
+      await cls.getCL(number);
+      const database = getDb();
+      const [mapped] = await database
+        .select({ link: megaClLinks.link })
+        .from(megaClLinks)
+        .where(eq(megaClLinks.number, number))
+        .limit(1);
+      let link = mapped?.link?.trim();
+      if (!link) {
+        const [row] = await database
+          .select({ link: megaCls.link })
+          .from(megaCls)
+          .where(eq(megaCls.number, number))
+          .limit(1);
+        link = row?.link?.trim();
+      }
+      if (link) {
+        return getOrionBackedClChecks({
+          actor,
+          clLink: link,
+          headers,
+          db: database,
+        });
+      }
+    }
+    return cls.getCLChecks(number);
   }
   if (segments[0] === "cls" && segments[2] === "dependency-graph" && segments.length === 3) {
     return cls.getCLDependencyGraph(segmentNumber(segments[1]));
