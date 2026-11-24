@@ -114,6 +114,7 @@ export {
   addInlineComment,
   aggregateCheckStatus,
   assertCLTransitionAllowed,
+  assertWorkspaceMember,
   CL_STATE_TRANSITIONS,
   createCLRevision,
   createClsDomain,

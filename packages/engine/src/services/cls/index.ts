@@ -1,6 +1,7 @@
 import type { Database } from "@megaui/database";
 import { createClsService, type ClsService } from "./cls";
 
+export { assertWorkspaceMember } from "./authz";
 export { createClsService, type ClsService } from "./cls";
 export { aggregateCheckStatus, deleteCLCheckRun, getCLChecks, upsertCLCheckRun, type CLCheckRunInput, type CLChecksView } from "./checks";
 export {
