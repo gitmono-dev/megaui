@@ -153,7 +153,7 @@ export function parsePositiveIntQuery(
 }
 
 export function mapOrionRouteError(error: unknown, request: Request): NextResponse<MegaHttpFailureBody> {
-  if (error instanceof OrionAuthzError && error.status === 404) {
+  if (error instanceof OrionAuthzError && (error.status === 403 || error.status === 404)) {
     const normalized = new OrionAuthzError(403, "ci_authz_denied", "Forbidden");
     const mapped = mapMegaErrorToHttpResponse(normalized, request);
     const res = megaFailureResponse(mapped.body, mapped.status);
