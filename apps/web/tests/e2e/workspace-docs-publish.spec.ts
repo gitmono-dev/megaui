@@ -1,10 +1,13 @@
 import { expect, test } from "@playwright/test";
 import { mintSessionCookies } from "./helpers/session";
 
+const e2eOrigin = new URL(process.env.E2E_BASE_URL?.trim() || "http://127.0.0.1:3000").origin;
+const csrfHeaders = { Origin: e2eOrigin };
+
 for (const locale of ["en", "zh-CN"] as const) {
   test(`${locale}: publishes the latest editor content, persists status, and returns to draft`, async ({ page, context }) => {
     await context.addCookies(mintSessionCookies().cookies);
-    const created = await page.request.post("/api/mega/docs", { data: { title: `Publication ${locale} ${Date.now()}` } });
+    const created = await page.request.post("/api/mega/docs", { headers: csrfHeaders, data: { title: `Publication ${locale} ${Date.now()}` } });
     expect(created.ok()).toBe(true);
     const { data: doc } = await created.json();
     const publish = locale === "en" ? "Publish" : "发布";
@@ -53,14 +56,14 @@ for (const locale of ["en", "zh-CN"] as const) {
       await expect(page.locator('[data-mega-docs="editor"]')).toHaveCount(0);
     } finally {
       await page.goto(`/${locale}/workspace/docs`);
-      expect((await page.request.post(`/api/mega/docs/${doc.id}/delete`)).ok()).toBe(true);
+      expect((await page.request.post(`/api/mega/docs/${doc.id}/delete`, { headers: csrfHeaders })).ok()).toBe(true);
     }
   });
 }
 
 test("publication failure keeps the draft and allows retry; failed saves prevent publication", async ({ page, context }) => {
   await context.addCookies(mintSessionCookies().cookies);
-  const { data: doc } = await (await page.request.post("/api/mega/docs", { data: { title: `Publication failure ${Date.now()}` } })).json();
+  const { data: doc } = await (await page.request.post("/api/mega/docs", { headers: csrfHeaders, data: { title: `Publication failure ${Date.now()}` } })).json();
   const fail = { status: 503, json: { ok: false, error: { code: "MEGA_INTERNAL_ERROR", message: "Unavailable" } } };
   let publications = 0;
   await page.route(`**/api/mega/docs/${doc.id}/publish`, async route => { publications++; await route.fulfill(fail); });
@@ -89,6 +92,6 @@ test("publication failure keeps the draft and allows retry; failed saves prevent
     expect(saved.versions[0].body).toContain("unsaved edit");
   } finally {
     await page.goto('/en/workspace/docs');
-    expect((await page.request.post(`/api/mega/docs/${doc.id}/delete`)).ok()).toBe(true);
+    expect((await page.request.post(`/api/mega/docs/${doc.id}/delete`, { headers: csrfHeaders })).ok()).toBe(true);
   }
 });

@@ -18,11 +18,16 @@ function megaUrl(path: string): string {
   return `http://127.0.0.1:3000/api/mega${path}`;
 }
 
+function canonicalOrigin(): string {
+  return new URL(process.env.APP_BASE_URL ?? "http://127.0.0.1:3000").origin;
+}
+
 function authedRequest(path: string, cookie: string, init: RequestInit = {}): Request {
   return new Request(megaUrl(path), {
     ...init,
     headers: {
       Cookie: cookie,
+      Origin: canonicalOrigin(),
       ...(init.headers ?? {}),
     },
   });

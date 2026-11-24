@@ -24,6 +24,7 @@ export default defineConfig({
           // client-side hydration — copy them if missing before starting the server.
           command:
             "bash -lc 'set -a && [ -f apps/web/.env ] && . apps/web/.env; set +a; " +
+            "export BETTER_AUTH_TRUSTED_ORIGINS=\"${BETTER_AUTH_TRUSTED_ORIGINS:+${BETTER_AUTH_TRUSTED_ORIGINS},}http://127.0.0.1:3000\"; " +
             "[ ! -d apps/web/.next/standalone/apps/web/.next/static ] && cp -r apps/web/.next/static apps/web/.next/standalone/apps/web/.next/static; " +
             "[ -d apps/web/public ] && [ ! -d apps/web/.next/standalone/apps/web/public ] && cp -r apps/web/public apps/web/.next/standalone/apps/web/public; " +
             "cd apps/web/.next/standalone/apps/web && PORT=3000 HOSTNAME=127.0.0.1 node server.js'",

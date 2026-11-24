@@ -2,12 +2,15 @@ import { expect, test } from "@playwright/test";
 import { mintSessionCookies } from "./helpers/session";
 import { lexicalDocumentWithBlockTree, stubWorkspace } from "./helpers/workspace-docs-roam-fixture";
 
+const e2eOrigin = new URL(process.env.E2E_BASE_URL?.trim() || "http://127.0.0.1:3000").origin;
+const csrfHeaders = { Origin: e2eOrigin };
+
 for (const locale of ["en", "zh-CN"] as const) {
   test(`${locale}: sidebar edits share live collaboration, autosave and publication`, async ({ page, context }) => {
     test.setTimeout(60_000);
     await page.setViewportSize({ width: 1600, height: 1000 });
     await context.addCookies(mintSessionCookies().cookies);
-    const { data: doc } = await (await page.request.post('/api/mega/docs', { data: { title: `Sidebar live ${locale} ${Date.now()}` } })).json();
+    const { data: doc } = await (await page.request.post('/api/mega/docs', { headers: csrfHeaders, data: { title: `Sidebar live ${locale} ${Date.now()}` } })).json();
     const other = await context.newPage();
     const path = `/${locale}/workspace/docs/${doc.id}`;
     const main = page.locator('[data-mega-docs="article"] [contenteditable="true"]');
@@ -58,7 +61,7 @@ for (const locale of ["en", "zh-CN"] as const) {
     } finally {
       await other.close();
       await page.goto(`/${locale}/workspace/docs`);
-      expect((await page.request.post(`/api/mega/docs/${doc.id}/delete`)).ok()).toBe(true);
+      expect((await page.request.post(`/api/mega/docs/${doc.id}/delete`, { headers: csrfHeaders })).ok()).toBe(true);
     }
   });
 }

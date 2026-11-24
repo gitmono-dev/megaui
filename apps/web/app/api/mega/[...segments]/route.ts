@@ -12,6 +12,7 @@ import {
   dispatchMegaRequest,
   readMegaRequestBody,
 } from "@/lib/adapter/dispatch";
+import { requireSameOriginCsrf } from "@/lib/adapter/csrf";
 import {
   megaFailureResponse,
   megaSuccessResponse,
@@ -55,6 +56,9 @@ export async function GET(request: Request, context: MegaRouteContext) {
 }
 
 export async function POST(request: Request, context: MegaRouteContext) {
+  const csrfRejected = requireSameOriginCsrf(request);
+  if (csrfRejected) return csrfRejected;
+
   const unauthenticated = await requireMegaSession(request);
   if (unauthenticated) return unauthenticated;
 
@@ -78,6 +82,9 @@ export async function POST(request: Request, context: MegaRouteContext) {
 }
 
 export async function PUT(request: Request, context: MegaRouteContext) {
+  const csrfRejected = requireSameOriginCsrf(request);
+  if (csrfRejected) return csrfRejected;
+
   const unauthenticated = await requireMegaSession(request);
   if (unauthenticated) return unauthenticated;
 
@@ -101,6 +108,9 @@ export async function PUT(request: Request, context: MegaRouteContext) {
 }
 
 export async function DELETE(request: Request, context: MegaRouteContext) {
+  const csrfRejected = requireSameOriginCsrf(request);
+  if (csrfRejected) return csrfRejected;
+
   const unauthenticated = await requireMegaSession(request);
   if (unauthenticated) return unauthenticated;
 

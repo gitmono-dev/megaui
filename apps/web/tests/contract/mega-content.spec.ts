@@ -21,11 +21,16 @@ function megaUrl(path: string): string {
   return `http://127.0.0.1:3000/api/mega${path}`;
 }
 
+function canonicalOrigin(): string {
+  return new URL(process.env.APP_BASE_URL ?? "http://127.0.0.1:3000").origin;
+}
+
 function authedRequest(path: string, cookie: string, init: RequestInit = {}): Request {
   return new Request(megaUrl(path), {
     ...init,
     headers: {
       Cookie: cookie,
+      Origin: canonicalOrigin(),
       ...(init.headers ?? {}),
     },
   });
@@ -63,7 +68,11 @@ describe(
           expect((result.data as { versions: unknown[] }).versions).toHaveLength(2);
         }
         expect((await post(["docs", id, "meta"], { status: "invalid" })).status).toBe(400);
-        const anonymous = await POST(new Request(megaUrl(`/docs/${id}/publish`), { method: "POST" }),
+        const anonymous = await POST(
+          new Request(megaUrl(`/docs/${id}/publish`), {
+            method: "POST",
+            headers: { Origin: canonicalOrigin() },
+          }),
           { params: Promise.resolve({ segments: ["docs", id, "publish"] }) });
         expect(anonymous.status).toBe(401);
         expect((await post(["docs", "missing", "publish"])).status).toBe(404);
