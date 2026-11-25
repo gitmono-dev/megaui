@@ -9,7 +9,7 @@ export const DEFAULT_ORION2_TIMEOUT_MS = 15_000;
 export const MIN_ORION2_HMAC_SECRET_BYTES = 32;
 export const DEFAULT_ORION2_JWT_ISSUER = "https://orion.test/issuer";
 export const DEFAULT_ORION2_JWT_AUDIENCE = "orion.v1.server";
-export const DEFAULT_ORION2_JWT_SUBJECT = "service:megaui";
+export const DEFAULT_ORION2_JWT_SUBJECT = "service-megaui";
 export const DEFAULT_ORION2_JWT_KEY_ID = "default";
 export const DEFAULT_ORION2_ENVIRONMENT_ID = "default";
 export const DEFAULT_ORION2_TARGETS = ["//:"] as const;
@@ -125,9 +125,12 @@ function parseDefaultTargets(raw: string | undefined): readonly string[] {
 }
 
 function parseSubject(raw: string | undefined): string {
-  const sub = raw?.trim() || DEFAULT_ORION2_JWT_SUBJECT;
-  if (sub.length === 0 || sub.length > 128 || sub.includes("..")) {
-    throw new OrionConfigError("ORION2_JWT_SUBJECT is invalid");
+  if (raw === undefined) {
+    return DEFAULT_ORION2_JWT_SUBJECT;
+  }
+  const sub = raw.trim();
+  if (!isValidOrionId(sub)) {
+    throw new OrionConfigError("ORION2_JWT_SUBJECT must be a valid Orion ID");
   }
   return sub;
 }

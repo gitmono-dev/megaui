@@ -6,6 +6,7 @@ import {
   createTask,
   getTask,
   isOrion2Configured,
+  isValidOrionId,
   listAttemptTargets,
   listTasks,
   listWorkers,
@@ -47,7 +48,7 @@ describe("@megaui/engine/services/orion2 (CLB-19)", () => {
       ORION2_JWT_KEY_ID: "key-2026",
       ORION2_JWT_ISSUER: "https://orion.test/issuer",
       ORION2_JWT_AUDIENCE: "orion.v1.server",
-      ORION2_JWT_SUBJECT: "service:megaui-bff",
+      ORION2_JWT_SUBJECT: "service-megaui-bff",
       ORION2_ENVIRONMENT_ID: "env-clb19",
       ...overrides,
     };
@@ -151,6 +152,23 @@ describe("@megaui/engine/services/orion2 (CLB-19)", () => {
         "//app/pkg",
         "//app:foo+bar",
       ]);
+
+      // Default subject (when ORION2_JWT_SUBJECT is omitted) must be a valid Orion ID accepted by orion-server validate_id
+      const defaultSubjectEnv = testEnv();
+      delete defaultSubjectEnv.ORION2_JWT_SUBJECT;
+      const defaultConfig = resolveOrion2Config(defaultSubjectEnv);
+      expect(defaultConfig.jwtSubject).toBe("service-megaui");
+      expect(isValidOrionId(defaultConfig.jwtSubject)).toBe(true);
+
+      // Colon-containing and blank subjects must be rejected fail-closed
+      for (const badSub of ["service:megaui", "", "   "]) {
+        expect(() =>
+          resolveOrion2Config(testEnv({ ORION2_JWT_SUBJECT: badSub })),
+        ).toThrow(OrionConfigError);
+        expect(() =>
+          signOrionServiceJwt(defaultConfig, "task.write", { sub: badSub }),
+        ).toThrow(OrionConfigError);
+      }
     });
   });
 
@@ -174,7 +192,7 @@ describe("@megaui/engine/services/orion2 (CLB-19)", () => {
       });
       expect(verifiedA.claims.iss).toBe("https://orion.test/issuer");
       expect(verifiedA.claims.aud).toEqual(["orion.v1.server"]);
-      expect(verifiedA.claims.sub).toBe("service:megaui-bff");
+      expect(verifiedA.claims.sub).toBe("service-megaui-bff");
       expect(verifiedA.claims.environment_id).toBe("env-clb19");
       expect(verifiedA.claims.scope).toBe("task.read");
       expect(verifiedA.claims.nbf).toBe(1_700_000_000);

@@ -72,9 +72,10 @@ export function signOrionServiceJwt(
   if (!isValidOrionId(jti)) {
     throw new OrionConfigError("JWT jti must be a valid Orion identifier");
   }
-  const sub = options.sub?.trim() || config.jwtSubject;
-  if (sub.length === 0 || sub.length > 128 || sub.includes("..")) {
-    throw new OrionConfigError("JWT sub is invalid");
+  const sub =
+    options.sub !== undefined ? options.sub.trim() : config.jwtSubject;
+  if (!isValidOrionId(sub)) {
+    throw new OrionConfigError("JWT sub must be a valid Orion identifier");
   }
 
   const header: OrionServiceJwtHeader = {
