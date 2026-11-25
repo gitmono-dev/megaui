@@ -1835,6 +1835,27 @@ export const zhCN = {
         bench: {
           title: "基准变化",
           from: "基线 {value}"
+        },
+        controls: {
+          title: "构建控制",
+          triggerBuild: "触发构建",
+          retryBuild: "重试构建",
+          cancelBuild: "取消构建",
+          submitting: "执行中…",
+          taskMeta: "任务 {taskId} · 尝试 {attemptId} · {status}",
+          noTaskYet: "当前修订尚无 Orion2 构建任务。",
+          actionError: "构建操作失败：{message}",
+          attemptHistory: "构建历史",
+          viewLogs: "查看日志"
+        },
+        liveLog: {
+          title: "实时 Buck2 构建日志",
+          connecting: "正在连接…",
+          streaming: "串流中",
+          closed: "日志流已结束",
+          error: "日志流已断开",
+          empty: "等待构建输出…",
+          truncated: "仅保留最新 {limit} 行"
         }
       },
       deps: {

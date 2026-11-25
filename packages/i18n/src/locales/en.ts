@@ -1834,6 +1834,27 @@ export const en = {
         bench: {
           title: "Benchmark delta",
           from: "from {value}"
+        },
+        controls: {
+          title: "Build controls",
+          triggerBuild: "Trigger Build",
+          retryBuild: "Retry Build",
+          cancelBuild: "Cancel Build",
+          submitting: "Working…",
+          taskMeta: "Task {taskId} · Attempt {attemptId} · {status}",
+          noTaskYet: "No Orion2 build task yet for this revision.",
+          actionError: "Build action failed: {message}",
+          attemptHistory: "Build history",
+          viewLogs: "View logs"
+        },
+        liveLog: {
+          title: "Live Buck2 logs",
+          connecting: "Connecting…",
+          streaming: "Streaming",
+          closed: "Stream closed",
+          error: "Log stream disconnected",
+          empty: "Waiting for build output…",
+          truncated: "Showing latest {limit} lines"
         }
       },
       deps: {
