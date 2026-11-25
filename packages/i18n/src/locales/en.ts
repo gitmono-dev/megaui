@@ -1625,7 +1625,9 @@ export const en = {
         ci: {
           passing: "passing",
           failing: "failing",
-          queued: "queued"
+          queued: "queued",
+          running: "running",
+          skipped: "skipped"
         },
         verdicts: {
           approved: "approved",
@@ -1945,7 +1947,16 @@ export const en = {
           merged: "Merged",
           mergeAction: "Merge CL",
           rebaseAction: "Rebase",
-          squashNote: "Merging this CL creates exactly one new commit on main."
+          squashNote: "Merging this CL creates exactly one new commit on main.",
+          ciFailingTitle: "CI checks failed",
+          ciFailingSubtitle: "Fix failing CI checks before merging.",
+          ciRunningTitle: "CI checks in progress",
+          ciRunningSubtitle: "CI checks are currently running. Wait for them to pass before merging.",
+          ciQueuedTitle: "CI checks queued",
+          ciQueuedSubtitle: "Waiting for queued CI checks to finish.",
+          ciSkippedTitle: "CI checks required",
+          ciSkippedSubtitle: "CI checks were skipped or invalidated for this revision. Re-run checks until they pass before merging.",
+          viewChecks: "View checks"
         },
         composer: {
           write: "Write",

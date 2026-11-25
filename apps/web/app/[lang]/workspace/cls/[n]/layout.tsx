@@ -45,16 +45,21 @@ export default function CLDetailLayout({ children }: { children: ReactNode }) {
     queryFn: () => megaGet<CL>(["cls", String(clNumber)]),
     enabled: validNumber,
     retry: (failureCount, error) => !(error instanceof MegaApiError && error.status === 404) && failureCount < 2,
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (!data || data.state === "merged" || data.state === "closed") return false;
+      return data.ci === "queued" || data.ci === "running" ? 3000 : 10000;
+    },
   });
   const commentsQuery = useQuery({
     queryKey: megaQueryKeys.clComments(clNumber),
     queryFn: () => megaGet<CLComment[]>(["cls", String(clNumber), "comments"]),
-    enabled: validNumber && clQuery.isSuccess && isConversation,
+    enabled: validNumber && Boolean(clQuery.data) && isConversation,
   });
   const inlineQuery = useQuery({
     queryKey: megaQueryKeys.clInlineComments(clNumber),
     queryFn: () => megaGet<InlineComment[]>(["cls", String(clNumber), "inline-comments"]),
-    enabled: validNumber && clQuery.isSuccess && isConversation,
+    enabled: validNumber && Boolean(clQuery.data) && isConversation,
   });
 
   const transitionMutation = useMutation({
@@ -66,7 +71,8 @@ export default function CLDetailLayout({ children }: { children: ReactNode }) {
   });
 
   const notFound =
-    !validNumber || (clQuery.isError && clQuery.error instanceof MegaApiError && clQuery.error.status === 404);
+    !validNumber ||
+    (!clQuery.data && clQuery.isError && clQuery.error instanceof MegaApiError && clQuery.error.status === 404);
 
   if (notFound) {
     return (
@@ -90,7 +96,7 @@ export default function CLDetailLayout({ children }: { children: ReactNode }) {
     );
   }
 
-  if (clQuery.isError) {
+  if (!clQuery.data) {
     return (
       <main data-mega-cls="detail">
         <div role="alert" style={{ alignItems: "center", display: "flex", gap: MEGA_SPACING_TOKENS[8], padding: `calc(${MEGA_SPACING_TOKENS[8]} * 3)` }}>
@@ -104,14 +110,27 @@ export default function CLDetailLayout({ children }: { children: ReactNode }) {
   }
 
   const cl = clQuery.data;
-  const isAuthor = Boolean(session?.user?.id && session.user.id === cl.author.id);
-  const mergeTarget: CL["state"] | undefined =
-    cl.state === "ready" && cl.merge === "queue-ready"
-      ? "queued"
+  const transitionErrorMessage = transitionMutation.isError
+    ? transitionMutation.error instanceof Error && transitionMutation.error.message.trim().length > 0
+      ? transitionMutation.error.message
+      : detail.error
+    : null;
+  const isMega2Backed = cl.author.id.startsWith("mega2:");
+  const isLocalAuthor = Boolean(session?.user?.id && session.user.id === cl.author.id);
+  const canTriggerMerge = Boolean(session?.user?.id && (isLocalAuthor || isMega2Backed));
+  const canRebase = isLocalAuthor && !isMega2Backed && cl.state === "conflicts";
+  const canMergeCi = cl.ci === "passing";
+  const mergeTarget: CL["state"] | undefined = !canMergeCi
+    ? undefined
+    : cl.state === "ready" && cl.merge === "queue-ready"
+      ? isMega2Backed
+        ? "merged"
+        : "queued"
       : cl.state === "queued"
         ? "merged"
         : undefined;
-  const canRebase = cl.state === "conflicts";
+  const checksHref = `${baseHref}/checks`;
+  const ciStatusLabel = detail.revisions.card.ciStatuses[cl.ci] ?? cl.ci;
 
   return (
     <main data-mega-cls="detail">
@@ -131,7 +150,15 @@ export default function CLDetailLayout({ children }: { children: ReactNode }) {
           !{cl.number} {cl.title}
         </h1>
         <p style={{ color: MEGA_TOKENS.muted, margin: `${MEGA_SPACING_TOKENS[6]} 0 0` }}>
-          {cl.state} · {cl.branch} · {cl.author.displayName}
+          {cl.state} · {cl.branch} · {cl.author.displayName} ·{" "}
+          <Link
+            data-ci={cl.ci}
+            data-mega-cls="detail-ci"
+            href={checksHref}
+            style={{ color: cl.ci === "failing" ? MEGA_TOKENS.danger : MEGA_TOKENS.accent, textDecoration: "none" }}
+          >
+            {detail.revisions.card.ci.replace("{status}", ciStatusLabel)}
+          </Link>
           {isConversation && commentsQuery.data ? ` · ${commentsQuery.data.length} comments` : ""}
           {isConversation && inlineQuery.data ? ` · ${inlineQuery.data.length} inline` : ""}
         </p>
@@ -158,6 +185,24 @@ export default function CLDetailLayout({ children }: { children: ReactNode }) {
             );
           })}
         </nav>
+        {clQuery.isError ? (
+          <div
+            data-mega-cls="refresh-error"
+            role="alert"
+            style={{
+              alignItems: "center",
+              color: MEGA_TOKENS.danger,
+              display: "flex",
+              gap: MEGA_SPACING_TOKENS[8],
+              marginTop: MEGA_SPACING_TOKENS[8],
+            }}
+          >
+            <p style={{ margin: 0 }}>{detail.error}</p>
+            <button data-mega-cls="retry" onClick={() => void clQuery.refetch()} type="button">
+              {detail.retry}
+            </button>
+          </div>
+        ) : null}
       </header>
 
       {isConversation ? (
@@ -172,13 +217,27 @@ export default function CLDetailLayout({ children }: { children: ReactNode }) {
           <div data-mega-cls="conversation">{children}</div>
           <aside data-mega-cls="sidebar">
             <MergeBox
+              checksHref={checksHref}
               cl={cl}
               labels={detail.conversation.mergeBox}
-              onMerge={mergeTarget && isAuthor ? () => transitionMutation.mutate(mergeTarget) : undefined}
-              onRebase={canRebase && isAuthor ? () => transitionMutation.mutate("ready") : undefined}
+              onMerge={mergeTarget && canTriggerMerge ? () => transitionMutation.mutate(mergeTarget) : undefined}
+              onRebase={canRebase ? () => transitionMutation.mutate("ready") : undefined}
               pending={transitionMutation.isPending}
-              showActions={isAuthor}
+              showActions={canTriggerMerge || canRebase}
             />
+            {transitionErrorMessage ? (
+              <div
+                data-mega-cls="merge-error"
+                role="alert"
+                style={{
+                  color: MEGA_TOKENS.danger,
+                  fontSize: "calc(var(--mega-density-font-size) - 1px)",
+                  marginTop: MEGA_SPACING_TOKENS[8],
+                }}
+              >
+                {transitionErrorMessage}
+              </div>
+            ) : null}
           </aside>
         </div>
       ) : (

@@ -1626,7 +1626,9 @@ export const zhCN = {
         ci: {
           passing: "通过",
           failing: "失败",
-          queued: "排队中"
+          queued: "排队中",
+          running: "运行中",
+          skipped: "已跳过"
         },
         verdicts: {
           approved: "已批准",
@@ -1946,7 +1948,16 @@ export const zhCN = {
           merged: "已合并",
           mergeAction: "合并 CL",
           rebaseAction: "Rebase",
-          squashNote: "合并此 CL 只会在 main 上产生一个新提交。"
+          squashNote: "合并此 CL 只会在 main 上产生一个新提交。",
+          ciFailingTitle: "CI 检查失败",
+          ciFailingSubtitle: "请先修复失败的 CI 检查后再合并。",
+          ciRunningTitle: "CI 检查进行中",
+          ciRunningSubtitle: "CI 检查正在运行中，请等待通过后再合并。",
+          ciQueuedTitle: "CI 检查排队中",
+          ciQueuedSubtitle: "等待排队中的 CI 检查完成。",
+          ciSkippedTitle: "需要完成 CI 检查",
+          ciSkippedSubtitle: "当前修订的 CI 检查已跳过或已失效，请重新运行并通过后再合并。",
+          viewChecks: "查看检查"
         },
         composer: {
           write: "撰写",
