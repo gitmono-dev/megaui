@@ -1,3 +1,4 @@
+// megaui-only
 import { z } from "zod";
 
 export const ORION_V1_NAMESPACE = "orion.v1" as const;
@@ -75,6 +76,16 @@ export const orionTimestampSchema = z
 const orionNamespaceSchema = z.literal(ORION_V1_NAMESPACE);
 const orionVersionSchema = z.literal(ORION_V1_SCHEMA_VERSION);
 
+function hasDisallowedRefControlChar(value: string): boolean {
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code <= 0x1f || code === 0x7f || code === 0xfeff) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export const taskSourceRefSchema = z
   .object({
     repo_path: z
@@ -94,7 +105,7 @@ export const taskSourceRefSchema = z
         (v) =>
           Buffer.byteLength(v, "utf8") <= 256 &&
           !v.includes("..") &&
-          !/[\u0000-\u001f\u007f\ufeff]/.test(v),
+          !hasDisallowedRefControlChar(v),
         "Invalid ref_name",
       )
       .optional(),

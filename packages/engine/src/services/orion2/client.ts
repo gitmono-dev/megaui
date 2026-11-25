@@ -1,3 +1,4 @@
+// megaui-only
 import { randomUUID } from "node:crypto";
 import type { z } from "zod";
 import {

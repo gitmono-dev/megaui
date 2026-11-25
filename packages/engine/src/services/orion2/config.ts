@@ -1,3 +1,4 @@
+// megaui-only
 import { readFileSync } from "node:fs";
 import {
   isValidOrionId,

@@ -1,3 +1,4 @@
+// megaui-only
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import type { Orion2Config } from "./config";
 import { MIN_ORION2_HMAC_SECRET_BYTES } from "./config";

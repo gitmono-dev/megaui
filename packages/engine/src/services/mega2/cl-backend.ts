@@ -1,3 +1,4 @@
+// megaui-only
 import { z } from "zod";
 import {
   MegaBadRequestError,

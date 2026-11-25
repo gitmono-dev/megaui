@@ -233,8 +233,12 @@ describe("FSL-168: the forward migration drops the enterprise structure", () => 
       ledger: await ledger(pool),
     };
 
-    // Forward: the generated migration set applies from that state.
-    await isolated.migrate();
+    // Forward: restore the unmodified target migration SQL and apply through
+    // `position` (the enterprise-drop migration itself) so later forward
+    // migrations do not alter the exact table/constraint/ledger assertions for
+    // FSL-168.
+    writeFileSync(join(directory, `${migrationTag}.sql`), originalSql);
+    await migrate(drizzle(pool), { migrationsFolder: directory });
   }, 180_000);
 
   afterAll(async () => {

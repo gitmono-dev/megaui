@@ -25,10 +25,20 @@ import {
 export const dynamic = "force-dynamic";
 
 const ALLOWED_QUERY_KEYS: ReadonlySet<string> = new Set(["after"]);
-const SAFE_EVENT_ID_RE = /^[^\u0000-\u001f\u007f\s]{1,128}$/;
+const WHITESPACE_RE = /\s/;
 
 interface AttemptLogsRouteContext {
   readonly params: Promise<{ readonly attemptId: string }>;
+}
+
+function isSafeEventId(raw: string): boolean {
+  if (raw.length < 1 || raw.length > 128) return false;
+  if (WHITESPACE_RE.test(raw)) return false;
+  for (let i = 0; i < raw.length; i += 1) {
+    const code = raw.charCodeAt(i);
+    if (code <= 0x1f || code === 0x7f) return false;
+  }
+  return true;
 }
 
 function parseOptionalEventToken(raw: string | null): {
@@ -36,7 +46,7 @@ function parseOptionalEventToken(raw: string | null): {
   readonly value?: string;
 } {
   if (raw === null) return { ok: true };
-  if (!SAFE_EVENT_ID_RE.test(raw)) {
+  if (!isSafeEventId(raw)) {
     return { ok: false };
   }
   return { ok: true, value: raw };
