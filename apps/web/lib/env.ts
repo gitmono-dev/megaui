@@ -11,6 +11,13 @@ const envSchema = z.object({
     .enum(["development", "test", "production"])
     .default("development"),
   MEGAUI_APP_NAME: z.string().min(1).default("megaui"),
+  MEGA2_OCI_BASE_URL: z.string().refine(value => {
+    if (!value.trim()) return true;
+    try {
+      const url = new URL(value);
+      return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password && url.pathname === "/" && !url.search && !url.hash;
+    } catch { return false; }
+  }, "MEGA2_OCI_BASE_URL must be an HTTP(S) origin").optional(),
   // FSL-132: AUTH_MODE / AUTH_PROVIDER are parsed only by `resolveAuthMode`
   // (@megaui/core, GC-02); startup refuses a pair it rejects (instrumentation.ts).
 });

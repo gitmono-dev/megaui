@@ -301,6 +301,7 @@ export const zhCN = {
     },
     title: "工作台",
     description: "您的 Mega 工作台已准备就绪。",
+    images: { title: "镜像", description: "浏览 Mega2 中的容器镜像仓库。", search: "搜索仓库", searchTags: "搜索标签", empty: "没有找到镜像仓库。", unavailable: "镜像仓库不可用，或当前没有访问权限。", retry: "重试", loading: "正在加载镜像…", more: "加载更多", back: "全部仓库", tags: "标签", noTags: "暂无标签。" },
     nav: {
       ariaLabel: "Mega 工作台导航",
       search: "搜索",
@@ -313,7 +314,8 @@ export const zhCN = {
         code: "代码",
         tags: "版本",
         cls: "变更",
-        issues: "议题"
+        issues: "议题",
+        images: "镜像"
       },
       favorites: "收藏",
       favoritesEmpty: "收藏常用项目，或创建新的收藏项。",

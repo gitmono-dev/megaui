@@ -13,3 +13,5 @@ import "./collab-token";
 import "./sessions";
 import "./home";
 import "./code";
+
+import "./images";

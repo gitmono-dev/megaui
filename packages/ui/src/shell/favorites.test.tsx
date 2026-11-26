@@ -27,7 +27,7 @@ afterEach(() => {
 
 const NAV_LABELS: Record<MegaNavId, string> = {
   home: "Home", inbox: "Inbox", docs: "Doc",
-  code: "Code", tags: "Tag", cls: "Change List", issues: "Issue",
+  code: "Code", tags: "Tag", cls: "Change List", issues: "Issue", images: "Images",
 }
 
 const entry = (href: string): FavoriteEntry => ({ href, icon: "star", title: href })

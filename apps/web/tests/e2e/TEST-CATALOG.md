@@ -41,6 +41,7 @@
 | `workspace-issues.spec.ts` | [workspace-issues.md](./catalog/workspace-issues.md) | WA-11 | stub | ran |
 | `workspace-surface-style.spec.ts` | [workspace-surface-style.md](./catalog/workspace-surface-style.md) | UI-01 | stub | ran (compose `:17001`) |
 | `workspace-settings-credentials.spec.ts` | [workspace-settings-credentials.md](./catalog/workspace-settings-credentials.md) | WA-18 | stub | ran (isolated Web/Postgres) |
+| `workspace-images.spec.ts` | [workspace-images.md](./catalog/workspace-images.md) | Images | stub | catalog-ready |
 | `workspace-settings.spec.ts` | [workspace-settings.md](./catalog/workspace-settings.md) | WA-17 | stub | catalog-ready |
 
 OPS-01 Description core list (auth → code → CL → docs/collab → issues → chat → inbox → upload) = the **ran** rows above; other specs are catalog-ready for the same `E2E_BASE_URL` harness.

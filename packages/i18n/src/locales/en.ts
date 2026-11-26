@@ -301,6 +301,7 @@ export const en = {
     },
     title: "Workspace",
     description: "Your Mega workspace is ready.",
+    images: { title: "Images", description: "Browse container image repositories in Mega2.", search: "Search repositories", searchTags: "Search tags", empty: "No image repositories found.", unavailable: "The image registry is unavailable or access is not enabled.", retry: "Retry", loading: "Loading images…", more: "Load more", back: "All repositories", tags: "Tags", noTags: "No tags found." },
     nav: {
       ariaLabel: "Mega workspace navigation",
       search: "Search",
@@ -313,7 +314,8 @@ export const en = {
         code: "Code",
         tags: "Tag",
         cls: "Change List",
-        issues: "Issue"
+        issues: "Issue",
+        images: "Images"
       },
       favorites: "Favorites",
       favoritesEmpty: "Favorite your top items — create or bookmark.",

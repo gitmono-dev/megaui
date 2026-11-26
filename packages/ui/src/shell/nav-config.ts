@@ -16,6 +16,7 @@ export const MEGA_NAV_IDS = [
   "tags",
   "cls",
   "issues",
+  "images",
 ] as const
 
 export type MegaNavId = (typeof MEGA_NAV_IDS)[number]
@@ -37,6 +38,7 @@ export const MEGA_NAV_ITEMS: readonly MegaNavItemConfig[] = [
   { id: "tags", icon: "tag", path: "tags" },
   { id: "cls", icon: "git-pull", path: "cls" },
   { id: "issues", icon: "bug", path: "issues" },
+  { id: "images", icon: "folder", path: "images" },
 ]
 
 function normalizePath(path: string): string {

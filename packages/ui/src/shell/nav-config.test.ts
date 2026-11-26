@@ -16,7 +16,7 @@ import {
 describe("nav-config (UI-05 AC1: rail nav items / active state / path-collapse parity)", () => {
   it("defines the localized routes in the nav-approved order", () => {
     expect(MEGA_NAV_ITEMS.map((item) => item.id)).toEqual([
-      "home", "inbox", "docs", "code", "tags", "cls", "issues",
+      "home", "inbox", "docs", "code", "tags", "cls", "issues", "images",
     ])
   })
 
