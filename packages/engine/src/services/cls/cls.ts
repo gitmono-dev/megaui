@@ -46,7 +46,7 @@ import {
   type Database,
 } from "@megaui/database";
 import { createEmptyMegaDocumentEditorStateJSON } from "@megaui/content";
-import { matchesCLFilter, type CIStatus, type CL, type CLComment, type CLMergeState, type CLReviewer, type CLState, type Filter, type Reaction, type ReviewerVerdict, type User } from "@megaui/core";
+import { isBlockId, isCLPublicId, matchesCLFilter, type CIStatus, type CL, type CLComment, type CLMergeState, type CLReviewer, type CLState, type Filter, type Reaction, type ReviewerVerdict, type User } from "@megaui/core";
 import { MegaBadRequestError, MegaForbiddenError, MegaNotFoundError } from "../../errors";
 import { BODY_FORMAT_VERSION_BLOCK_TREE } from "../docs/body-format";
 import { replaceBlocksForSourceOnTx } from "../docs/blocks";
@@ -55,7 +55,7 @@ import { assertWorkspaceMember } from "./authz";
 import { deleteCLCheckRun, getCLChecks, upsertCLCheckRun, type CLCheckRunInput, type CLChecksView } from "./checks";
 import { isEmptyCommentBody, normalizeCommentBodyJson } from "./comment-body";
 import { normalizeCLDescriptionJson, plainSummaryFromDescription } from "./description";
-import { ensureCLPublicId, lockCLNumberAllocation, nextCLNumber } from "./public-id";
+import { ensureCLPublicId, lockCLNumberAllocation, matchesCLPublicId, nextCLNumber } from "./public-id";
 import {
   getCLDependencyGraph,
   setCLDependencyGraph,
@@ -227,11 +227,23 @@ export function createClsService(database: Database) {
     };
   }
 
+  async function resolveSearchPublicId(query: string | undefined): Promise<string | undefined> {
+    const ref = query?.trim().replace(/^!/, "");
+    if (!isBlockId(ref)) return undefined;
+    if (isCLPublicId(ref)) return ref;
+    const [identity] = await database.select({ publicId: megaClPublicIds.publicId })
+      .from(megaClPublicIds).where(matchesCLPublicId(ref)).limit(1);
+    return identity?.publicId;
+  }
+
   async function listCLs(filter: Filter = {}, actorUserId?: string | null): Promise<CL[]> {
     const rows = await database.select({ number: megaCls.number }).from(megaCls);
     const cls = await Promise.all(rows.map((row) => loadCL(row.number)));
     const currentUserId = actorUserId?.trim() ?? "";
-    return sortCLs(cls.filter((cl) => matchesCLFilter(cl, filter, currentUserId)), filter.sort);
+    const exactCode = await resolveSearchPublicId(filter.text);
+    return sortCLs(cls.filter((cl) => matchesCLFilter(
+      cl, cl.publicId === exactCode ? { ...filter, text: undefined } : filter, currentUserId,
+    )), filter.sort);
   }
 
   async function getCL(number: number): Promise<CL> {
@@ -509,6 +521,7 @@ export function createClsService(database: Database) {
 
   return {
     listCLs,
+    resolveSearchPublicId,
     getCL,
     createCL,
     toggleCLSubscription,

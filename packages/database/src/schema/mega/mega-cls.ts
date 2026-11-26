@@ -135,10 +135,13 @@ export const megaClPublicIds = pgTable(
   {
     number: integer("number").primaryKey(),
     publicId: text("public_id").notNull(),
+    legacyPublicId: text("legacy_public_id"),
   },
   (table) => [
     uniqueIndex("mega_cl_public_ids_public_id_uidx").on(table.publicId),
-    check("mega_cl_public_ids_format_check", sql`${table.publicId} COLLATE "C" ~ '^[A-Za-z0-9_-]{12}$'`),
+    uniqueIndex("mega_cl_public_ids_legacy_public_id_uidx").on(table.legacyPublicId).where(sql`${table.legacyPublicId} IS NOT NULL`),
+    check("mega_cl_public_ids_format_check", sql`${table.publicId} COLLATE "C" ~ '^[A-Za-z0-9_]{12}$'`),
+    check("mega_cl_public_ids_legacy_format_check", sql`${table.legacyPublicId} COLLATE "C" ~ '^[A-Za-z0-9_-]{12}$' AND strpos(${table.legacyPublicId}, '-') > 0`),
   ],
 );
 

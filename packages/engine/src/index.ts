@@ -124,6 +124,7 @@ export {
   detectDependencyCycles,
   ensureCLPublicId,
   lockCLNumberAllocation,
+  matchesCLPublicId,
   nextCLNumber,
   getCLChecks,
   getCLDependencyGraph,

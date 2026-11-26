@@ -121,8 +121,9 @@ describe.skipIf(!dockerAvailable)(
       expect(await readPublicTables(pool)).toEqual([...EXPECTED_PUBLIC_TABLES]);
     });
 
-    it("backfills one block-format public ID per distinct local or live CL number", async () => {
+    it("backfills local and live CLs, preserves unaffected codes, and retains colliding old spellings", async () => {
       const migration = await readFile(join(resolveMigrationsFolder(), "0024_mega_cl_public_ids.sql"), "utf8");
+      const removeHyphens = await readFile(join(resolveMigrationsFolder(), "0025_hyphen_free_cl_ids.sql"), "utf8");
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
@@ -139,19 +140,35 @@ describe.skipIf(!dockerAvailable)(
         expect(rows.map(row => row.number)).toEqual([1, 2, 3]);
         expect(rows.every(row => isBlockId(row.public_id))).toBe(true);
         expect(new Set(rows.map(row => row.public_id)).size).toBe(3);
+        await client.query(`UPDATE mega_cl_public_ids SET public_id = CASE number
+          WHEN 1 THEN 'Abcd012345_1' WHEN 2 THEN 'Abcd012345-1' ELSE 'a--d012345_2' END`);
+        await client.query(removeHyphens);
+        const upgraded = await client.query(
+          "SELECT number, public_id, legacy_public_id FROM mega_cl_public_ids ORDER BY number",
+        );
+        expect(upgraded.rows).toEqual([
+          { number: 1, public_id: "Abcd012345_1", legacy_public_id: null },
+          { number: 2, public_id: expect.stringMatching(/^[A-Za-z0-9_]{12}$/), legacy_public_id: "Abcd012345-1" },
+          { number: 3, public_id: "a__d012345_2", legacy_public_id: "a--d012345_2" },
+        ]);
+        expect(new Set(upgraded.rows.map(row => row.public_id)).size).toBe(3);
       } finally {
         await client.query("ROLLBACK");
         client.release();
       }
     });
 
-    it("enforces unique, case-sensitive block-format CL codes and unique internal numbers", async () => {
-      const insert = (number: number, code: string) =>
-        pool.query("INSERT INTO mega_cl_public_ids (number, public_id) VALUES ($1, $2)", [number, code]);
-      await insert(1, "Abcd012345_-");
-      await insert(2, "abcd012345_-");
+    it("enforces unique numbers, case-sensitive hyphen-free codes and distinct hyphenated aliases", async () => {
+      const insert = (number: number, code: string, legacy: string | null = null) =>
+        pool.query("INSERT INTO mega_cl_public_ids (number, public_id, legacy_public_id) VALUES ($1, $2, $3)", [number, code, legacy]);
+      await insert(1, "Abcd012345_1", "Abcd012345-1");
+      await insert(2, "abcd012345_1", "abcd012345-1");
       await expect(insert(1, "Different123")).rejects.toMatchObject({ code: "23505" });
-      await expect(insert(3, "Abcd012345_-")).rejects.toMatchObject({ code: "23505" });
+      await expect(insert(3, "Abcd012345_1")).rejects.toMatchObject({ code: "23505" });
+      await expect(insert(3, "Different123", "abcd012345-1")).rejects.toMatchObject({ code: "23505" });
+      await expect(insert(3, "Different123", "abcd012345_1")).rejects.toMatchObject({ code: "23514" });
+      await expect(insert(3, "Different123", "bad-")).rejects.toMatchObject({ code: "23514" });
+      await expect(insert(3, "Abcd012345_-")).rejects.toMatchObject({ code: "23514" });
       await expect(insert(3, "too.short")).rejects.toMatchObject({ code: "23514" });
       await expect(insert(3, "é12345678901")).rejects.toMatchObject({ code: "23514" });
     });

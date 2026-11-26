@@ -1,4 +1,4 @@
-import { generateBlockId, isBlockId, isLegacyCLNumber } from "@megaui/core";
+import { generateCLPublicId, isCLPublicId, isCLReference, isLegacyCLNumber } from "@megaui/core";
 import { megaClLinks, megaClPublicIds, megaCls, type Database } from "@megaui/database";
 import { eq, max, sql } from "drizzle-orm";
 import { MegaBadRequestError, MegaInternalError, MegaNotFoundError } from "../../errors";
@@ -27,7 +27,7 @@ export async function ensureCLPublicId(
     if (existing) return existing.publicId;
 
     const [inserted] = await db.insert(megaClPublicIds)
-      .values({ number, publicId: generateBlockId() })
+      .values({ number, publicId: generateCLPublicId() })
       .onConflictDoNothing()
       .returning({ publicId: megaClPublicIds.publicId });
     if (inserted) return inserted.publicId;
@@ -36,12 +36,17 @@ export async function ensureCLPublicId(
   throw new MegaInternalError("Unable to reserve a public CL identifier");
 }
 
+/** The canonical and historical code formats are disjoint and separately indexed. */
+export function matchesCLPublicId(ref: string) {
+  return eq(isCLPublicId(ref) ? megaClPublicIds.publicId : megaClPublicIds.legacyPublicId, ref);
+}
+
 /** Resolving an address only yields a key; the caller still performs the normal CL access check. */
 export async function resolveCLNumber(db: Pick<Database, "select">, ref: string): Promise<number> {
   if (isLegacyCLNumber(ref)) return Number(ref);
-  if (!isBlockId(ref)) throw new MegaBadRequestError("Invalid CL reference");
+  if (!isCLReference(ref)) throw new MegaBadRequestError("Invalid CL reference");
   const [row] = await db.select({ number: megaClPublicIds.number })
-    .from(megaClPublicIds).where(eq(megaClPublicIds.publicId, ref)).limit(1);
+    .from(megaClPublicIds).where(matchesCLPublicId(ref)).limit(1);
   if (!row) throw new MegaNotFoundError("CL", ref);
   return row.number;
 }

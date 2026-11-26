@@ -3,7 +3,7 @@
  */
 import { ownedContractFixture } from "../helpers/owned-contract";
 
-import { isBlockId } from "@megaui/core";
+import { isCLPublicId } from "@megaui/core";
 import { createDatabaseClient } from "@megaui/database";
 import {
   MEGA_ERROR_CODES,
@@ -312,7 +312,7 @@ describe(
         assertMegaSuccessEnvelope(body);
         expect(body.data).toMatchObject({ number: SAMPLE_CL.number });
         const { publicId } = body.data as { publicId: string };
-        expect(isBlockId(publicId)).toBe(true);
+        expect(isCLPublicId(publicId)).toBe(true);
 
         for (const tail of [[], ["comments"]]) {
           const read = (ref: string) => {
@@ -437,7 +437,7 @@ describe(
         const { publicId, subscribed: initialSubscribed } = createBody.data as {
           publicId: string; subscribed: boolean;
         };
-        expect(isBlockId(publicId)).toBe(true);
+        expect(isCLPublicId(publicId)).toBe(true);
 
         const first = await POST(
           authedRequest(`/cls/${publicId}/subscribe`, sessionCookieHeader, {
