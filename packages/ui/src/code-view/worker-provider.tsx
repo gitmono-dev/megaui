@@ -5,6 +5,7 @@
  */
 import { WorkerPoolContextProvider } from "@pierre/diffs/react"
 import type { ReactNode } from "react"
+import { MEGA_CODE_THEMES } from "./themes-shared"
 
 /**
  * Shared @pierre/diffs worker pool (ADR-WS-03): Shiki highlighting runs off
@@ -17,7 +18,7 @@ import type { ReactNode } from "react"
 export function MegaDiffsWorkerProvider({ children }: { children: ReactNode }) {
   return (
     <WorkerPoolContextProvider
-      highlighterOptions={{ langs: ["rust", "typescript", "javascript", "markdown", "toml", "shell", "json", "python", "text"] }}
+      highlighterOptions={{ theme: MEGA_CODE_THEMES, langs: ["rust", "typescript", "javascript", "markdown", "toml", "shell", "json", "python", "text"] }}
       poolOptions={{
         poolSize: 2,
         workerFactory: () => new Worker(new URL("@pierre/diffs/worker/worker.js", import.meta.url), { type: "module" }),
