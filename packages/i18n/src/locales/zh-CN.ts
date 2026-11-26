@@ -1260,7 +1260,7 @@ export const zhCN = {
         legendIssue: "议题",
         legendCl: "变更",
         issueAriaLabel: "议题 #{number}",
-        clAriaLabel: "变更 !{number}"
+        clAriaLabel: "变更 {publicId}"
       },
       header: {
         allTitle: "All Docs",
@@ -1712,12 +1712,18 @@ export const zhCN = {
     },
     clDetail: {
       notFoundTitle: "变更不存在",
-      notFoundBody: "CL !{number} 不存在。",
+      notFoundBody: "找不到变更单 {id}",
       backToList: "返回变更",
       loading: "正在加载变更",
-      error: "变更暂时不可用。",
+      error: "变更暂时不可用",
       retry: "重试",
       chrome: {
+        sourceBranch: "来源分支",
+        targetBranch: "目标分支",
+        intoBranch: "合入",
+        navigation: "变更单导航",
+        details: "变更单详情",
+        repository: "仓库",
         breadcrumbCls: "变更",
         states: {
           wip: "WIP",
@@ -1733,7 +1739,7 @@ export const zhCN = {
         rebase: "Rebase",
         merge: "合并",
         tabs: {
-          conversation: "会话",
+          conversation: "概览",
           revisions: "修订",
           files: "文件变更",
           checks: "检查",
@@ -1742,9 +1748,9 @@ export const zhCN = {
       },
       revisions: {
         loading: "正在加载修订",
-        error: "修订暂时不可用。",
+        error: "修订暂时不可用",
         retry: "重试",
-        empty: "此 CL 还没有修订。",
+        empty: "此 CL 还没有修订",
         timelineAriaLabel: "修订时间线",
         baseMarkerAriaLabel: "分支基点",
         baseMarker: "{base} — 最初分支点",
@@ -1779,24 +1785,24 @@ export const zhCN = {
           title: "提交链",
           commits: "{count} 个提交",
           loading: "正在加载提交链",
-          error: "提交链暂时不可用。",
+          error: "提交链暂时不可用",
           retry: "重试",
-          empty: "此 CL 还没有提交。"
+          empty: "此 CL 还没有提交"
         },
         rangeSummary: {
           rangeTitle: "区间 diff 摘要",
           fetchTitle: "如何拉取",
           subscribeTitle: "订阅",
           subscribeAriaLabel: "订阅新修订",
-          subscribeText: "新 revision 推送时通知 {me}、审阅者与负责人团队。"
+          subscribeText: "新 revision 推送时通知 {me}、审阅者与负责人团队"
         }
       },
       files: {
         loading: "正在加载变更文件",
-        error: "变更文件暂时不可用。",
+        error: "变更文件暂时不可用",
         retry: "重试",
-        empty: "此 CL 没有变更文件。",
-        invalidRange: "修订区间 \"{range}\" 无效——已显示完整 diff。",
+        empty: "此 CL 没有变更文件",
+        invalidRange: "修订区间 \"{range}\" 无效——已显示完整 diff",
         list: {
           filterAriaLabel: "过滤变更文件",
           filterPlaceholder: "过滤文件…",
@@ -1818,7 +1824,7 @@ export const zhCN = {
       inlineThreads: {
         addAriaLabel: "在此行添加评审评论",
         thread: {
-          resolved: "RESOLVED",
+          resolved: "已解决",
           reply: "回复",
           quote: "引用",
           resolve: "标记已解决",
@@ -1839,7 +1845,7 @@ export const zhCN = {
       },
       checks: {
         loading: "正在加载检查",
-        error: "检查暂时不可用。",
+        error: "检查暂时不可用",
         retry: "重试",
         hero: {
           allPassed: "全部检查通过",
@@ -1881,7 +1887,7 @@ export const zhCN = {
           cancelBuild: "取消构建",
           submitting: "执行中…",
           taskMeta: "任务 {taskId} · 尝试 {attemptId} · {status}",
-          noTaskYet: "当前修订尚无 Orion2 构建任务。",
+          noTaskYet: "当前修订尚无 Orion2 构建任务",
           actionError: "构建操作失败：{message}",
           attemptHistory: "构建历史",
           viewLogs: "查看日志"
@@ -1898,7 +1904,7 @@ export const zhCN = {
       },
       deps: {
         loading: "正在加载依赖",
-        error: "依赖暂时不可用。",
+        error: "依赖暂时不可用",
         retry: "重试",
         graph: {
           title: "包依赖图",
@@ -1945,7 +1951,7 @@ export const zhCN = {
         retry: "重试",
         viewed: "已查看",
         description: {
-          badge: "DESCRIPTION",
+          badge: "变更描述",
           openedMeta: "创建了此 CL · {time}",
           closes: "Closes:",
           empty: "暂无描述。",
@@ -1959,7 +1965,26 @@ export const zhCN = {
         },
         thread: {
           commentedOn: "评论于 {file} {line} · {time}",
-          resolved: "RESOLVED"
+          resolved: "已解决"
+        },
+        activity: {
+          title: "讨论",
+          filters: "筛选讨论",
+          all: "全部",
+          unresolved: "未解决",
+          mine: "我的",
+          sort: "评论排序",
+          oldest: "最早优先",
+          newest: "最新优先",
+          empty: "暂无评论",
+          emptyFilter: "没有符合条件的评论",
+          add: "添加评论",
+          postError: "评论发送失败，请重试",
+          moreComments: "查看全部 {count} 条评论",
+          lessComments: "收起评论",
+          moreCommits: "查看全部 {count} 个提交",
+          lessCommits: "收起提交",
+          preview: "差异预览"
         },
         inlineSection: {
           title: "行内评论",
@@ -1973,17 +1998,35 @@ export const zhCN = {
         },
         emptyPatch: "（空补丁）",
         mergeBox: {
+          closed: "已关闭",
+          draft: "草稿",
+          requirementsTitle: "合并条件",
+          requirementsStatus: "已通过 {passed}/{total} 项",
+          requirementsPending: "等待满足合并条件",
+          conditionNames: {
+            GpgSignature: "GPG 签名",
+            BranchProtection: "分支保护",
+            CommitMessage: "提交说明",
+            ClSync: "分支同步",
+            MergeConflict: "合并冲突",
+            CiStatus: "CI 检查"
+          },
+          conditionResults: {
+            PASSED: "通过",
+            FAILED: "失败",
+            PENDING: "等待中"
+          },
           readyTitle: "可以合并",
           readySubtitle: "{approvals} 个批准 · merge score {score} · 与 main 无冲突",
-          needsReviewTitle: "需要 review",
+          needsReviewTitle: "需要审阅",
           needsReviewSubtitle: "{approvals}/{total} 个批准",
           inQueueTitle: "已在合并队列",
           inQueueSubtitle: "队列位置 {position}",
-          rebaseTitle: "需要 rebase",
+          rebaseTitle: "需要变基",
           rebaseSubtitle: "此 CL 与 main 存在冲突。",
           merged: "已合并",
           mergeAction: "合并 CL",
-          rebaseAction: "Rebase",
+          rebaseAction: "变基",
           squashNote: "合并此 CL 只会在 main 上产生一个新提交。",
           ciFailingTitle: "CI 检查失败",
           ciFailingSubtitle: "请先修复失败的 CI 检查后再合并。",
@@ -2007,6 +2050,7 @@ export const zhCN = {
           cmdEnterHint: "⌘/Ctrl+Enter 发送评论"
         },
         sidebar: {
+          noReviewers: "暂无审阅者",
           reviewers: "审阅者",
           owners: "负责人（自动）",
           package: "所属包",

@@ -1260,7 +1260,7 @@ export const en = {
         legendIssue: "Issue",
         legendCl: "CL",
         issueAriaLabel: "Issue #{number}",
-        clAriaLabel: "CL !{number}"
+        clAriaLabel: "CL {publicId}"
       },
       header: {
         allTitle: "All Docs",
@@ -1712,12 +1712,18 @@ export const en = {
     },
     clDetail: {
       notFoundTitle: "Change List not found",
-      notFoundBody: "CL !{number} does not exist.",
+      notFoundBody: "Change list {id} could not be found",
       backToList: "Back to Change Lists",
       loading: "Loading change list",
-      error: "The change list is unavailable.",
+      error: "The change list is unavailable",
       retry: "Retry",
       chrome: {
+        sourceBranch: "Source branch",
+        targetBranch: "Target branch",
+        intoBranch: "into",
+        navigation: "Change list navigation",
+        details: "Change list details",
+        repository: "Repository",
         breadcrumbCls: "Change Lists",
         states: {
           wip: "WIP",
@@ -1733,7 +1739,7 @@ export const en = {
         rebase: "Rebase",
         merge: "Merge",
         tabs: {
-          conversation: "Conversation",
+          conversation: "Overview",
           revisions: "Revisions",
           files: "Files changed",
           checks: "Checks",
@@ -1742,9 +1748,9 @@ export const en = {
       },
       revisions: {
         loading: "Loading revisions",
-        error: "Revisions are unavailable.",
+        error: "Revisions are unavailable",
         retry: "Retry",
-        empty: "This CL has no revisions yet.",
+        empty: "This CL has no revisions yet",
         timelineAriaLabel: "Revision timeline",
         baseMarkerAriaLabel: "Branch base",
         baseMarker: "{base} — original branch point",
@@ -1779,24 +1785,24 @@ export const en = {
           title: "Commit chain",
           commits: "{count} commits",
           loading: "Loading commit chain",
-          error: "The commit chain is unavailable.",
+          error: "The commit chain is unavailable",
           retry: "Retry",
-          empty: "This CL has no commits yet."
+          empty: "This CL has no commits yet"
         },
         rangeSummary: {
           rangeTitle: "Range diff summary",
           fetchTitle: "How to fetch",
           subscribeTitle: "Subscribe",
           subscribeAriaLabel: "Subscribe to new revisions",
-          subscribeText: "Notify {me}, reviewers, and the owner team when a new revision is pushed."
+          subscribeText: "Notify {me}, reviewers, and the owner team when a new revision is pushed"
         }
       },
       files: {
         loading: "Loading changed files",
-        error: "Changed files are unavailable.",
+        error: "Changed files are unavailable",
         retry: "Retry",
-        empty: "This CL has no changed files.",
-        invalidRange: "Unknown revision range \"{range}\" — showing the full diff.",
+        empty: "This CL has no changed files",
+        invalidRange: "Unknown revision range \"{range}\" — showing the full diff",
         list: {
           filterAriaLabel: "Filter changed files",
           filterPlaceholder: "Filter files…",
@@ -1818,7 +1824,7 @@ export const en = {
       inlineThreads: {
         addAriaLabel: "Add a review comment on this line",
         thread: {
-          resolved: "RESOLVED",
+          resolved: "Resolved",
           reply: "Reply",
           quote: "Quote",
           resolve: "Resolve",
@@ -1839,7 +1845,7 @@ export const en = {
       },
       checks: {
         loading: "Loading checks",
-        error: "Checks are unavailable.",
+        error: "Checks are unavailable",
         retry: "Retry",
         hero: {
           allPassed: "All checks passed",
@@ -1881,7 +1887,7 @@ export const en = {
           cancelBuild: "Cancel Build",
           submitting: "Working…",
           taskMeta: "Task {taskId} · Attempt {attemptId} · {status}",
-          noTaskYet: "No Orion2 build task yet for this revision.",
+          noTaskYet: "No Orion2 build task yet for this revision",
           actionError: "Build action failed: {message}",
           attemptHistory: "Build history",
           viewLogs: "View logs"
@@ -1898,7 +1904,7 @@ export const en = {
       },
       deps: {
         loading: "Loading dependencies",
-        error: "Dependencies are unavailable.",
+        error: "Dependencies are unavailable",
         retry: "Retry",
         graph: {
           title: "Package dependency graph",
@@ -1945,7 +1951,7 @@ export const en = {
         retry: "Retry",
         viewed: "Viewed",
         description: {
-          badge: "DESCRIPTION",
+          badge: "Description",
           openedMeta: "opened this CL · {time}",
           closes: "Closes:",
           empty: "No description provided.",
@@ -1959,7 +1965,26 @@ export const en = {
         },
         thread: {
           commentedOn: "commented on {file} {line} · {time}",
-          resolved: "RESOLVED"
+          resolved: "Resolved"
+        },
+        activity: {
+          title: "Discussion",
+          filters: "Filter discussion",
+          all: "All",
+          unresolved: "Unresolved",
+          mine: "Mine",
+          sort: "Sort comments",
+          oldest: "Oldest first",
+          newest: "Newest first",
+          empty: "No comments yet",
+          emptyFilter: "No matching comments",
+          add: "Add a comment",
+          postError: "Couldn’t post your comment — try again",
+          moreComments: "Show all {count} comments",
+          lessComments: "Show fewer comments",
+          moreCommits: "Show all {count} commits",
+          lessCommits: "Show fewer commits",
+          preview: "Diff preview"
         },
         inlineSection: {
           title: "Inline comments",
@@ -1973,6 +1998,24 @@ export const en = {
         },
         emptyPatch: "(empty patch)",
         mergeBox: {
+          closed: "Closed",
+          draft: "Draft",
+          requirementsTitle: "Merge requirements",
+          requirementsStatus: "{passed} of {total} passed",
+          requirementsPending: "Merge requirements pending",
+          conditionNames: {
+            GpgSignature: "GPG signature",
+            BranchProtection: "Branch protection",
+            CommitMessage: "Commit message",
+            ClSync: "Branch sync",
+            MergeConflict: "Merge conflicts",
+            CiStatus: "CI checks"
+          },
+          conditionResults: {
+            PASSED: "Passed",
+            FAILED: "Failed",
+            PENDING: "Pending"
+          },
           readyTitle: "Ready to merge",
           readySubtitle: "{approvals} approvals · merge score {score} · no conflicts with main",
           needsReviewTitle: "Review required",
@@ -2007,6 +2050,7 @@ export const en = {
           cmdEnterHint: "⌘/Ctrl+Enter to comment"
         },
         sidebar: {
+          noReviewers: "No reviewers assigned",
           reviewers: "Reviewers",
           owners: "Owners (auto)",
           package: "Package",

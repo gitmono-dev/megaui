@@ -48,7 +48,8 @@ const SAMPLE_REVISIONS = [
 
 const SAMPLE_CL = {
   id: "cl_1",
-  number: 42,
+  publicId: "bQ_yC79Z-1tP",
+  number: 1,
   title: "Wire WA-10 attachments",
   description: "Files revisions checks deps.",
   state: "ready",
@@ -80,6 +81,9 @@ const SAMPLE_CL = {
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-02T00:00:00.000Z",
 };
+
+const CL_PATH = `/en/workspace/cls/${SAMPLE_CL.publicId}`;
+const RELATED_PUBLIC_ID = "g2-A8bk_Y0xR";
 
 const SAMPLE_CHECKS_PASSING = {
   pipeline: [{ id: "stage_build", name: "build", status: "passing" }],
@@ -126,7 +130,7 @@ function largeDepGraph(nodeCount: number) {
     nodes,
     edges,
     apiChanges: [{ id: "api_1", kind: "added", text: "export function foo()" }],
-    relatedCLs: [{ id: "rel_1", relation: "depends-on", number: 7 }],
+    relatedCLs: [{ id: "rel_1", relation: "depends-on", number: 7, publicId: RELATED_PUBLIC_ID }],
     symbolUsage: [{ id: "sym_1", symbol: "foo", refs: 3, files: 2, packages: "engine" }],
     cycles: [],
   };
@@ -154,6 +158,7 @@ async function stubAttachmentApis(
     failingChecks?: boolean;
     failChecks?: boolean;
     failDeps?: boolean;
+    emptyDeps?: boolean;
     largeDeps?: boolean;
   },
 ): Promise<void> {
@@ -165,10 +170,11 @@ async function stubAttachmentApis(
   };
 
   await page.route("**/api/mega/cls**", async (route) => {
-    const url = route.request().url();
+    const { pathname } = new URL(route.request().url());
     const method = route.request().method();
+    const numericPath = `/api/mega/cls/${cl.number}`;
 
-    if (url.includes("/checks") && method === "GET") {
+    if (pathname === `${numericPath}/checks` && method === "GET") {
       if (options?.failChecks) {
         await route.fulfill({
           status: 500,
@@ -188,7 +194,7 @@ async function stubAttachmentApis(
       return;
     }
 
-    if (url.includes("/dependency-graph") && method === "GET") {
+    if (pathname === `${numericPath}/dependency-graph` && method === "GET") {
       if (options?.failDeps) {
         await route.fulfill({
           status: 500,
@@ -199,12 +205,14 @@ async function stubAttachmentApis(
         });
         return;
       }
-      const graph = options?.largeDeps ? largeDepGraph(55) : largeDepGraph(3);
+      const graph = options?.emptyDeps
+        ? { nodes: [], edges: [], apiChanges: [], relatedCLs: [], symbolUsage: [], cycles: [] }
+        : largeDepGraph(options?.largeDeps ? 55 : 3);
       await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: graph }) });
       return;
     }
 
-    if (url.includes("/commits") && method === "GET") {
+    if (pathname === `${numericPath}/commits` && method === "GET") {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -215,7 +223,7 @@ async function stubAttachmentApis(
       return;
     }
 
-    if (url.includes("/viewed") && method === "POST") {
+    if (pathname === `${numericPath}/viewed` && method === "POST") {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -224,17 +232,20 @@ async function stubAttachmentApis(
       return;
     }
 
-    if (/\/api\/mega\/cls\/\d+(\?|$)/.test(url) && method === "GET") {
+    if ((pathname === numericPath || pathname === `/api/mega/cls/${cl.publicId}`) && method === "GET") {
       await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: cl }) });
       return;
     }
 
-    if (/\/api\/mega\/cls(\?|$)/.test(url) && method === "GET") {
+    if (pathname === "/api/mega/cls" && method === "GET") {
       await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: [cl] }) });
       return;
     }
 
-    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: [] }) });
+    await route.fulfill({
+      status: 404,
+      json: { error: { code: "MEGA_NOT_FOUND", messageKey: "errors.mega.notFound", message: "missing" } },
+    });
   });
 }
 
@@ -246,7 +257,7 @@ test.describe("workspace CL attachment pages (WA-10)", () => {
 
   test("files page renders list + patch", async ({ page }) => {
     await stubAttachmentApis(page);
-    await page.goto("/en/workspace/cls/42/files");
+    await page.goto(`${CL_PATH}/files`);
     await expect(page.locator('[data-mega-cls="files"]')).toBeVisible();
     await expect(page.locator('[data-mega-cls="file-row"]')).toHaveCount(1);
     await expect(page.locator('[data-mega-cls="diff-patch"]')).toContainText("export const x = 1");
@@ -255,19 +266,33 @@ test.describe("workspace CL attachment pages (WA-10)", () => {
 
   test("files empty state", async ({ page }) => {
     await stubAttachmentApis(page, { emptyFiles: true });
-    await page.goto("/en/workspace/cls/42/files");
+    await page.goto(`${CL_PATH}/files`);
     await expect(page.locator('[data-mega-cls="files-empty"]')).toBeVisible();
   });
 
-  test("files range query uses rangePatches", async ({ page }) => {
+  test("legacy range link retains its tab, comparison and fragment on refresh", async ({ page }) => {
     await stubAttachmentApis(page);
-    await page.goto("/en/workspace/cls/42/files?range=1..2");
-    await expect(page.locator('[data-mega-cls="diff-patch"]')).toContainText("ranged = true");
+    const suffix = "/files?range=1..2#diff";
+    await page.goto(`/en/workspace/cls/1${suffix}`);
+    await expect(page).toHaveURL(`${CL_PATH}${suffix}`);
+    const patch = page.locator('[data-mega-cls="diff-patch"]');
+    await expect(patch).toContainText("ranged = true");
+    await page.reload();
+    await expect(page).toHaveURL(`${CL_PATH}${suffix}`);
+    await expect(patch).toContainText("ranged = true");
+
+    const revisions = page.locator('[data-mega-cls="tabs"] [data-tab="revisions"]');
+    await expect(revisions).toHaveAttribute("href", `${CL_PATH}/revisions`);
+    await revisions.focus();
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL(`${CL_PATH}/revisions`);
+    await expect(revisions).toHaveAttribute("aria-current", "page");
+    await expect(page.locator('[data-mega-cls="revision-card"]')).toHaveCount(2);
   });
 
   test("revisions page cards + compare + commits", async ({ page }) => {
     await stubAttachmentApis(page);
-    await page.goto("/en/workspace/cls/42/revisions");
+    await page.goto(`${CL_PATH}/revisions`);
     await expect(page.locator('[data-mega-cls="revisions"]')).toBeVisible();
     await expect(page.locator('[data-mega-cls="revision-card"]')).toHaveCount(2);
     await expect(page.locator('[data-mega-cls="commit-row"]')).toContainText("feat: wa-10");
@@ -275,84 +300,68 @@ test.describe("workspace CL attachment pages (WA-10)", () => {
     await page.locator('[data-mega-cls="compare-to"]').selectOption("2");
     await expect(page.locator('[data-mega-cls="view-range-diff"]')).toHaveAttribute(
       "href",
-      /\/en\/workspace\/cls\/42\/files\?range=1\.\.2/,
+      `${CL_PATH}/files?range=1..2`,
     );
   });
 
   test("revisions empty state", async ({ page }) => {
     await stubAttachmentApis(page, { emptyRevisions: true });
-    await page.goto("/en/workspace/cls/42/revisions");
+    await page.goto(`${CL_PATH}/revisions`);
     await expect(page.locator('[data-mega-cls="revisions-empty"]')).toBeVisible();
   });
 
   test("checks passing + empty + failing states", async ({ page }) => {
     await stubAttachmentApis(page);
-    await page.goto("/en/workspace/cls/42/checks");
+    await page.goto(`${CL_PATH}/checks`);
     await expect(page.locator('[data-mega-cls="checks-hero"]')).toHaveAttribute("data-status", "passing");
     await expect(page.locator('[data-mega-cls="check-row"]')).toHaveCount(2);
 
     await stubAttachmentApis(page, { emptyChecks: true });
-    await page.goto("/en/workspace/cls/42/checks");
+    await page.goto(`${CL_PATH}/checks`);
     await expect(page.locator('[data-mega-cls="checks-empty"]')).toBeVisible();
 
     await stubAttachmentApis(page, { failingChecks: true });
-    await page.goto("/en/workspace/cls/42/checks");
+    await page.goto(`${CL_PATH}/checks`);
     await expect(page.locator('[data-mega-cls="checks-hero"]')).toHaveAttribute("data-status", "failing");
     await expect(page.locator('[data-mega-cls="checks-failed"]')).toBeVisible();
   });
 
   test("checks error shows retry", async ({ page }) => {
     await stubAttachmentApis(page, { failChecks: true });
-    await page.goto("/en/workspace/cls/42/checks");
+    await page.goto(`${CL_PATH}/checks`);
     await expect(page.locator('[data-mega-cls="checks"] [role="alert"]')).toBeVisible();
     await expect(page.locator('[data-mega-cls="checks"] [data-mega-cls="retry"]')).toBeVisible();
   });
 
   test("deps error shows retry", async ({ page }) => {
     await stubAttachmentApis(page, { failDeps: true });
-    await page.goto("/en/workspace/cls/42/deps");
+    await page.goto(`${CL_PATH}/deps`);
     await expect(page.locator('[data-mega-cls="deps"] [role="alert"]')).toBeVisible();
     await expect(page.locator('[data-mega-cls="deps"] [data-mega-cls="retry"]')).toBeVisible();
   });
 
   test("deps empty state", async ({ page }) => {
-    await stubRail(page);
-    await page.route("**/api/mega/cls**", async (route) => {
-      const url = route.request().url();
-      const method = route.request().method();
-      if (url.includes("/dependency-graph") && method === "GET") {
-        await route.fulfill({
-          status: 200,
-          contentType: "application/json",
-          body: JSON.stringify({
-            data: { nodes: [], edges: [], apiChanges: [], relatedCLs: [], symbolUsage: [], cycles: [] },
-          }),
-        });
-        return;
-      }
-      if (/\/api\/mega\/cls\/\d+(\?|$)/.test(url) && method === "GET") {
-        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: SAMPLE_CL }) });
-        return;
-      }
-      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: [] }) });
-    });
-    await page.goto("/en/workspace/cls/42/deps");
+    await stubAttachmentApis(page, { emptyDeps: true });
+    await page.goto(`${CL_PATH}/deps`);
     await expect(page.locator('[data-mega-cls="deps-empty"]')).toBeVisible();
   });
 
   test("deps graph renders (large 50+ nodes smoke)", async ({ page }) => {
     await stubAttachmentApis(page, { largeDeps: true });
-    await page.goto("/en/workspace/cls/42/deps");
+    await page.goto(`${CL_PATH}/deps`);
     await expect(page.locator('[data-mega-cls="deps"]')).toBeVisible();
     await expect(page.locator('[data-mega-cls="dep-graph"]')).toBeVisible({ timeout: 15_000 });
     await expect(page.locator('[data-mega-cls="dep-node"]')).toHaveCount(55, { timeout: 15_000 });
     await expect(page.locator('[data-mega-cls="api-change"]')).toContainText("foo");
-    await expect(page.locator('[data-mega-cls="related-cl"]')).toContainText("!7");
+    const related = page.locator('[data-mega-cls="related-cl"]');
+    await expect(related.getByRole("link", { name: RELATED_PUBLIC_ID })).toHaveAttribute(
+      "href", `/en/workspace/cls/${RELATED_PUBLIC_ID}`,
+    );
   });
 
   test("zh-CN attachment chrome tabs", async ({ page }) => {
     await stubAttachmentApis(page);
-    await page.goto("/zh-CN/workspace/cls/42/files");
+    await page.goto(`/zh-CN/workspace/cls/${SAMPLE_CL.publicId}/files`);
     await expect(page.locator('[data-mega-cls="tabs"]')).toContainText("文件");
     await expect(page.locator('[data-mega-cls="files"]')).toBeVisible();
   });

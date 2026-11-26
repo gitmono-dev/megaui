@@ -2,6 +2,7 @@
 // Ported from megaui:tests/unit/mega/favorites.test.ts@0ff3a9d (UI-05 AC4).
 import "@testing-library/jest-dom/vitest"
 import { createElement } from "react"
+import type { CL } from "@megaui/core"
 import { renderToStaticMarkup } from "react-dom/server"
 import { cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, describe, expect, it } from "vitest"
@@ -78,7 +79,8 @@ describe("favorites pure functions (UI-05 AC4)", () => {
     const base = "/en/workspace"
     const derive = (path: string) => deriveFavorite(path, base, NAV_LABELS)
     expect(derive("/en/workspace")).toEqual({ href: "/en/workspace", icon: "home", title: "Home" })
-    expect(derive("/en/workspace/cls/1208")).toEqual({ href: "/en/workspace/cls/1208", icon: "git-pull", title: "!1208" })
+    expect(derive("/en/workspace/cls/1208")).toBeUndefined()
+    expect(derive("/en/workspace/cls/cl_42-testID")).toEqual({ href: "/en/workspace/cls/cl_42-testID", icon: "git-pull", title: "cl_42-testID" })
     expect(derive("/en/workspace/issues/482")).toEqual({ href: "/en/workspace/issues/482", icon: "bug", title: "#482" })
     expect(derive("/en/workspace/channels/git-internal")).toEqual({ href: "/en/workspace/channels/git-internal", icon: "hash", title: "#git-internal" })
     expect(derive("/en/workspace/dm/rafael")).toEqual({ href: "/en/workspace/dm/rafael", icon: "chat", title: "@rafael" })
@@ -116,8 +118,8 @@ describe("favorites storage boundaries (UI-05 AC4)", () => {
 })
 
 describe("useFavorites persistence (UI-05 AC4: add/remove + persistence)", () => {
-  function Probe() {
-    const { favorites, remove, toggle } = useFavorites()
+  function Probe({ cls }: { cls?: readonly Pick<CL, "number" | "publicId">[] }) {
+    const { favorites, remove, toggle } = useFavorites(cls)
     return (
       <div>
         <span data-testid="count">{favorites.length}</span>
@@ -142,6 +144,25 @@ describe("useFavorites persistence (UI-05 AC4: add/remove + persistence)", () =>
     window.localStorage.setItem(MEGA_FAVORITES_STORAGE_KEY, serializeFavorites([entry("/en/workspace/cls/1")]))
     render(<Probe />)
     expect(screen.getByTestId("count").textContent).toBe("1")
+    window.localStorage.clear()
+  })
+
+  it("migrates accessible CL bookmarks, preserving nested destinations and deduplicating aliases", () => {
+    const oldHref = "/en/workspace/cls/42/files?range=1..2#diff"
+    const newHref = "/en/workspace/cls/cl_42-testID/files?range=1..2#diff"
+    window.localStorage.setItem(MEGA_FAVORITES_STORAGE_KEY, serializeFavorites([
+      { href: oldHref, title: "!42", icon: "git-pull" },
+      { href: newHref, title: "cl_42-testID", icon: "git-pull" },
+      entry("/en/workspace/cls/7"),
+    ]))
+    const { rerender } = render(<Probe />)
+    rerender(<Probe cls={[{ number: 42, publicId: "cl_42-testID" }]} />)
+    expect(screen.getByTestId("count")).toHaveTextContent("2")
+    expect(screen.getByTestId(`title-${newHref}`)).toHaveTextContent("cl_42-testID")
+    expect(parseFavorites(window.localStorage.getItem(MEGA_FAVORITES_STORAGE_KEY))).toEqual([
+      { href: newHref, title: "cl_42-testID", icon: "git-pull" },
+      entry("/en/workspace/cls/7"),
+    ])
     window.localStorage.clear()
   })
 

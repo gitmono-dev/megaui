@@ -1,222 +1,310 @@
 // megaui:apps/next-app/app/[lang]/workspace/cls/[n]/page.tsx@0ff3a9d
-//
-// Diff vs upstream (GC-03 / WA-09): client-only conversation; first-file patch
-// as preformatted text (pierre SSR preload deferred); commits via BFF.
 "use client";
 
-import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { ChevronRight, GitCommitHorizontal, ListFilter, MessageSquare, SquareCode } from "lucide-react";
+import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
 
-import type { CL, CLComment, InlineComment } from "@megaui/core";
+import type { CL, CLComment, InlineComment, User } from "@megaui/core";
+import type { ClCommit } from "@megaui/engine";
 import { MegaApiError, megaGet, megaPost, megaQueryKeys } from "@megaui/ui/query";
-import { MEGA_RADIUS_TOKENS, MEGA_SPACING_TOKENS, MEGA_TOKENS } from "@megaui/ui/tokens";
+import { ShellAvatar } from "@megaui/ui/shell";
 
 import { useTranslation } from "@/hooks/use-translation";
+import { authClient } from "@/lib/auth-client";
 import { plainTextFromCommentBody } from "@/lib/comment-plain-text";
 
-interface ClCommit {
-  sha: string;
-  message: string;
-  authorName: string;
-  authorEmail: string;
+import { isCLViewer, presentCLAuthor, type CLViewer } from "./cl-author";
+import { useCurrentCL } from "./cl-route";
+import styles from "./conversation.module.css";
+
+type DiscussionFilter = "all" | "unresolved" | "mine";
+
+function Author({ user, at, dateFormat, viewer }: {
+  user: User; at: string; dateFormat: Intl.DateTimeFormat; viewer?: CLViewer;
+}) {
+  const author = presentCLAuthor(user, viewer);
+  return (
+    <div className={styles.byline}>
+      <ShellAvatar size={20} user={author} />
+      <strong>{author.displayName || author.username}</strong>
+      <time dateTime={at}>{dateFormat.format(new Date(at))}</time>
+    </div>
+  );
+}
+
+function CommitActivity({ number }: { number: number }) {
+  const { t } = useTranslation();
+  const labels = t.workspace.clDetail.revisions.clCommits;
+  const activity = t.workspace.clDetail.conversation.activity;
+  const [showAll, setShowAll] = useState(false);
+  const commits = useQuery({
+    queryKey: megaQueryKeys.clCommits(number),
+    queryFn: () => megaGet<ClCommit[]>(["cls", String(number), "commits"]),
+    retry: (count, error) => !(error instanceof MegaApiError && error.status === 404) && count < 2,
+  });
+  const items = commits.data ?? [];
+
+  return (
+    <section className={styles.commits} data-mega-cls="commits" id="cl-commits">
+      <h2 className={styles.subheading}>
+        <GitCommitHorizontal size={17} aria-hidden /> {labels.title}
+        {commits.data && <span className={styles.count}>{items.length}</span>}
+      </h2>
+      {commits.isError ? (
+        <div role="alert" className={styles.feedback}>
+          {labels.error}
+          <button data-mega-cls="commits-retry" onClick={() => void commits.refetch()} type="button">{labels.retry}</button>
+        </div>
+      ) : commits.isPending ? (
+        <p className={styles.empty} aria-busy="true">{labels.loading}</p>
+      ) : items.length === 0 ? (
+        <p className={styles.empty} data-mega-cls="commits-empty">{labels.empty}</p>
+      ) : (
+        <>
+          <ul className={styles.commitList} data-mega-cls="commits-list">
+            {(showAll ? items : items.slice(0, 3)).map((commit) => (
+              <li data-mega-cls="commit" key={commit.sha}>
+                <span className={styles.commitMessage} title={commit.message}>{commit.message.split("\n")[0]}</span>
+                <span className={styles.commitAuthor}>{commit.authorName}</span>
+                <code>{commit.sha.slice(0, 7)}</code>
+              </li>
+            ))}
+          </ul>
+          {items.length > 3 && (
+            <button aria-expanded={showAll} className={styles.more} onClick={() => setShowAll(!showAll)} type="button">
+              {showAll ? activity.lessCommits : activity.moreCommits.replace("{count}", String(items.length))}
+            </button>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+function InlineComposer({ cl }: { cl: CL }) {
+  const { t } = useTranslation();
+  const labels = t.workspace.clDetail.conversation;
+  const [filePath, setFilePath] = useState(cl.files[0]?.path ?? "");
+  const [line, setLine] = useState("1");
+  const [body, setBody] = useState("");
+  const queryClient = useQueryClient();
+  const post = useMutation({
+    mutationFn: () => megaPost<InlineComment>(["cls", String(cl.number), "inline-comments"], {
+      filePath: filePath.trim(), line: Number(line), body: body.trim(),
+    }),
+    onSuccess: () => {
+      setBody("");
+      void queryClient.invalidateQueries({ queryKey: megaQueryKeys.clInlineComments(cl.number) });
+    },
+  });
+
+  return (
+    <details className={styles.inlineComposer} data-mega-cls="inline-composer">
+      <summary><ChevronRight size={15} aria-hidden /> {labels.inlineSection.add}</summary>
+      <form className={styles.inlineForm} data-mega-cls="inline-form" onSubmit={(event) => {
+        event.preventDefault();
+        if (body.trim() && filePath.trim() && Number.isInteger(Number(line)) && Number(line) > 0) post.mutate();
+      }}>
+        <label>{labels.inlineSection.filePath}
+          <input data-mega-cls="inline-path" value={filePath} onChange={(e) => setFilePath(e.target.value)} required />
+        </label>
+        <label>{labels.inlineSection.line}
+          <input data-mega-cls="inline-line" type="number" min={1} value={line} onChange={(e) => setLine(e.target.value)} required />
+        </label>
+        <label className={styles.full}>{labels.inlineSection.body}
+          <textarea data-mega-cls="inline-body" value={body} rows={3} onChange={(e) => setBody(e.target.value)} required />
+        </label>
+        {post.isError && <p className={styles.feedback} role="alert">{labels.activity.postError}</p>}
+        <button className={styles.formButton} data-mega-cls="inline-submit" disabled={post.isPending || !body.trim()} type="submit">
+          {post.isPending ? labels.inlineSection.submitting : labels.inlineSection.submit}
+        </button>
+      </form>
+    </details>
+  );
+}
+
+function Discussion({ cl, dateFormat, viewer }: { cl: CL; dateFormat: Intl.DateTimeFormat; viewer?: CLViewer }) {
+  const { t } = useTranslation();
+  const labels = t.workspace.clDetail.conversation;
+  const activity = labels.activity;
+  const queryClient = useQueryClient();
+  const [scope, setScope] = useState<DiscussionFilter>("all");
+  const [newestFirst, setNewestFirst] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [showAll, setShowAll] = useState(false);
+  const [target, setTarget] = useState("");
+  const comments = useQuery({
+    queryKey: megaQueryKeys.clComments(cl.number),
+    queryFn: () => megaGet<CLComment[]>(["cls", String(cl.number), "comments"]),
+  });
+  const inline = useQuery({
+    queryKey: megaQueryKeys.clInlineComments(cl.number),
+    queryFn: () => megaGet<InlineComment[]>(["cls", String(cl.number), "inline-comments"]),
+  });
+  const post = useMutation({
+    mutationFn: (body: string) => megaPost<CLComment>(["cls", String(cl.number), "comments"], { body }),
+    onSuccess: () => {
+      setDraft("");
+      void queryClient.invalidateQueries({ queryKey: megaQueryKeys.clComments(cl.number) });
+    },
+  });
+  useEffect(() => {
+    function readFragment() {
+      try {
+        const hash = decodeURIComponent(window.location.hash.slice(1));
+        setTarget(hash.startsWith("comment-") ? hash : "");
+      } catch {
+        setTarget("");
+      }
+    }
+    readFragment();
+    window.addEventListener("hashchange", readFragment);
+    return () => window.removeEventListener("hashchange", readFragment);
+  }, []);
+
+  useEffect(() => {
+    if (!target) return;
+    const el = document.getElementById(target);
+    if (el) {
+      const thread = el.closest("details");
+      if (thread) thread.open = true;
+      el.scrollIntoView({ block: "center" });
+      setTarget("");
+    } else if (
+      comments.data?.some((c) => `comment-${c.id}` === target) ||
+      inline.data?.some((c) => `comment-${c.id}` === target || c.replies.some((r) => `comment-${r.id}` === target))
+    ) {
+      setScope("all");
+      setShowAll(true);
+    }
+  }, [target, comments.data, inline.data, scope, showAll]);
+
+  const isLive = cl.author.id.startsWith("mega2:");
+  const allEntries: Array<CLComment | InlineComment> = [...(comments.data ?? []), ...(inline.data ?? [])];
+  const entries = allEntries.filter((entry) => {
+    if (scope === "unresolved") return "filePath" in entry && !entry.resolvedAt;
+    if (scope === "mine") return isCLViewer(entry.author, viewer) || ("replies" in entry && entry.replies.some((r) => isCLViewer(r.author, viewer)));
+    return true;
+  }).sort((a, b) => (new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()) * (newestFirst ? -1 : 1));
+  const failed = comments.isError || inline.isError;
+  const loading = comments.isPending || inline.isPending;
+  const filters: DiscussionFilter[] = ["all"];
+  if (!isLive) filters.push("unresolved");
+  if (viewer) filters.push("mine");
+
+  return (
+    <section className={styles.discussion} data-mega-cls="comments" id="cl-discussion">
+      <h2 className={styles.sectionTitle}><MessageSquare size={18} aria-hidden /> {activity.title}</h2>
+      {allEntries.length > 0 && (
+        <div className={styles.toolbar}>
+          <div className={styles.filters} role="group" aria-label={activity.filters}>
+            {filters.map((filter) => (
+              <button aria-pressed={scope === filter} data-mega-cls="discussion-filter" data-filter={filter}
+                key={filter} onClick={() => { setScope(filter); setShowAll(false); }} type="button">{activity[filter]}</button>
+            ))}
+          </div>
+          {allEntries.length > 1 && <label className={styles.sort}><ListFilter size={15} aria-hidden />
+            <select aria-label={activity.sort} data-mega-cls="discussion-sort" value={newestFirst ? "newest" : "oldest"}
+              onChange={(e) => setNewestFirst(e.target.value === "newest")}>
+              <option value="oldest">{activity.oldest}</option><option value="newest">{activity.newest}</option>
+            </select>
+          </label>}
+        </div>
+      )}
+
+      <div className={styles.feed} data-mega-cls="inline-comments">
+        {failed && <div className={styles.feedback} role="alert">{labels.error}
+          <button onClick={() => {
+            if (comments.isError) void comments.refetch();
+            if (inline.isError) void inline.refetch();
+          }} type="button">{labels.retry}</button>
+        </div>}
+        {loading && <p className={styles.empty} aria-busy="true">{labels.loading}</p>}
+        {!loading && !failed && entries.length === 0 && <p className={styles.empty} data-mega-cls="inline-empty">
+          {scope === "all" ? activity.empty : activity.emptyFilter}
+        </p>}
+        {(showAll ? entries : entries.slice(0, 5)).map((entry) => {
+          const isInline = "filePath" in entry;
+          const body = (
+            <>
+              <Author viewer={viewer} user={entry.author} at={entry.createdAt} dateFormat={dateFormat} />
+              <p className={styles.body}>{plainTextFromCommentBody(entry.body)}</p>
+              {isInline && entry.replies.map((reply) => <div className={styles.reply} id={`comment-${reply.id}`} key={reply.id}>
+                <Author viewer={viewer} user={reply.author} at={reply.createdAt} dateFormat={dateFormat} />
+                <p className={styles.body}>{plainTextFromCommentBody(reply.body)}</p>
+              </div>)}
+            </>
+          );
+          if (!isInline) return <article className={styles.entry} data-mega-cls="comment" id={`comment-${entry.id}`} key={`comment-${entry.id}`}>{body}</article>;
+          return (
+            <details className={styles.thread} data-mega-cls="inline-thread" id={`comment-${entry.id}`} key={`inline-${entry.id}`} open={!entry.resolvedAt}>
+              <summary><ChevronRight size={15} aria-hidden /><code>{entry.filePath}:{entry.line}</code>
+                {entry.resolvedAt && <span className={styles.status}>{labels.thread.resolved}</span>}
+              </summary>
+              <div className={styles.entry}>{body}</div>
+            </details>
+          );
+        })}
+      </div>
+      {entries.length > 5 && <button className={styles.moreComments} aria-expanded={showAll}
+        onClick={() => setShowAll(!showAll)} type="button">
+        {showAll ? activity.lessComments : activity.moreComments.replace("{count}", String(entries.length))}
+      </button>}
+      <form className={styles.composer} onSubmit={(event) => {
+        event.preventDefault();
+        if (draft.trim()) post.mutate(draft.trim());
+      }}>
+        <label htmlFor="cl-comment-draft">{activity.add}</label>
+        <textarea id="cl-comment-draft" data-mega-cls="comment-input" onChange={(e) => setDraft(e.target.value)}
+          rows={3} required value={draft} />
+        {post.isError && <p className={styles.feedback} role="alert">{activity.postError}</p>}
+        <button className={styles.formButton} data-mega-cls="comment-submit" disabled={post.isPending || !draft.trim()} type="submit">
+          {post.isPending ? labels.composer.submitting : labels.composer.submit}
+        </button>
+      </form>
+      {!isLive && <InlineComposer cl={cl} />}
+    </section>
+  );
 }
 
 export default function CLConversationPage() {
-  const params = useParams<{ n: string }>();
-  const { t } = useTranslation();
-  const queryClient = useQueryClient();
-  const detail = t.workspace.clDetail;
-  const clNumber = Number(params?.n);
-  const [commentDraft, setCommentDraft] = useState("");
-  const [inlinePath, setInlinePath] = useState("");
-  const [inlineLine, setInlineLine] = useState(1);
-  const [inlineBody, setInlineBody] = useState("");
-
-  const clQuery = useQuery({
-    queryKey: megaQueryKeys.cl(clNumber),
-    queryFn: () => megaGet<CL>(["cls", String(clNumber)]),
-    enabled: Number.isInteger(clNumber) && clNumber > 0,
-  });
-  const commentsQuery = useQuery({
-    queryKey: megaQueryKeys.clComments(clNumber),
-    queryFn: () => megaGet<CLComment[]>(["cls", String(clNumber), "comments"]),
-    enabled: Boolean(clQuery.data),
-  });
-  const inlineQuery = useQuery({
-    queryKey: megaQueryKeys.clInlineComments(clNumber),
-    queryFn: () => megaGet<InlineComment[]>(["cls", String(clNumber), "inline-comments"]),
-    enabled: Boolean(clQuery.data),
-  });
-  const commitsQuery = useQuery({
-    queryKey: megaQueryKeys.clCommits(clNumber),
-    queryFn: () => megaGet<ClCommit[]>(["cls", String(clNumber), "commits"]),
-    enabled: Boolean(clQuery.data),
-    retry: (count, error) => !(error instanceof MegaApiError && error.status === 404) && count < 2,
-  });
-
-
-  useEffect(() => {
-    const path = clQuery.data?.files[0]?.path;
-    if (path) setInlinePath((current) => current || path);
-  }, [clQuery.data?.files]);
-
-  const commentMutation = useMutation({
-    mutationFn: (body: string) => megaPost<CLComment>(["cls", String(clNumber), "comments"], { body }),
-    onSuccess: () => {
-      setCommentDraft("");
-      void queryClient.invalidateQueries({ queryKey: megaQueryKeys.clComments(clNumber) });
-    },
-  });
-  const inlineMutation = useMutation({
-    mutationFn: (input: { body: string; filePath: string; line: number }) =>
-      megaPost<InlineComment>(["cls", String(clNumber), "inline-comments"], input),
-    onSuccess: () => {
-      setInlineBody("");
-      void queryClient.invalidateQueries({ queryKey: megaQueryKeys.clInlineComments(clNumber) });
-    },
-  });
-
-  if (!clQuery.data) return null;
-
-  const cl = clQuery.data;
-  const firstFile = cl.files[0];
-  const commitsLabels = detail.revisions.clCommits;
-
+  const cl = useCurrentCL();
+  const { data: session } = authClient.useSession();
+  const { locale, t } = useTranslation();
+  const labels = t.workspace.clDetail.conversation;
+  const dateFormat = useMemo(() => new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }), [locale]);
+  const [showPatch, setShowPatch] = useState(false);
+  const file = cl.files[0];
   return (
-    <div style={{ display: "grid", gap: `calc(${MEGA_SPACING_TOKENS[8]} * 2)` }}>
-      <section data-mega-cls="description" style={{ border: `1px solid ${MEGA_TOKENS.border}`, borderRadius: MEGA_RADIUS_TOKENS.md, padding: MEGA_SPACING_TOKENS[8] }}>
-        <h2 style={{ fontSize: "var(--mega-density-font-size)", margin: 0 }}>{detail.conversation.description.badge}</h2>
-        <p style={{ color: MEGA_TOKENS.muted, margin: `${MEGA_SPACING_TOKENS[6]} 0 0`, whiteSpace: "pre-wrap" }}>
-          {cl.description || detail.conversation.description.empty}
-        </p>
+    <div className={styles.overview}>
+      <section className={styles.description} data-mega-cls="description" id="cl-description">
+        <header className={styles.descriptionHeader}>
+          <h2 className={styles.subheading}>{labels.description.badge}</h2>
+          <Author viewer={session?.user} user={cl.author} at={cl.createdAt} dateFormat={dateFormat} />
+        </header>
+        <p className={cl.description ? styles.body : styles.empty}>{cl.description || labels.description.empty}</p>
       </section>
-
-      {firstFile ? (
-        <section data-mega-cls="diff" style={{ border: `1px solid ${MEGA_TOKENS.border}`, borderRadius: MEGA_RADIUS_TOKENS.md, overflow: "auto" }}>
-          <header style={{ borderBottom: `1px solid ${MEGA_TOKENS.border}`, padding: MEGA_SPACING_TOKENS[8] }}>
-            <strong>{firstFile.path}</strong>
-            <span style={{ color: MEGA_TOKENS.muted }}> +{firstFile.additions}/−{firstFile.deletions}</span>
-          </header>
-          <pre
-            data-mega-cls="diff-patch"
-            style={{
-              fontFamily: MEGA_TOKENS.fontMono,
-              fontSize: "calc(var(--mega-density-font-size) - 1px)",
-              margin: 0,
-              padding: MEGA_SPACING_TOKENS[8],
-              whiteSpace: "pre-wrap",
-            }}
-          >
-            {firstFile.patch || detail.conversation.emptyPatch}
-          </pre>
-        </section>
+      <CommitActivity number={cl.number} key={cl.publicId} />
+      <Discussion cl={cl} viewer={session?.user} dateFormat={dateFormat} key={`discussion-${cl.publicId}`} />
+      {file?.patch ? (
+        <details className={styles.diff} data-mega-cls="diff" onToggle={(e) => setShowPatch(e.currentTarget.open)}>
+          <summary>
+            <ChevronRight size={15} aria-hidden /><SquareCode size={16} aria-hidden />
+            <span>{labels.activity.preview}</span><code>{file.path}</code>
+            {cl.diffStatsAvailable !== false && <>
+              <span className={styles.added}>+{file.additions}</span><span className={styles.deleted}>−{file.deletions}</span>
+            </>}
+          </summary>
+          {showPatch && <pre tabIndex={0} data-mega-cls="diff-patch">{file.patch}</pre>}
+        </details>
+      ) : file ? (
+        <Link className={styles.filesLink} href={`/${locale}/workspace/cls/${cl.publicId}/files`}>
+          <SquareCode size={16} aria-hidden />{t.workspace.clDetail.chrome.tabs.files}
+          <span className={styles.count}>{cl.files.length}</span>
+        </Link>
       ) : null}
-
-      <section data-mega-cls="inline-comments">
-        <h2 style={{ fontSize: "var(--mega-density-font-size)", margin: 0 }}>{detail.conversation.inlineSection.title}</h2>
-        {(inlineQuery.data ?? []).length === 0 ? (
-          <p data-mega-cls="inline-empty" style={{ color: MEGA_TOKENS.muted }}>
-            {detail.conversation.inlineSection.empty}
-          </p>
-        ) : (
-          <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
-            {(inlineQuery.data ?? []).map((thread) => (
-              <li data-mega-cls="inline-thread" key={thread.id} style={{ borderBottom: `1px solid ${MEGA_TOKENS.border}`, padding: `${MEGA_SPACING_TOKENS[6]} 0` }}>
-                <code>
-                  {thread.filePath}:{thread.line}
-                </code>
-                <p style={{ margin: `${MEGA_SPACING_TOKENS[4]} 0 0` }}>{plainTextFromCommentBody(thread.body)}</p>
-              </li>
-            ))}
-          </ul>
-        )}
-        <form
-          data-mega-cls="inline-form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (!inlineBody.trim() || !inlinePath.trim() || inlineLine < 1) return;
-            inlineMutation.mutate({
-              body: inlineBody.trim(),
-              filePath: inlinePath.trim(),
-              line: inlineLine,
-            });
-          }}
-          style={{ display: "grid", gap: MEGA_SPACING_TOKENS[6], marginTop: MEGA_SPACING_TOKENS[8] }}
-        >
-          <label>
-            {detail.conversation.inlineSection.filePath}
-            <input data-mega-cls="inline-path" onChange={(e) => setInlinePath(e.target.value)} required value={inlinePath} style={{ display: "block", width: "100%" }} />
-          </label>
-          <label>
-            {detail.conversation.inlineSection.line}
-            <input data-mega-cls="inline-line" min={1} onChange={(e) => setInlineLine(Number(e.target.value) || 1)} required type="number" value={inlineLine} style={{ display: "block", width: "100%" }} />
-          </label>
-          <label>
-            {detail.conversation.inlineSection.body}
-            <textarea data-mega-cls="inline-body" onChange={(e) => setInlineBody(e.target.value)} required rows={2} value={inlineBody} style={{ display: "block", width: "100%" }} />
-          </label>
-          <button data-mega-cls="inline-submit" disabled={inlineMutation.isPending} type="submit">
-            {inlineMutation.isPending ? detail.conversation.inlineSection.submitting : detail.conversation.inlineSection.submit}
-          </button>
-        </form>
-      </section>
-
-      <section data-mega-cls="comments">
-        <h2 style={{ fontSize: "var(--mega-density-font-size)", margin: 0 }}>{detail.chrome.tabs.conversation}</h2>
-        {(commentsQuery.data ?? []).map((comment) => (
-          <article data-mega-cls="comment" key={comment.id} style={{ borderBottom: `1px solid ${MEGA_TOKENS.border}`, padding: `${MEGA_SPACING_TOKENS[6]} 0` }}>
-            <strong>{comment.author.displayName}</strong>
-            <p style={{ margin: `${MEGA_SPACING_TOKENS[4]} 0 0`, whiteSpace: "pre-wrap" }}>{plainTextFromCommentBody(comment.body)}</p>
-          </article>
-        ))}
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (!commentDraft.trim()) return;
-            commentMutation.mutate(commentDraft.trim());
-          }}
-          style={{ marginTop: MEGA_SPACING_TOKENS[8] }}
-        >
-          <textarea
-            data-mega-cls="comment-input"
-            onChange={(event) => setCommentDraft(event.target.value)}
-            placeholder={detail.conversation.composer.placeholder}
-            rows={3}
-            style={{ display: "block", width: "100%" }}
-            value={commentDraft}
-          />
-          <button data-mega-cls="comment-submit" disabled={commentMutation.isPending} type="submit">
-            {commentMutation.isPending ? detail.conversation.composer.submitting : detail.conversation.composer.submit}
-          </button>
-        </form>
-      </section>
-
-      <section data-mega-cls="commits" style={{ border: `1px solid ${MEGA_TOKENS.border}`, borderRadius: MEGA_RADIUS_TOKENS.md, padding: MEGA_SPACING_TOKENS[8] }}>
-        <h2 style={{ fontSize: "var(--mega-density-font-size)", margin: 0 }}>{commitsLabels.title}</h2>
-        {commitsQuery.isPending ? (
-          <p aria-busy="true">{commitsLabels.loading}</p>
-        ) : commitsQuery.isError ? (
-          <div role="alert" style={{ alignItems: "center", display: "flex", gap: MEGA_SPACING_TOKENS[8] }}>
-            <p style={{ margin: 0 }}>{commitsLabels.error}</p>
-            <button data-mega-cls="commits-retry" onClick={() => void commitsQuery.refetch()} type="button">
-              {commitsLabels.retry}
-            </button>
-          </div>
-        ) : (commitsQuery.data ?? []).length === 0 ? (
-          <p data-mega-cls="commits-empty" style={{ color: MEGA_TOKENS.muted }}>
-            {commitsLabels.empty}
-          </p>
-        ) : (
-          <ul data-mega-cls="commits-list" style={{ listStyle: "none", margin: `${MEGA_SPACING_TOKENS[6]} 0 0`, padding: 0 }}>
-            {(commitsQuery.data ?? []).map((commit) => (
-              <li data-mega-cls="commit" key={commit.sha} style={{ fontFamily: MEGA_TOKENS.fontMono, marginBottom: MEGA_SPACING_TOKENS[4] }}>
-                <code>{commit.sha.slice(0, 7)}</code> {commit.message} · {commit.authorName}
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
     </div>
   );
 }

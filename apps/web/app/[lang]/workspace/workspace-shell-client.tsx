@@ -85,10 +85,10 @@ function mapSearchToGroups(
       heading: groupLabels.cls,
       items: data.cls.map((cl) => ({
         key: `cl-${cl.id}`,
-        href: `${workspaceBase}/cls/${cl.number}`,
+        href: `${workspaceBase}/cls/${cl.publicId}`,
         icon: "git-pull" as const,
-        label: `!${cl.number} ${cl.title}`,
-        value: `cl-${cl.number}`,
+        label: `${cl.publicId} ${cl.title}`,
+        value: `cl-${cl.publicId}`,
       })),
     });
   }
@@ -202,7 +202,6 @@ export function WorkspaceShellClient({ children }: { children: ReactNode }) {
   const { locale, t } = useTranslation();
   const { data: session, isPending: userLoading } = authClient.useSession();
   const workspaceBase = `/${locale}/workspace`;
-  const { favorites, toggle, remove } = useFavorites();
   const [searchErrorCode, setSearchErrorCode] = useState<string | null>(null);
 
   useEffect(() => {
@@ -226,6 +225,7 @@ export function WorkspaceShellClient({ children }: { children: ReactNode }) {
     queryFn: () => megaGet<CL[]>("cls"),
     enabled: railQueriesEnabled,
   });
+  const { favorites, toggle, remove } = useFavorites(clsQuery.data);
   const channelsQuery = useQuery({
     queryKey: megaQueryKeys.channels(),
     queryFn: () => megaGet<Channel[]>("channels"),

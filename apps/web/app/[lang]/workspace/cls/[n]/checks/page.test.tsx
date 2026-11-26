@@ -5,8 +5,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { en } from "@megaui/i18n";
 
-vi.mock("next/navigation", () => ({
-  useParams: () => ({ lang: "en", n: "1" }),
+vi.mock("../cl-route", () => ({
+  useCurrentCL: () => ({ number: 1 }),
 }));
 
 vi.mock("@/hooks/use-translation", () => ({

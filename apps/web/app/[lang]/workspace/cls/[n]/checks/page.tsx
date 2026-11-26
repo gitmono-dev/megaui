@@ -2,7 +2,6 @@
 // stable browser-side Idempotency-Key build controls, auto-polling, and live SSE logs.
 "use client";
 
-import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 
@@ -11,6 +10,7 @@ import { MegaApiError, megaFetch, megaGet, megaQueryKeys } from "@megaui/ui/quer
 import { MEGA_RADIUS_TOKENS, MEGA_SPACING_TOKENS, MEGA_TOKENS } from "@megaui/ui/tokens";
 
 import { useTranslation } from "@/hooks/use-translation";
+import { useCurrentCL } from "../cl-route";
 import { BuildLogViewer } from "./components/build-log-viewer";
 
 interface OrionTaskSummary {
@@ -93,11 +93,11 @@ function aggregateStatus(checks: ChecksView["checks"]): CIStatus | "empty" {
 }
 
 export default function CLChecksPage() {
-  const params = useParams<{ n: string }>();
+  const cl = useCurrentCL();
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const checksText = t.workspace.clDetail.checks;
-  const clNumber = Number(params?.n);
+  const clNumber = cl.number;
 
   // Stable browser-side Idempotency-Key store bound to `{ action, commitSha/taskId }`:
   // reused across network/transient retries; rotated only on success or binding change.
@@ -141,7 +141,6 @@ export default function CLChecksPage() {
   const checksQuery = useQuery({
     queryKey: megaQueryKeys.clChecks(clNumber),
     queryFn: () => megaGet<ChecksView>(["cls", String(clNumber), "checks"]),
-    enabled: Number.isInteger(clNumber) && clNumber > 0,
     retry: (count, error) => !(error instanceof MegaApiError && error.status === 404) && count < 2,
     refetchInterval: (query) => {
       const data = query.state.data;

@@ -5,7 +5,7 @@
 
 ## Purpose
 
-End-to-end coverage of `/[lang]/workspace/cls/[n]/{files,revisions,checks,deps}`: file list + patch preview, revision compare → files range link, checks empty/failing/error, dependency graph (≥50 nodes smoke). Stub BFF by default.
+End-to-end coverage of `/[lang]/workspace/cls/[publicId]/{files,revisions,checks,deps}`: file list + patch preview, revision compare → files range link, checks empty/failing/error, dependency graph (≥50 nodes smoke). Stub BFF by default.
 
 ## Scenarios
 
@@ -13,12 +13,12 @@ End-to-end coverage of `/[lang]/workspace/cls/[n]/{files,revisions,checks,deps}`
 |----|------|----|
 | S-01 | Files list + patch | AC-1 |
 | S-02 | Files empty | AC-1 |
-| S-03 | Files `?range=` patch | AC-1 |
-| S-04 | Revisions cards + compare + commits | AC-1 |
+| S-03 | Numeric deep links retain their tab, comparison query and fragment after canonicalization and refresh. Enter opens the revisions tab by public ID | AC-1 |
+| S-04 | Revision cards, commits and a comparison link with the same public ID | AC-1 |
 | S-04b | Revisions empty | AC-1 |
 | S-05 | Checks passing / empty / failing | AC-1, AC-3 |
 | S-06 | Checks error shows retry | AC-1 |
-| S-07 | Deps graph 50+ nodes smoke | AC-2 |
+| S-07 | Dependency graph with 55 nodes and a related CL link using its own public ID | AC-2 |
 | S-07b | Deps empty | AC-1 |
 | S-07c | Deps error shows retry | AC-1 |
 | S-08 | zh-CN chrome tabs | AC-1 |

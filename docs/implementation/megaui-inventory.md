@@ -47,16 +47,20 @@
 
 ### CL（6）
 
+列表和详情链接使用与文档块相同的 12 位短码，区分大小写，可包含字母、数字、下划线和连字符。打开旧数字链接会定位到原变更单的短码地址，并保留子页面、查询参数和锚点。
+
 | # | 路由 | 页面文件 | 核心组件 | 关键交互 | i18n 键域 |
 |---|---|---|---|---|---|
-| 4 | `/{lang}/workspace/cls` | `megaui:apps/next-app/app/[lang]/workspace/cls/page.tsx@0ff3a9d` | `FilterQueryBar`、CL 列表行 | 过滤/搜索、创建入口、打开详情 | `workspace.clsList` |
-| 5 | `/{lang}/workspace/cls/[n]` | `megaui:apps/next-app/app/[lang]/workspace/cls/[n]/page.tsx@0ff3a9d` | `getCL`、diff preload、详情壳（`cls/[n]/components/`） | 概览、评论、状态流转入口 | `workspace.clDetail` |
+| 4 | `/{lang}/workspace/cls` | `apps/web/app/[lang]/workspace/cls/page.tsx` | 状态标签、筛选输入框、CL 列表行 | 搜索、筛选、排序、打开详情 | `workspace.clsList` |
+| 5 | `/{lang}/workspace/cls/[n]` | `apps/web/app/[lang]/workspace/cls/[n]/page.tsx` | 详情标题、合并状态摘要、讨论及活动 | 查看合并条件、打开检查、阅读与回复讨论 | `workspace.clDetail` |
 | 6 | `/{lang}/workspace/cls/[n]/files` | `megaui:apps/next-app/app/[lang]/workspace/cls/[n]/files/page.tsx@0ff3a9d` | `FilesClient`、`parsePatchFiles`、rev range | 文件 diff 浏览、行内评论入口 | `workspace.clDetail` |
 | 7 | `/{lang}/workspace/cls/[n]/revisions` | `megaui:apps/next-app/app/[lang]/workspace/cls/[n]/revisions/page.tsx@0ff3a9d` | `CompareBar` / `RevisionCard` / `ClCommitsCard` / `TimelineRail` / `RangeSummary`（`megaui:apps/next-app/app/[lang]/workspace/cls/[n]/components/range-summary.tsx@0ff3a9d`） | 修订对比、范围摘要 | `workspace.clDetail` |
 | 8 | `/{lang}/workspace/cls/[n]/checks` | `megaui:apps/next-app/app/[lang]/workspace/cls/[n]/checks/page.tsx@0ff3a9d` | `ChecksHero` / `CheckTable` / `StageFlow` / `LogConsole` / `BenchTiles`（`megaui:apps/next-app/app/[lang]/workspace/cls/[n]/components/bench-tiles.tsx@0ff3a9d`） | 检查运行列表与日志 | `workspace.clDetail` |
 | 9 | `/{lang}/workspace/cls/[n]/deps` | `megaui:apps/next-app/app/[lang]/workspace/cls/[n]/deps/page.tsx@0ff3a9d` | 主图 `DepGraph`（`megaui:apps/next-app/app/[lang]/workspace/cls/[n]/components/dep-graph.tsx@0ff3a9d`）+ `ApiDiff` / `RelatedCLs` / `SymbolUsagePanel` | 依赖图与关联 CL | `workspace.clDetail` |
 
 设计源：`megaui:docs/mega/data-issues-cl.jsx@0ff3a9d`、`megaui:docs/mega/v8-cls.jsx@0ff3a9d`、`megaui:docs/mega/v9-cl-tabs.jsx@0ff3a9d`
+
+变更单概览沿用工作台的字号、间距和主题色。标题下方显示来源分支和已知的目标分支，合并摘要紧接标签导航，文件差异按需加载。布局参考 [GitHub PR Overview 公开预览](https://github.blog/changelog/2026-11-05-new-pull-request-overview-page-in-public-preview/) 和 [11 月 19 日的预览更新](https://github.blog/changelog/2026-11-19-improvements-on-the-pull-request-overview-in-public-preview/)。
 
 ### Issues（2）
 

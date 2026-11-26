@@ -266,11 +266,11 @@ describe("known context preserves behavior and revokes old callbacks", () => {
 
   it("keeps CL range/file and viewed writes while known, refuses queued admission after null", async () => {
     known("range=1..2&file=b.ts");
-    const cl = { revisions: [{ number: 1 }, { number: 2 }], files: [
+    const cl = { number: 42, publicId: "CL_fixture42", revisions: [{ number: 1 }, { number: 2 }], files: [
       { path: "a.ts", patch: "first", additions: 1, deletions: 0 },
       { path: "b.ts", patch: "latest", additions: 2, deletions: 0, viewed: false, rangePatches: { "1..2": "selected range" } },
     ] };
-    queryClient.setQueryData(megaQueryKeys.cl(42), cl);
+    queryClient.setQueryData(megaQueryKeys.cl("42"), cl);
     fetchSpy.mockImplementation(async () => json(cl));
     await render(CLFilesPage);
     expect(container.querySelector('[data-mega-cls="diff-patch"]')?.textContent).toBe("selected range");

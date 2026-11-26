@@ -29,8 +29,8 @@ export function IssueSidebar({
       </p>
       <p style={{ margin: `${MEGA_SPACING_TOKENS[6]} 0 0` }}>
         <strong>{linkedClsLabel}</strong>:{" "}
-        {issue.linkedCLs.length > 0
-          ? issue.linkedCLs.map((number) => `!${number}`).join(", ")
+        {issue.linkedClPublicIds?.length
+          ? issue.linkedClPublicIds.join(", ")
           : noneLabel}
       </p>
       <p data-mega-issues="watchers" style={{ margin: `${MEGA_SPACING_TOKENS[6]} 0 0` }}>

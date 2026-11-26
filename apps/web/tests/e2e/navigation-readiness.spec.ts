@@ -12,7 +12,7 @@ async function fixture(page: Page) {
     if (request.method() !== "GET" && (pathname.startsWith("/api/mega/") || pathname === "/api/upload")) writes.push(pathname);
   });
   const docs = await stubWorkspace(page, "doc_navigation", lexicalDocumentWithText("Navigation fixture document"));
-  const cl = { revisions: [{ number: 1 }, { number: 2 }], files: [
+  const cl = { number: 42, publicId: "qa_navi-0042", revisions: [{ number: 1 }, { number: 2 }], files: [
     { path: "a.ts", patch: "first", additions: 1, deletions: 0 },
     { path: "b.ts", patch: "latest", additions: 2, deletions: 0, viewed: false, rangePatches: { "1..2": "selected range" } },
   ] };

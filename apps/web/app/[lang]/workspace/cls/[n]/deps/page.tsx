@@ -2,7 +2,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useParams } from "next/navigation";
+import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 
 import type { ApiChange, DepEdge, DepNode, RelatedCL, SymbolUsage } from "@megaui/core";
@@ -10,6 +10,7 @@ import { MegaApiError, megaGet, megaQueryKeys } from "@megaui/ui/query";
 import { MEGA_RADIUS_TOKENS, MEGA_SPACING_TOKENS, MEGA_TOKENS } from "@megaui/ui/tokens";
 
 import { useTranslation } from "@/hooks/use-translation";
+import { useCurrentCL } from "../cl-route";
 
 const DepGraph = dynamic(() => import("../components/dep-graph"), { ssr: false });
 
@@ -23,15 +24,14 @@ interface DependencyGraphView {
 }
 
 export default function CLDepsPage() {
-  const params = useParams<{ n: string }>();
-  const { t } = useTranslation();
+  const cl = useCurrentCL();
+  const { locale, t } = useTranslation();
   const depsText = t.workspace.clDetail.deps;
-  const clNumber = Number(params?.n);
+  const clNumber = cl.number;
 
   const depsQuery = useQuery({
     queryKey: megaQueryKeys.clDependencyGraph(clNumber),
     queryFn: () => megaGet<DependencyGraphView>(["cls", String(clNumber), "dependency-graph"]),
-    enabled: Number.isInteger(clNumber) && clNumber > 0,
     retry: (count, error) => !(error instanceof MegaApiError && error.status === 404) && count < 2,
   });
 
@@ -97,7 +97,10 @@ export default function CLDepsPage() {
           <ul style={{ margin: `${MEGA_SPACING_TOKENS[6]} 0 0`, paddingLeft: MEGA_SPACING_TOKENS[8] }}>
             {view.relatedCLs.map((related) => (
               <li data-mega-cls="related-cl" key={related.id}>
-                {depsText.related.relations[related.relation]} !{related.number}
+                {depsText.related.relations[related.relation]}{" "}
+                {related.publicId && (
+                  <Link href={`/${locale}/workspace/cls/${related.publicId}`}>{related.publicId}</Link>
+                )}
                 {related.note ? ` — ${related.note}` : ""}
               </li>
             ))}

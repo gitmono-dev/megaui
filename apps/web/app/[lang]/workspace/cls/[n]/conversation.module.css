@@ -1,0 +1,242 @@
+.overview {
+  display: grid;
+  gap: 22px;
+  min-width: 0;
+  color: var(--mega-text);
+  font-size: var(--mega-density-font-size);
+  line-height: 1.55;
+  container-type: inline-size;
+}
+
+.overview > * {
+  min-width: 0;
+  scroll-margin-top: 20px;
+}
+
+.description, .commits, .diff, .entry, .thread, .composer {
+  border: 1px solid var(--mega-border);
+  border-radius: var(--mega-panel-radius);
+  background: var(--mega-bg);
+}
+
+.subheading, .sectionTitle, .byline, .filters, .toolbar, .sort, .feedback {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.subheading, .sectionTitle {
+  margin: 0;
+  font-size: inherit;
+  font-weight: 650;
+  line-height: 1.4;
+}
+
+.sectionTitle { font-size: calc(var(--mega-density-font-size) + 3px); }
+.sectionTitle svg, .commits h2 svg { color: var(--mega-muted); }
+
+.descriptionHeader, .commits > h2 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  padding: 10px 16px;
+  border-start-start-radius: inherit;
+  border-start-end-radius: inherit;
+  background: var(--mega-subtle);
+  border-bottom: 1px solid var(--mega-border);
+}
+
+.descriptionHeader { justify-content: space-between; }
+
+.body, .empty {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.body { white-space: pre-wrap; }
+.empty { color: var(--mega-muted); }
+
+.description > p, .commits > p, .commits > .feedback { padding: 14px 16px; }
+
+.byline {
+  flex-wrap: wrap;
+  min-width: 0;
+  gap: 4px 8px;
+  overflow-wrap: anywhere;
+  font-size: var(--mega-control-font-size);
+}
+
+.byline time, .commitAuthor, .commitList code { color: var(--mega-muted); }
+
+.count, .status {
+  border-radius: var(--mega-radius-pill);
+  background: var(--mega-active-bg);
+  color: var(--mega-text);
+  padding: 1px 7px;
+  font-size: var(--mega-control-font-size);
+  font-variant-numeric: tabular-nums;
+}
+
+.commitList {
+  list-style: none;
+  padding: 0 16px;
+  margin: 0;
+}
+
+.commitList li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: baseline;
+  gap: 2px 12px;
+  padding: 8px 0;
+  overflow-wrap: anywhere;
+}
+
+.commitList li + li { border-top: 1px solid var(--mega-border); }
+.commitMessage { font-weight: 550; }
+
+.commitList code, .commitAuthor {
+  font-size: var(--mega-control-font-size);
+}
+
+.commitAuthor {
+  max-width: 22ch;
+}
+
+.overview code, .diff pre { font-family: var(--mega-font-mono); }
+
+.more { margin: 2px 16px 12px; }
+
+.discussion {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.toolbar {
+  flex-wrap: wrap;
+  justify-content: space-between;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--mega-border);
+}
+
+.filters {
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.filters button[data-filter] {
+  border-color: transparent;
+  background: transparent;
+  color: var(--mega-muted);
+  padding-inline: 8px;
+}
+
+.filters button[aria-pressed="true"] {
+  background: var(--mega-active-bg);
+  color: var(--mega-active-fg);
+}
+
+.sort { color: var(--mega-muted); gap: 6px; }
+.sort select { cursor: pointer; }
+.feed { display: grid; gap: 10px; min-width: 0; }
+
+.entry, .composer { padding: 12px 16px; }
+.entry > .body { margin-top: 8px; }
+.thread .entry { border: 0; border-top: 1px solid var(--mega-border); border-radius: 0; }
+.thread summary { background: var(--mega-subtle); border-radius: inherit; }
+.thread[open] summary { border-end-start-radius: 0; border-end-end-radius: 0; }
+.reply { margin-top: 12px; padding: 8px 12px; border-inline-start: 2px solid var(--mega-border); }
+.reply .body { margin-top: 4px; }
+
+.composer, .inlineForm {
+  display: grid;
+  gap: 8px;
+}
+
+.composer label, .inlineForm label {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  font-weight: 600;
+}
+
+.composer textarea, .inlineForm :is(input, textarea) { width: 100%; box-sizing: border-box; }
+.composer textarea, .inlineForm textarea { resize: vertical; }
+.formButton { justify-self: end; grid-column: 1 / -1; }
+
+.feedback {
+  flex-wrap: wrap;
+  margin: 0;
+  color: var(--mega-danger);
+}
+
+.inlineForm {
+  grid-template-columns: minmax(0, 1fr) 6rem;
+  padding: 10px 0 0;
+}
+
+.full, .inlineForm .feedback { grid-column: 1 / -1; }
+
+.overview summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 12px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.overview summary::-webkit-details-marker { display: none; }
+.overview summary svg { flex-shrink: 0; }
+.overview summary code { min-width: 0; overflow-wrap: anywhere; }
+.overview details[open] > summary > svg:first-child { transform: rotate(90deg); }
+.overview summary:focus-visible { outline: 2px solid var(--mega-selected-border); outline-offset: 2px; }
+
+.inlineComposer > summary {
+  width: fit-content;
+  padding: 4px 0;
+  color: var(--mega-active-fg);
+}
+
+.diff { color: var(--mega-muted); font-size: var(--mega-control-font-size); }
+.diff pre {
+  overflow: auto;
+  max-height: 24rem;
+  padding: 12px 16px;
+  margin: 0;
+  border-top: 1px solid var(--mega-border);
+  color: var(--mega-text);
+}
+
+.added { color: var(--mega-diff-add-fg); }
+.deleted { color: var(--mega-diff-del-fg); }
+
+@container (max-width: 28rem) {
+  .commitList li { grid-template-columns: minmax(0, 1fr) auto; }
+  .commitMessage { grid-column: 1 / -1; }
+  .commitAuthor { max-width: none; }
+  .descriptionHeader, .commits > h2, .entry, .composer { padding-inline: 12px; }
+  .inlineForm { grid-template-columns: minmax(0, 1fr); }
+}
+
+.moreComments { justify-self: start; }
+
+.feed :target {
+  outline: 2px solid var(--mega-selected-border);
+  outline-offset: 2px;
+}
+
+.filesLink {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  color: var(--mega-active-fg);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.filesLink:hover, .filesLink:focus-visible { text-decoration: underline; }

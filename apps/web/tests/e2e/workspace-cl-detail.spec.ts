@@ -5,7 +5,8 @@ import { e2eBaseURL } from "./helpers/base-url";
 
 const SAMPLE_CL = {
   id: "cl_1",
-  number: 42,
+  publicId: "aB19_pX-7ZrQ",
+  number: 1,
   title: "Wire WA-09 conversation",
   description: "Exercise list + detail.",
   state: "ready",
@@ -89,7 +90,7 @@ async function stubRail(page: import("@playwright/test").Page): Promise<void> {
 
 async function stubClsApis(
   page: import("@playwright/test").Page,
-  options?: { emptyList?: boolean; failList?: boolean; failCommits?: boolean; listRow?: typeof SAMPLE_CL },
+  options?: { emptyList?: boolean; failList?: boolean; failCommits?: boolean; row?: typeof SAMPLE_CL },
 ): Promise<void> {
   await stubRail(page);
   await page.route("**/api/mega/cls**", async (route) => {
@@ -111,7 +112,7 @@ async function stubClsApis(
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ data: options?.emptyList ? [] : [options?.listRow ?? SAMPLE_CL] }),
+        body: JSON.stringify({ data: options?.emptyList ? [] : [options?.row ?? SAMPLE_CL] }),
       });
       return;
     }
@@ -170,12 +171,12 @@ async function stubClsApis(
           data: [
             {
               id: "i1",
-              clNumber: 42,
+              clNumber: SAMPLE_CL.number,
               filePath: "packages/engine/src/index.ts",
               line: 1,
               side: "additions",
               body: lexicalPlain("nit: name"),
-              createdAt: "2026-01-02T00:00:00.000Z",
+              createdAt: "2026-01-03T00:00:00.000Z",
               author: SAMPLE_CL.author,
               replies: [],
             },
@@ -185,11 +186,12 @@ async function stubClsApis(
       return;
     }
 
-    if (/\/api\/mega\/cls\/42(\/|\?|$)/.test(url) && method === "GET") {
+    const detailPath = new URL(url).pathname;
+    if (method === "GET" && [SAMPLE_CL.number, SAMPLE_CL.publicId].some(id => detailPath === `/api/mega/cls/${id}`)) {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ data: SAMPLE_CL }),
+        body: JSON.stringify({ data: options?.row ?? SAMPLE_CL }),
       });
       return;
     }
@@ -214,12 +216,16 @@ test.describe("WA-09 workspace CL list/detail", () => {
     await page.goto("/en/workspace/cls");
     await expect(page.locator('[data-mega-cls="page"]')).toBeVisible();
     const row = page.locator('[data-mega-cls="row"]').first();
-    await expect(row).toContainText("!42");
+    await expect(row).toContainText(SAMPLE_CL.publicId);
+    await expect(row).not.toContainText("!1");
     await expect(row.locator('[data-mega-cls="row-ci"]')).toHaveAttribute("data-ci", "passing");
     const title = row.getByRole("link", { name: /Wire WA-09 conversation/ });
+    await expect(title).toHaveAttribute("href", `/en/workspace/cls/${SAMPLE_CL.publicId}`);
     await title.focus();
     await title.press("Enter");
-    await expect(page.locator('[data-mega-cls="detail-title"]')).toContainText("!42");
+    await expect(page).toHaveURL(`/en/workspace/cls/${SAMPLE_CL.publicId}`);
+    await expect(page.getByRole("heading", { name: new RegExp(SAMPLE_CL.title) })).toBeVisible();
+    await expect(page.locator('[data-mega-cls="detail"]')).toContainText(SAMPLE_CL.publicId);
     await context.close();
   });
 
@@ -264,7 +270,7 @@ test.describe("WA-09 workspace CL list/detail", () => {
     await context.addCookies(mintSessionCookies().cookies);
     await page.setViewportSize({ width: 320, height: 720 });
     await stubClsApis(page, {
-      listRow: {
+      row: {
         ...SAMPLE_CL,
         title: "Import Libra source " + "abcdef".repeat(14),
         author: { ...SAMPLE_CL.author, displayName: "fs_" + "0123456789".repeat(10) },
@@ -278,6 +284,25 @@ test.describe("WA-09 workspace CL list/detail", () => {
     await expect(row.getByRole("link", { name: /Import Libra source/ })).toBeVisible();
     await expect(row).not.toContainText("+0");
     await expect(row).not.toContainText("−0");
+    const surface = page.locator('[data-mega-shell="workspace-content"]');
+    await expect.poll(() => surface.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
+  });
+
+  test("long title and metadata fit the narrow Chinese detail view", async ({ page, context }) => {
+    await context.addCookies(mintSessionCookies().cookies);
+    await page.setViewportSize({ width: 320, height: 720 });
+    const row = {
+      ...SAMPLE_CL,
+      title: "feat(project): import Libra source (1/24) " + "abcdef".repeat(16),
+      branch: "feat/" + "longbranch".repeat(10),
+      author: { ...SAMPLE_CL.author, displayName: "fs_" + "0123456789".repeat(10) },
+    };
+    await stubClsApis(page, { row });
+    await page.goto(`/zh-CN/workspace/cls/${row.publicId}`);
+    await expect(page.getByRole("heading", { level: 1 })).toContainText(row.title);
+    await expect(page.locator('[data-mega-cls="merge-box"]')).toBeVisible();
+    const detail = page.locator('[data-mega-cls="detail"]');
+    await expect(detail).toContainText(row.branch);
     const surface = page.locator('[data-mega-shell="workspace-content"]');
     await expect.poll(() => surface.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
   });
@@ -311,15 +336,100 @@ test.describe("WA-09 workspace CL list/detail", () => {
     await context.addCookies(cookies);
     const page = await context.newPage();
     await stubClsApis(page);
-    await page.goto("/en/workspace/cls/42");
+    await page.goto(`/en/workspace/cls/${SAMPLE_CL.publicId}`);
     await expect(page.locator('[data-mega-cls="detail"]')).toBeVisible();
-    await expect(page.locator('[data-mega-cls="detail-title"]')).toContainText("!42");
-    await expect(page.locator('[data-mega-cls="diff-patch"]')).toContainText("export const x");
+    await expect(page).toHaveURL(`/en/workspace/cls/${SAMPLE_CL.publicId}`);
+    await expect(page.getByRole("heading", { name: new RegExp(SAMPLE_CL.title) })).toBeVisible();
+    await expect(page.locator('[data-mega-cls="detail"]')).toContainText(SAMPLE_CL.publicId);
+    const patch = page.locator('[data-mega-cls="diff-patch"]');
+    await expect(patch).toHaveCount(0);
+    await page.locator('[data-mega-cls="diff"] > summary').press("Enter");
+    await expect(patch).toContainText("export const x");
     await expect(page.locator('[data-mega-cls="comment"]').first()).toContainText("Looks good");
     await expect(page.locator('[data-mega-cls="inline-thread"]').first()).toContainText("nit: name");
+    const discussionRows = page.locator('[data-mega-cls="comment"], [data-mega-cls="inline-thread"]');
+    await expect(discussionRows.first()).toContainText("Looks good");
+    await page.locator('[data-mega-cls="discussion-sort"]').selectOption("newest");
+    await expect(discussionRows.first()).toContainText("nit: name");
+    await page.locator('[data-filter="unresolved"]').click();
+    await expect(discussionRows).toHaveCount(1);
+    await expect(discussionRows.first()).toContainText("nit: name");
+    await page.locator('[data-filter="all"]').click();
+    await expect(discussionRows).toHaveCount(2);
     await expect(page.locator('[data-mega-cls="merge-box"]')).toBeVisible();
     await expect(page.locator('[data-mega-cls="commit"]').first()).toContainText("feat: wa-09");
     await context.close();
+  });
+
+  test("legacy conversation URL opens the canonical overview with its merge requirements", async ({ page, context }) => {
+    await context.addCookies(mintSessionCookies().cookies);
+    const liveRow = {
+      ...SAMPLE_CL,
+      author: { ...SAMPLE_CL.author, id: "mega2:actor" },
+      merge: "needs-review",
+      ci: "queued",
+      mergeBox: {
+        merge_requirements: {
+          state: "UNMERGEABLE",
+          conditions: [
+            { type: "CiStatus", display_name: "CI Build", description: "", message: "Build queued", result: "PENDING" },
+          ],
+        },
+      },
+    };
+    const detailRequests: URL[] = [];
+    page.on("request", request => {
+      const url = new URL(request.url());
+      if (request.method() === "GET" && [`/api/mega/cls/${SAMPLE_CL.number}`, `/api/mega/cls/${SAMPLE_CL.publicId}`].includes(url.pathname)) {
+        detailRequests.push(url);
+      }
+    });
+    await stubClsApis(page, { row: liveRow });
+    await page.goto("/en/workspace/cls/1");
+    await expect(page).toHaveURL(`/en/workspace/cls/${SAMPLE_CL.publicId}`);
+    const summary = page.locator('[data-mega-cls="merge-box"]');
+    const condition = summary.getByText("Build queued", { exact: true });
+    await expect(condition).toBeHidden();
+    await summary.locator("details > summary").press("Enter");
+    await expect(condition).toBeVisible();
+    await expect(summary.locator('[data-result="PENDING"]')).toBeVisible();
+    await expect(summary.locator('[data-mega-cls="merge-action"]')).toHaveCount(0);
+    expect(detailRequests.map(url => url.searchParams.get("view"))).toContain("overview");
+    expect(detailRequests.every(url => url.searchParams.get("view") === "overview")).toBe(true);
+
+    const filesRequest = page.waitForRequest(request => {
+      const url = new URL(request.url());
+      return url.pathname === `/api/mega/cls/${SAMPLE_CL.publicId}` && !url.searchParams.has("view");
+    });
+    await page.locator('[data-mega-cls="tabs"] [data-tab="files"]').press("Enter");
+    await filesRequest;
+    await expect(page.locator('[data-mega-cls="diff-patch"]')).toContainText("export const x");
+  });
+
+  test("old comment bookmark reveals a resolved reply beyond the first five entries", async ({ page, context }) => {
+    await context.addCookies(mintSessionCookies().cookies);
+    await stubClsApis(page);
+    const opened = "2026-01-02T00:00:00.000Z";
+    await page.route(`**/api/mega/cls/${SAMPLE_CL.number}/comments`, route => route.fulfill({
+      json: { data: Array.from({ length: 5 }, (_, index) => ({
+        id: `earlier-${index}`, author: SAMPLE_CL.author, createdAt: opened, body: lexicalPlain("Earlier discussion"),
+      })) },
+    }));
+    await page.route(`**/api/mega/cls/${SAMPLE_CL.number}/inline-comments`, route => route.fulfill({
+      json: { data: [{
+        id: "line-thread", author: SAMPLE_CL.author, createdAt: "2026-01-03T00:00:00.000Z", body: lexicalPlain("Check line"),
+        filePath: SAMPLE_CL.files[0].path, line: 2, resolvedAt: "2026-01-04T00:00:00.000Z",
+        replies: [{ id: "late-reply", author: SAMPLE_CL.author, createdAt: "2026-01-03T12:00:00.000Z", body: lexicalPlain("Resolved here") }],
+      }] },
+    }));
+    await page.goto(`/en/workspace/cls/${SAMPLE_CL.number}#comment-late-reply`);
+    await expect(page).toHaveURL(`/en/workspace/cls/${SAMPLE_CL.publicId}#comment-late-reply`);
+    const reply = page.getByText("Resolved here", { exact: true });
+    await expect(reply).toBeInViewport();
+    const unresolved = page.locator('[data-filter="unresolved"]');
+    await unresolved.click();
+    await expect(unresolved).toHaveAttribute("aria-pressed", "true");
+    await expect(reply).toHaveCount(0);
   });
 
   test("commits error shows retry", async ({ browser }) => {
@@ -328,7 +438,7 @@ test.describe("WA-09 workspace CL list/detail", () => {
     await context.addCookies(cookies);
     const page = await context.newPage();
     await stubClsApis(page, { failCommits: true });
-    await page.goto("/en/workspace/cls/42");
+    await page.goto(`/en/workspace/cls/${SAMPLE_CL.publicId}`);
     await expect(page.locator('[data-mega-cls="commits"] [role="alert"]')).toBeVisible();
     await expect(page.locator('[data-mega-cls="commits-retry"]')).toBeVisible();
     await context.close();
@@ -356,6 +466,7 @@ test.describe("WA-09 workspace CL list/detail", () => {
       ...SAMPLE_CL,
       id: `cl_${index + 1}`,
       number: index + 1,
+      publicId: `testCL_${String(index + 1).padStart(5, "0")}`,
       title: `CL ${index + 1}`,
     }));
     await page.route("**/api/mega/cls**", async (route) => {
@@ -390,7 +501,7 @@ test.describe("WA-09 workspace CL list/detail", () => {
     await context.addCookies(cookies);
     const page = await context.newPage();
     await stubClsApis(page);
-    await page.goto("/en/workspace/cls/42");
+    await page.goto(`/en/workspace/cls/${SAMPLE_CL.publicId}`);
     await expect(page.locator('[data-mega-cls="merge-box"]')).toBeVisible();
     // SAMPLE_CL.author.id is user_author; minted session is a different user → actions hidden.
     await expect(page.locator('[data-mega-cls="merge-action"]')).toHaveCount(0);
@@ -404,7 +515,7 @@ test.describe("WA-09 workspace CL list/detail", () => {
     const page = await context.newPage();
     let posted = false;
     await stubClsApis(page);
-    await page.route("**/api/mega/cls/42/inline-comments", async (route) => {
+    await page.route(`**/api/mega/cls/${SAMPLE_CL.number}/inline-comments`, async (route) => {
       if (route.request().method() === "POST") {
         posted = true;
         await route.fulfill({
@@ -413,7 +524,7 @@ test.describe("WA-09 workspace CL list/detail", () => {
           body: JSON.stringify({
             data: {
               id: "i2",
-              clNumber: 42,
+              clNumber: SAMPLE_CL.number,
               filePath: "packages/engine/src/index.ts",
               line: 2,
               body: "new nit",
@@ -427,7 +538,8 @@ test.describe("WA-09 workspace CL list/detail", () => {
       }
       await route.fallback();
     });
-    await page.goto("/en/workspace/cls/42");
+    await page.goto(`/en/workspace/cls/${SAMPLE_CL.publicId}`);
+    await page.locator('[data-mega-cls="inline-composer"] > summary').press("Enter");
     await page.locator('[data-mega-cls="inline-line"]').fill("2");
     await page.locator('[data-mega-cls="inline-body"]').fill("new nit");
     await page.locator('[data-mega-cls="inline-submit"]').click();
@@ -435,23 +547,15 @@ test.describe("WA-09 workspace CL list/detail", () => {
     await context.close();
   });
 
-  test("unknown CL shows not-found", async ({ browser }) => {
-    const { cookies } = await mintSessionCookies();
-    const context = await browser.newContext({ baseURL: e2eBaseURL() });
-    await context.addCookies(cookies);
-    const page = await context.newPage();
-    await stubRail(page);
-    await page.route("**/api/mega/cls/999**", async (route) => {
-      await route.fulfill({
-        status: 404,
-        contentType: "application/json",
-        body: JSON.stringify({
-          error: { code: "MEGA_NOT_FOUND", messageKey: "errors.mega.notFound", message: "missing" },
-        }),
-      });
+  for (const missing of ["999", "missing_CL01"]) {
+    test(`unknown CL ${missing} shows not-found`, async ({ page, context }) => {
+      await context.addCookies(mintSessionCookies().cookies);
+      await stubClsApis(page);
+      const response = page.waitForResponse(result => new URL(result.url()).pathname === `/api/mega/cls/${missing}`);
+      await page.goto(`/en/workspace/cls/${missing}`);
+      expect((await response).status()).toBe(404);
+      await expect(page.locator('[data-mega-cls="not-found"]')).toBeVisible();
+      await expect(page.locator('[data-mega-cls="merge-box"]')).toHaveCount(0);
     });
-    await page.goto("/en/workspace/cls/999");
-    await expect(page.locator('[data-mega-cls="not-found"]')).toBeVisible();
-    await context.close();
-  });
+  }
 });

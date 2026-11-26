@@ -27,11 +27,11 @@ export function CLListRow({ cl, dateFormat }: { cl: CL; dateFormat: Intl.DateTim
     <li className={styles.row} data-mega-cls="row">
       <StateIcon className={styles.stateIcon} data-state={cl.state} aria-hidden="true" />
       <div className={styles.rowBody}>
-        <Link className={styles.title} href={`/${locale}/workspace/cls/${cl.number}`}>
+        <Link className={styles.title} href={`/${locale}/workspace/cls/${cl.publicId}`}>
           {cl.title}
         </Link>
         <div className={styles.meta}>
-          <span>!{cl.number}</span>
+          <span>{cl.publicId}</span>
           <span>{text.states[cl.state]}</span>
           <span className={styles.author} title={author}>{author}</span>
           <time dateTime={cl.createdAt}>{text.openedOn.replace("{date}", dateFormat.format(new Date(cl.createdAt)))}</time>

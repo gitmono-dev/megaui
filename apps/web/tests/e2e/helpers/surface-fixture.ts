@@ -6,7 +6,7 @@ const thread = { id: 'surface-thread', title: 'Surface review', messages: [], up
 const body = JSON.stringify({ root: { type: 'root', version: 1, children: [{ type: 'mega-block', version: 1, blockId: 'surfaceRow01', variant: 'text', collapsed: false, todoChecked: false, children: [{ type: 'text', version: 1, text: 'Document content', detail: 0, format: 0, mode: 'normal', style: '' }], direction: null, format: '', indent: 0 }], direction: null, format: '', indent: 0 } });
 const doc = { id: 'surface-doc', title: 'Document baseline', body, excerpt: 'Document content', author, collaborators: [], tags: [], linkedCLs: [], linkedIssues: [], versions: [], starred: false, preview: [], status: 'draft', viewCount: 1, commentCount: 0, createdAt: timestamp, updatedAt: timestamp, canEdit: false };
 const issue = { id: 'surface-issue', number: 7, title: 'Review workspace styles', body: '', state: 'open', priority: 'P1', labels: [], linkedCLs: [], reactions: [], author, assignees: [], packageId: 'pkg_engine', commentCount: 0, watcherIds: [], createdAt: timestamp, updatedAt: timestamp };
-const cl = { id: 'surface-cl', number: 42, title: 'Unify workspace styles', description: '', state: 'ready', packageId: 'pkg_engine', author, reviewers: [], additions: 0, deletions: 0, files: [], revisions: [], ci: 'passing', merge: 'queue-ready', atomic: false, crossPackage: [], linkedIssues: [], branch: 'style', subscribed: false, createdAt: timestamp, updatedAt: timestamp };
+const cl = { id: 'surface-cl', number: 42, publicId: 'qa-surface42', title: 'Unify workspace styles', description: '', state: 'ready', packageId: 'pkg_engine', author, reviewers: [], additions: 0, deletions: 0, files: [], revisions: [], ci: 'passing', merge: 'queue-ready', atomic: false, crossPackage: [], linkedIssues: [], branch: 'style', subscribed: false, createdAt: timestamp, updatedAt: timestamp };
 const channel = { id: 'surface-channel', kind: 'channel', name: 'Design', visibility: 'public', topic: 'Shared document style', unreadCount: 0, mentionCount: 0 };
 const dm = { id: 'surface-dm', kind: 'dm', name: 'Ada', participant: author, unreadCount: 0, mentionCount: 0 };
 const pageOf = (items: unknown[]) => ({ items, total: items.length, offset: 0, limit: 20 });
@@ -17,7 +17,7 @@ export async function stubSurfaceApis(page: Page) {
     docs: [doc], 'docs/surface-doc': doc, 'docs/surface-doc/backlinks': { items: [] }, 'docs/surface-doc/unlinked': { items: [] },
     graph: { nodes: [], edges: [] },
     issues: pageOf([issue]), 'issues/7': issue,
-    cls: [cl], 'cls/42': cl,
+    cls: [cl], 'cls/42': cl, [`cls/${cl.publicId}`]: cl,
     'cls/42/checks': { pipeline: [], runner: '', checks: [], logTail: [], benchmarks: [] },
     'cls/42/dependency-graph': { nodes: [], edges: [], apiChanges: [], relatedCLs: [], symbolUsage: [], cycles: [] },
     channels: [channel, dm],
@@ -52,11 +52,11 @@ export const SURFACE_ROUTES = [
   ['/code/README.md', '[data-mega-code="page"]'],
   ['/tags', '[data-mega-tags="page"]'],
   ['/cls', '[data-mega-cls="page"]'],
-  ['/cls/42', '[data-mega-cls="detail"]'],
-  ['/cls/42/files', '[data-mega-cls="detail"]'],
-  ['/cls/42/checks', '[data-mega-cls="detail"]'],
-  ['/cls/42/revisions', '[data-mega-cls="detail"]'],
-  ['/cls/42/deps', '[data-mega-cls="detail"]'],
+  [`/cls/${cl.publicId}`, '[data-mega-cls="detail"]'],
+  [`/cls/${cl.publicId}/files`, '[data-mega-cls="detail"]'],
+  [`/cls/${cl.publicId}/checks`, '[data-mega-cls="detail"]'],
+  [`/cls/${cl.publicId}/revisions`, '[data-mega-cls="detail"]'],
+  [`/cls/${cl.publicId}/deps`, '[data-mega-cls="detail"]'],
   ['/channels/new', '[data-mega-chat="create"]'],
   ['/channels/surface-channel', '[data-mega-chat="channel"]'],
   ['/dm/surface-dm', '[data-mega-chat="dm"]'],

@@ -78,9 +78,11 @@ type EntityNodeData = {
 };
 
 function entityAriaLabel(node: ContentGraphNode, issueAriaLabel: string, clAriaLabel: string): string {
-  if (node.kind === "doc" || node.entityNumber === undefined) return node.title;
-  const template = node.kind === "issue" ? issueAriaLabel : clAriaLabel;
-  return template.replace("{number}", String(node.entityNumber));
+  if (node.kind === "cl") return clAriaLabel.replace("{publicId}", node.entityId);
+  if (node.kind === "issue" && node.entityNumber !== undefined) {
+    return issueAriaLabel.replace("{number}", String(node.entityNumber));
+  }
+  return node.title;
 }
 
 function EntityNode({ data }: NodeProps<Node<EntityNodeData>>) {

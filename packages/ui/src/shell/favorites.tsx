@@ -1,6 +1,7 @@
 // megaui:libs/react-shared/components/mega/shell/favorites.tsx@0ff3a9d
 "use client"
 
+import { isBlockId, isLegacyCLNumber, type CL } from "@megaui/core"
 import { useCallback, useEffect, useRef, useState } from "react"
 
 import { SHELL_ICON_NAMES, type ShellIconName } from "./icons"
@@ -78,7 +79,7 @@ export function deriveFavorite(
   if (second !== undefined) {
     switch (first) {
       case "cls":
-        return { href, icon: "git-pull", title: `!${second}` }
+        return isBlockId(second) ? { href, icon: "git-pull", title: second } : undefined
       case "issues":
         return { href, icon: "bug", title: `#${second}` }
       case "channels":
@@ -122,7 +123,7 @@ export function writeFavorites(
 }
 
 /** Z1-01: localStorage-persisted favorites with per-entry degradation. */
-export function useFavorites(): {
+export function useFavorites(cls?: readonly Pick<CL, "number" | "publicId">[]): {
   favorites: readonly FavoriteEntry[]
   remove(href: string): void
   toggle(entry: FavoriteEntry): void
@@ -160,6 +161,21 @@ export function useFavorites(): {
     adopt(next)
     writeFavorites(browserStorage(), next)
   }, [adopt])
+
+  useEffect(() => {
+    if (!cls?.length) return
+    const entries = entriesRef.current
+    const next = entries.map((entry) => {
+      const match = /^(\/[^/]+\/workspace\/cls\/)([1-9]\d*)(?=\/|[?#]|$)/.exec(entry.href)
+      if (!match || !isLegacyCLNumber(match[2]!)) return entry
+      const cl = cls.find((row) => row.number === Number(match[2]))
+      if (!cl || !isBlockId(cl.publicId)) return entry
+      return { ...entry, href: match[1] + cl.publicId + entry.href.slice(match[0].length), title: cl.publicId }
+    })
+    if (next.some((entry, index) => entry !== entries[index])) {
+      persist(next.filter((entry, index) => next.findIndex((other) => other.href === entry.href) === index))
+    }
+  }, [cls, favorites, persist])
 
   const toggle = useCallback((entry: FavoriteEntry) => {
     persist(toggleFavorite(entriesRef.current, entry))

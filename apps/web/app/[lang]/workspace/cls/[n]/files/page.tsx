@@ -5,8 +5,7 @@ import { useParams, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 
-import type { CL } from "@megaui/core";
-import { clFilePatchForRange, parseRevRange } from "@megaui/core";
+import { clFilePatchForRange, isCLReference, parseRevRange, type CL } from "@megaui/core";
 import { MegaApiError, megaGet, megaPost, megaQueryKeys } from "@megaui/ui/query";
 import { MEGA_RADIUS_TOKENS, MEGA_SPACING_TOKENS, MEGA_TOKENS } from "@megaui/ui/tokens";
 
@@ -20,17 +19,17 @@ export default function CLFilesPage() {
   if (params === null || searchParams === null) {
     return <section aria-busy="true" data-mega-cls="files"><p>{t.workspace.clDetail.files.loading}</p></section>;
   }
-  return <ReadyCLFilesPage clNumber={Number(params.n)} searchParams={searchParams} />;
+  return <ReadyCLFilesPage key={params.n} routeId={params.n} searchParams={searchParams} />;
 }
 
-function ReadyCLFilesPage({ clNumber, searchParams }: {
-  clNumber: number;
+function ReadyCLFilesPage({ routeId, searchParams }: {
+  routeId: string;
   searchParams: NonNullable<ReturnType<typeof useSearchParams>>;
 }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const filesText = t.workspace.clDetail.files;
-  const contextKey = `${clNumber}?${searchParams.toString()}`;
+  const contextKey = `${routeId}?${searchParams.toString()}`;
   const currentContext = useRef<string | null>(null);
   useLayoutEffect(() => {
     currentContext.current = contextKey;
@@ -40,17 +39,16 @@ function ReadyCLFilesPage({ clNumber, searchParams }: {
   const fileParam = searchParams.get("file");
 
   const clQuery = useQuery({
-    queryKey: megaQueryKeys.cl(clNumber),
-    queryFn: () => megaGet<CL>(["cls", String(clNumber)]),
-    enabled: Number.isInteger(clNumber) && clNumber > 0,
+    queryKey: megaQueryKeys.cl(routeId),
+    queryFn: () => megaGet<CL>(["cls", routeId]),
+    enabled: isCLReference(routeId),
+    staleTime: 10_000,
     retry: (count, error) => !(error instanceof MegaApiError && error.status === 404) && count < 2,
   });
-
   const range = useMemo(
-    () => (clQuery.data ? parseRevRange(rangeParam, clQuery.data.revisions) : undefined),
+    () => clQuery.data && parseRevRange(rangeParam, clQuery.data.revisions),
     [clQuery.data, rangeParam],
   );
-
   const files = clQuery.data?.files ?? [];
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const activePath = selectedPath ?? fileParam ?? files[0]?.path ?? null;
@@ -60,19 +58,16 @@ function ReadyCLFilesPage({ clNumber, searchParams }: {
   const viewedMutation = useMutation({
     mutationFn: (input: { path: string; viewed: boolean }) => {
       if (currentContext.current !== contextKey) throw new Error("Navigation context is unavailable");
-      return megaPost(["cls", String(clNumber), "viewed"], input);
+      if (!clQuery.data) throw new Error("CL detail is unavailable");
+      return megaPost(["cls", String(clQuery.data.number), "viewed"], input);
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: megaQueryKeys.cl(clNumber) });
+      void queryClient.invalidateQueries({ queryKey: megaQueryKeys.cl(routeId) });
     },
   });
 
   if (clQuery.isPending) {
-    return (
-      <section aria-busy="true" data-mega-cls="files">
-        <p>{filesText.loading}</p>
-      </section>
-    );
+    return <section aria-busy="true" data-mega-cls="files"><p>{filesText.loading}</p></section>;
   }
 
   if (clQuery.isError && !clQuery.data) {

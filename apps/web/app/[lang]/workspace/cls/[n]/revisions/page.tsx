@@ -2,15 +2,14 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
-import type { CL } from "@megaui/core";
 import { MegaApiError, megaGet, megaQueryKeys } from "@megaui/ui/query";
 import { MEGA_RADIUS_TOKENS, MEGA_SPACING_TOKENS, MEGA_TOKENS } from "@megaui/ui/tokens";
 
 import { useTranslation } from "@/hooks/use-translation";
+import { useCurrentCL } from "../cl-route";
 
 interface ClCommit {
   sha: string;
@@ -20,53 +19,23 @@ interface ClCommit {
 }
 
 export default function CLRevisionsPage() {
-  const params = useParams<{ n: string }>();
+  const cl = useCurrentCL();
   const { locale, t } = useTranslation();
   const revisionsText = t.workspace.clDetail.revisions;
-  const clNumber = Number(params?.n);
+  const clNumber = cl.number;
   const [fromRev, setFromRev] = useState<number | "">("");
   const [toRev, setToRev] = useState<number | "">("");
-
-  const clQuery = useQuery({
-    queryKey: megaQueryKeys.cl(clNumber),
-    queryFn: () => megaGet<CL>(["cls", String(clNumber)]),
-    enabled: Number.isInteger(clNumber) && clNumber > 0,
-    retry: (count, error) => !(error instanceof MegaApiError && error.status === 404) && count < 2,
-  });
 
   const commitsQuery = useQuery({
     queryKey: megaQueryKeys.clCommits(clNumber),
     queryFn: () => megaGet<ClCommit[]>(["cls", String(clNumber), "commits"]),
-    enabled: Number.isInteger(clNumber) && clNumber > 0 && Boolean(clQuery.data),
     retry: (count, error) => !(error instanceof MegaApiError && error.status === 404) && count < 2,
   });
 
-  const revisions = clQuery.data?.revisions ?? [];
-  const compareHref = useMemo(() => {
-    if (fromRev === "" || toRev === "" || fromRev >= toRev) return null;
-    return `/${locale}/workspace/cls/${clNumber}/files?range=${fromRev}..${toRev}`;
-  }, [clNumber, fromRev, locale, toRev]);
-
-  if (clQuery.isPending) {
-    return (
-      <section aria-busy="true" data-mega-cls="revisions">
-        <p>{revisionsText.loading}</p>
-      </section>
-    );
-  }
-
-  if (clQuery.isError && !clQuery.data) {
-    return (
-      <section data-mega-cls="revisions">
-        <div role="alert" style={{ display: "flex", gap: MEGA_SPACING_TOKENS[8] }}>
-          <p style={{ margin: 0 }}>{revisionsText.error}</p>
-          <button data-mega-cls="retry" onClick={() => void clQuery.refetch()} type="button">
-            {revisionsText.retry}
-          </button>
-        </div>
-      </section>
-    );
-  }
+  const revisions = cl.revisions;
+  const compareHref = fromRev !== "" && toRev !== "" && fromRev < toRev
+    ? `/${locale}/workspace/cls/${cl.publicId}/files?range=${fromRev}..${toRev}`
+    : null;
 
   return (
     <section data-mega-cls="revisions" style={{ display: "grid", gap: `calc(${MEGA_SPACING_TOKENS[8]} * 2)` }}>

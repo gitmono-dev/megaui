@@ -89,8 +89,8 @@ export function HomeCardGrid({
         {cards.reviewRequests.length === 0
           ? labels.reviewCls.empty
           : cards.reviewRequests.map((cl) => (
-              <Link href={`${workspaceBase}/cls/${cl.number}`} key={cl.number} style={{ display: "block", marginBottom: MEGA_SPACING_TOKENS[6] }}>
-                !{cl.number} {cl.title}
+              <Link href={`${workspaceBase}/cls/${cl.publicId}`} key={cl.publicId} style={{ display: "block", marginBottom: MEGA_SPACING_TOKENS[6] }}>
+                {cl.publicId} {cl.title}
               </Link>
             ))}
       </Card>

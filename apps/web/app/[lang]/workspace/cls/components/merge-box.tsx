@@ -3,10 +3,25 @@
 "use client";
 
 import Link from "next/link";
+import {
+  ChevronRight, CircleCheck, CircleDashed, CircleMinus, CircleX, GitMerge,
+  GitPullRequestDraft, ListChecks, TriangleAlert,
+} from "lucide-react";
 import type { CIStatus, CL } from "@megaui/core";
-import { MEGA_RADIUS_TOKENS, MEGA_SPACING_TOKENS, MEGA_TOKENS } from "@megaui/ui/tokens";
+import type { ProjectedMega2CL } from "@/lib/adapter/mega2/cl-projection";
+import styles from "./merge-box.module.css";
+
+type MergeBoxCL = CL & Pick<ProjectedMega2CL, "mergeBox">;
+type Condition = NonNullable<NonNullable<ProjectedMega2CL["mergeBox"]>["merge_requirements"]>["conditions"][number];
 
 export interface MergeBoxLabels {
+  closed: string;
+  draft: string;
+  requirementsTitle: string;
+  requirementsStatus: string;
+  requirementsPending: string;
+  conditionNames: Record<Condition["type"], string>;
+  conditionResults: Record<Condition["result"], string>;
   inQueueSubtitle: string;
   inQueueTitle: string;
   mergeAction: string;
@@ -73,8 +88,12 @@ function ciBlockerInfo(
   }
 }
 
-export function mergeVisual(cl: CL, labels: MergeBoxLabels): MergeVisual {
+export function mergeVisual(cl: MergeBoxCL, labels: MergeBoxLabels): MergeVisual {
   if (cl.state === "merged") return { subtitle: "", title: labels.merged, tone: "merged" };
+  if (cl.state === "closed") return { subtitle: "", title: labels.closed, tone: "muted" };
+  if (cl.state === "wip") return { subtitle: "", title: labels.draft, tone: "muted" };
+
+  const liveRequirements = cl.mergeBox !== undefined;
   const approvals = cl.reviewers.filter((reviewer) => reviewer.verdict === "approved").length;
   switch (cl.merge) {
     case "queue-ready":
@@ -90,8 +109,8 @@ export function mergeVisual(cl: CL, labels: MergeBoxLabels): MergeVisual {
       }
       return {
         action: "merge",
-        note: labels.squashNote,
-        subtitle: labels.readySubtitle
+        note: liveRequirements ? undefined : labels.squashNote,
+        subtitle: liveRequirements ? "" : labels.readySubtitle
           .replace("{approvals}", String(approvals))
           .replace("{score}", String(cl.mergeScore ?? "—")),
         title: labels.readyTitle,
@@ -143,21 +162,27 @@ export function mergeVisual(cl: CL, labels: MergeBoxLabels): MergeVisual {
               showChecksLink: true,
             }
           : {}),
-        subtitle: labels.needsReviewSubtitle
+        subtitle: liveRequirements || !cl.reviewers.length ? "" : labels.needsReviewSubtitle
           .replace("{approvals}", String(approvals))
           .replace("{total}", String(cl.reviewers.length)),
-        title: labels.needsReviewTitle,
+        title: liveRequirements ? labels.requirementsPending : labels.needsReviewTitle,
         tone: "muted",
       };
     }
   }
 }
 
-const toneColors = {
-  accent: MEGA_TOKENS.accent,
-  danger: MEGA_TOKENS.danger,
-  merged: MEGA_TOKENS.merged,
-  muted: MEGA_TOKENS.muted,
+const toneIcons = {
+  accent: CircleCheck,
+  danger: TriangleAlert,
+  merged: GitMerge,
+  muted: CircleDashed,
+} as const;
+
+const conditionIcons = {
+  PASSED: CircleCheck,
+  FAILED: CircleX,
+  PENDING: CircleDashed,
 } as const;
 
 export function MergeBox({
@@ -170,57 +195,76 @@ export function MergeBox({
   showActions,
 }: {
   checksHref?: string;
-  cl: CL;
+  cl: MergeBoxCL;
   labels: MergeBoxLabels;
   onMerge?(): void;
   onRebase?(): void;
   pending: boolean;
-  /** Author-only decision actions (engine/mega2 ACL is fail-closed server-side). */
+  /** The BFF rechecks permissions for every decision action. */
   showActions: boolean;
 }) {
   const visual = mergeVisual(cl, labels);
+  const Icon = cl.state === "closed" ? CircleMinus : cl.state === "wip" ? GitPullRequestDraft : toneIcons[visual.tone];
+  const conditions = cl.mergeBox?.merge_requirements?.conditions ?? [];
+  const passed = conditions.filter((condition) => condition.result === "PASSED").length;
+
   return (
     <section
+      className={styles.box}
       data-ci={cl.ci}
       data-ci-blocked={visual.ciBlocked ? "true" : "false"}
       data-mega-cls="merge-box"
       data-merge={cl.merge}
-      style={{
-        background: MEGA_TOKENS.subtle,
-        border: `1px solid ${MEGA_TOKENS.border}`,
-        borderLeft: `3px solid ${toneColors[visual.tone]}`,
-        borderRadius: MEGA_RADIUS_TOKENS.md,
-        padding: `calc(${MEGA_SPACING_TOKENS[8]} * 1.5)`,
-      }}
+      data-tone={visual.tone}
     >
-      <h2 style={{ color: toneColors[visual.tone], fontSize: "var(--mega-density-font-size)", fontWeight: 650, margin: 0 }}>
-        {visual.title}
-      </h2>
-      {visual.subtitle ? (
-        <p style={{ color: MEGA_TOKENS.muted, margin: `${MEGA_SPACING_TOKENS[6]} 0 0` }}>{visual.subtitle}</p>
-      ) : null}
-      {visual.note ? (
-        <p style={{ color: MEGA_TOKENS.muted, fontSize: "calc(var(--mega-density-font-size) - 1px)", margin: `${MEGA_SPACING_TOKENS[6]} 0 0` }}>
-          {visual.note}
-        </p>
-      ) : null}
-      {visual.showChecksLink && checksHref ? (
-        <p style={{ margin: `${MEGA_SPACING_TOKENS[6]} 0 0` }}>
-          <Link data-mega-cls="merge-box-checks-link" href={checksHref} style={{ color: MEGA_TOKENS.accent }}>
-            {labels.viewChecks}
-          </Link>
-        </p>
-      ) : null}
-      {showActions && visual.action === "merge" && cl.ci === "passing" && onMerge ? (
-        <button data-mega-cls="merge-action" disabled={pending} onClick={onMerge} type="button" style={{ marginTop: MEGA_SPACING_TOKENS[8] }}>
-          {labels.mergeAction}
-        </button>
-      ) : null}
-      {showActions && visual.action === "rebase" && onRebase ? (
-        <button data-mega-cls="rebase-action" disabled={pending} onClick={onRebase} type="button" style={{ marginTop: MEGA_SPACING_TOKENS[8] }}>
-          {labels.rebaseAction}
-        </button>
-      ) : null}
+      <div className={styles.summary}>
+        <span className={styles.icon}><Icon aria-hidden="true" size={18} /></span>
+        <div className={styles.content}>
+          <h2>{visual.title}</h2>
+          {visual.subtitle && <p>{visual.subtitle}</p>}
+          {visual.note && <p>{visual.note}</p>}
+        </div>
+        <div className={styles.actions}>
+          {visual.showChecksLink && checksHref && (
+            <Link data-mega-cls="merge-box-checks-link" href={checksHref}>
+              {labels.viewChecks}<ChevronRight aria-hidden="true" size={14} />
+            </Link>
+          )}
+          {showActions && visual.action === "merge" && cl.ci === "passing" && onMerge && (
+            <button data-mega-cls="merge-action" disabled={pending} onClick={onMerge} type="button">
+              {labels.mergeAction}
+            </button>
+          )}
+          {showActions && visual.action === "rebase" && onRebase && (
+            <button data-mega-cls="rebase-action" disabled={pending} onClick={onRebase} type="button">
+              {labels.rebaseAction}
+            </button>
+          )}
+        </div>
+      </div>
+      {conditions.length > 0 && (
+        <details className={styles.requirements}>
+          <summary>
+            <ListChecks aria-hidden="true" size={16} />
+            <strong>{labels.requirementsTitle}</strong>
+            <span>{labels.requirementsStatus.replace("{passed}", String(passed)).replace("{total}", String(conditions.length))}</span>
+            <ChevronRight className={styles.chevron} aria-hidden="true" size={14} />
+          </summary>
+          <ul>
+            {conditions.map((condition) => {
+              const ResultIcon = conditionIcons[condition.result];
+              return (
+                <li key={condition.type}>
+                  <ResultIcon aria-hidden="true" data-result={condition.result} size={15} />
+                  <span>{labels.conditionNames[condition.type]}</span>
+                  <span className={styles.result}>{labels.conditionResults[condition.result]}</span>
+                  {condition.result !== "PASSED" && condition.message && <p>{condition.message}</p>}
+                </li>
+              );
+            })}
+          </ul>
+        </details>
+      )}
     </section>
   );
 }

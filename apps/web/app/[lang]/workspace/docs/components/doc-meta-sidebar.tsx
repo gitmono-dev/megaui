@@ -181,10 +181,10 @@ export function DocMetaSidebar({
           {doc.linkedCLs.length === 0 && doc.linkedIssues.length === 0 ? (
             <span style={{ color: MEGA_TOKENS.muted }}>{labels.none}</span>
           ) : null}
-          {doc.linkedCLs.map((number) => (
+          {doc.linkedCLs.map((publicId) => (
             <Link
-              href={`${workspaceBase}/cls/${number}`}
-              key={`cl-${number}`}
+              href={`${workspaceBase}/cls/${publicId}`}
+              key={`cl-${publicId}`}
               style={{
                 alignItems: "center",
                 color: MEGA_TOKENS.accent,
@@ -193,7 +193,7 @@ export function DocMetaSidebar({
                 textDecoration: "none",
               }}
             >
-              <DocsIcon aria-hidden="true" color={MEGA_TOKENS.accent} name="git-pull" size={11} />!{number}
+              <DocsIcon aria-hidden="true" color={MEGA_TOKENS.accent} name="git-pull" size={11} />{publicId}
             </Link>
           ))}
           {doc.linkedIssues.map((number) => (

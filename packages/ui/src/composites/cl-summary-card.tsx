@@ -28,7 +28,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "../ui/avatar"
 import { Badge } from "../ui/badge"
 import { Skeleton } from "../ui/skeleton"
 
-export type CLSummary = Pick<CL, "additions" | "author" | "deletions" | "number" | "state" | "title"> &
+export type CLSummary = Pick<CL, "additions" | "author" | "deletions" | "publicId" | "state" | "title"> &
   Partial<Pick<CL, "description" | "packageId">>
 
 export interface CLSummaryCardProps {
@@ -39,7 +39,7 @@ export interface CLSummaryCardProps {
   diffLabel?: ReactNode
   /** Pre-formatted file-count label, e.g. "4 files changed" (caller formats; GC-14). */
   fileCountLabel?: ReactNode
-  /** Resolved destination for the CL number/title links (caller owns routing). */
+  /** Resolved destination for the CL code/title links (caller owns routing). */
   href: string
   /** Renders a skeleton placeholder instead of `cl` content. */
   loading?: boolean
@@ -116,7 +116,7 @@ export function CLSummaryCard({
         data-cl-variant={variant}
         data-slot="cl-summary-card"
       >
-        <span className="shrink-0 font-mono text-xs font-bold text-primary">!{cl.number}</span>
+        <span className="shrink-0 font-mono text-xs font-bold text-primary">{cl.publicId}</span>
         <a
           className="min-w-0 flex-1 truncate text-sm font-medium hover:underline"
           href={href}
@@ -144,7 +144,7 @@ export function CLSummaryCard({
       data-slot="cl-summary-card"
     >
       <header className="flex flex-wrap items-center gap-2">
-        <span className="font-mono text-xs font-bold text-primary">!{cl.number}</span>
+        <span className="font-mono text-xs font-bold text-primary">{cl.publicId}</span>
         <CLStateBadge state={cl.state} stateLabel={stateLabel} />
         <span className="flex-1" />
         {diffLabel !== undefined && (
