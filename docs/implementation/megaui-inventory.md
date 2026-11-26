@@ -53,7 +53,7 @@
 |---|---|---|---|---|---|
 | 4 | `/{lang}/workspace/cls` | `apps/web/app/[lang]/workspace/cls/page.tsx` | 状态标签、筛选输入框、CL 列表行 | 搜索、筛选、排序、打开详情 | `workspace.clsList` |
 | 5 | `/{lang}/workspace/cls/[n]` | `apps/web/app/[lang]/workspace/cls/[n]/page.tsx` | 详情标题、合并状态摘要、讨论及活动 | 查看合并条件、打开检查、阅读与回复讨论 | `workspace.clDetail` |
-| 6 | `/{lang}/workspace/cls/[n]/files` | `apps/web/app/[lang]/workspace/cls/[n]/files/page.tsx` | `MegaPatchView`、`clFilePatchForRange` | 切换文件、查看指定修订范围的差异、标记已查看 | `workspace.clDetail` |
+| 6 | `/{lang}/workspace/cls/[n]/files` | `apps/web/app/[lang]/workspace/cls/[n]/files/page.tsx` | `MegaFileTree`、`MegaPatchView`、`clFilePatchForRange` | 展开变更目录、切换文件、查看指定修订范围的差异、标记已查看 | `workspace.clDetail` |
 | 7 | `/{lang}/workspace/cls/[n]/revisions` | `megaui:apps/next-app/app/[lang]/workspace/cls/[n]/revisions/page.tsx@0ff3a9d` | `CompareBar` / `RevisionCard` / `ClCommitsCard` / `TimelineRail` / `RangeSummary`（`megaui:apps/next-app/app/[lang]/workspace/cls/[n]/components/range-summary.tsx@0ff3a9d`） | 修订对比、范围摘要 | `workspace.clDetail` |
 | 8 | `/{lang}/workspace/cls/[n]/checks` | `megaui:apps/next-app/app/[lang]/workspace/cls/[n]/checks/page.tsx@0ff3a9d` | `ChecksHero` / `CheckTable` / `StageFlow` / `LogConsole` / `BenchTiles`（`megaui:apps/next-app/app/[lang]/workspace/cls/[n]/components/bench-tiles.tsx@0ff3a9d`） | 检查运行列表与日志 | `workspace.clDetail` |
 | 9 | `/{lang}/workspace/cls/[n]/deps` | `megaui:apps/next-app/app/[lang]/workspace/cls/[n]/deps/page.tsx@0ff3a9d` | 主图 `DepGraph`（`megaui:apps/next-app/app/[lang]/workspace/cls/[n]/components/dep-graph.tsx@0ff3a9d`）+ `ApiDiff` / `RelatedCLs` / `SymbolUsagePanel` | 依赖图与关联 CL | `workspace.clDetail` |
@@ -62,7 +62,7 @@
 
 变更单概览沿用工作台的字号、间距和主题色。标题下方显示来源分支和已知的目标分支，合并摘要紧接标签导航，文件差异按需加载。布局参考 [GitHub PR Overview 公开预览](https://github.blog/changelog/2026-11-05-new-pull-request-overview-page-in-public-preview/) 和 [11 月 19 日的预览更新](https://github.blog/changelog/2026-11-19-improvements-on-the-pull-request-overview-in-public-preview/)。
 
-文件变更页使用 Diffs 按选中文件的名称识别语言，以统一差异视图显示语法颜色、新旧行号和增删标记。未知语言保留纯文本差异，二进制文件显示提示。长补丁按可见行渲染。[Diffs 文档](https://diffs.com/docs)
+文件变更页与代码浏览复用同一目录树，按目录优先排列本次变更涉及的路径。文件旁显示增删行数，打开文件链接会展开父目录并定位到选中项。Diffs 按文件名识别语言，以统一差异视图显示语法颜色、新旧行号和增删标记。未知语言保留纯文本差异，二进制文件显示提示。长补丁按可见行渲染。[Diffs 文档](https://diffs.com/docs)
 
 ### Issues（2）
 

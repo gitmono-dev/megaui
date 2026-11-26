@@ -56,7 +56,7 @@ const SAMPLE_CL = {
   packageId: "pkg_engine",
   author: AUTHOR,
   reviewers: [],
-  additions: 503,
+  additions: 504,
   deletions: 2,
   files: [
     {
@@ -82,6 +82,11 @@ const SAMPLE_CL = {
     {
       path: "src/generated.rs", status: "added", additions: 500, deletions: 0,
       patch: ["@@ -0,0 +1,500 @@", ...Array.from({ length: 500 }, (_, i) => `+pub const V${i}: u32 = ${i};`), ""].join("\n"),
+    },
+    {
+      path: "tools/index.ts", status: "added", additions: 1, deletions: 0,
+      patch: "@@ -0,0 +1 @@\n+export const tool = true;\n",
+      rangePatches: { "1..2": "@@ -0,0 +1 @@\n+export const rangedTool = true;\n" },
     },
   ],
   revisions: SAMPLE_REVISIONS,
@@ -178,7 +183,7 @@ async function stubRail(page: import("@playwright/test").Page): Promise<void> {
 async function stubAttachmentApis(
   page: import("@playwright/test").Page,
   options?: {
-    emptyFiles?: boolean;
+    files?: typeof SAMPLE_CL.files;
     emptyRevisions?: boolean;
     emptyChecks?: boolean;
     failingChecks?: boolean;
@@ -191,7 +196,7 @@ async function stubAttachmentApis(
   await stubRail(page);
   const cl = {
     ...SAMPLE_CL,
-    files: options?.emptyFiles ? [] : SAMPLE_CL.files,
+    files: options?.files ?? SAMPLE_CL.files,
     revisions: options?.emptyRevisions ? [] : SAMPLE_CL.revisions,
   };
 
@@ -282,20 +287,41 @@ test.describe("workspace CL attachment pages (WA-10)", () => {
     await context.addCookies(cookies);
   });
 
-  test("files highlight TypeScript and Rust additions and deletions on selection", async ({ page }) => {
+  test("folder toggles preserve the open diff and keyboard file selection changes its highlighting", async ({ page }) => {
     await stubAttachmentApis(page);
     await page.goto(`${CL_PATH}/files`);
     await expect(page.locator('[data-mega-cls="files"]')).toBeVisible();
-    await expect(page.locator('[data-mega-cls="file-row"]')).toHaveCount(SAMPLE_CL.files.length);
+    const tree = page.getByRole("tree", { name: "Changed files" });
+    const packages = tree.getByRole("treeitem", { name: "packages", level: 1 });
+    const tsFile = tree.getByRole("treeitem", { name: /^index\.ts\b/, level: 4 });
+    await expect(packages).toHaveAttribute("aria-expanded", "true");
+    await expect(tree.getByRole("treeitem", { name: "engine", level: 2 })).toHaveAttribute("aria-expanded", "true");
+    await expect(tree.getByRole("treeitem", { name: "src", level: 3 })).toHaveAttribute("aria-expanded", "true");
+    await expect(tsFile).toHaveAttribute("aria-selected", "true");
+    await expect(tsFile).toContainText("+1");
+    await expect(tsFile).toContainText("−1");
     const patch = page.locator('[data-mega-cls="diff-patch"]');
     const added = patchLine(patch, "addition");
     const removed = patchLine(patch, "deletion");
     await expect(added).toHaveText("export const x = 1;");
     await expect(removed).toHaveText("export const x = 0;");
     await expect.poll(async () => (await tokenColors(added)).length).toBeGreaterThan(1);
-    const rustFile = page.getByRole("button", { name: /src\/main\.rs/ });
-    await rustFile.press("Enter");
-    await expect(rustFile).toHaveAttribute("aria-pressed", "true");
+    await packages.click();
+    await expect(packages).toHaveAttribute("aria-expanded", "false");
+    await expect(tsFile).toHaveCount(0);
+    await expect(added).toHaveText("export const x = 1;");
+    await packages.click();
+    await expect(tsFile).toHaveAttribute("aria-selected", "true");
+
+    const src = tree.getByRole("treeitem", { name: "src", level: 1 });
+    await expect(src).toHaveAttribute("aria-expanded", "false");
+    await src.click();
+    await expect(src).toHaveAttribute("aria-expanded", "true");
+    await expect(added).toHaveText("export const x = 1;");
+    await tree.press("ArrowRight"); // generated.rs
+    await tree.press("ArrowDown"); // main.rs
+    await tree.press("Enter");
+    await expect(tree.getByRole("treeitem", { name: /^main\.rs\b/ })).toHaveAttribute("aria-selected", "true");
     await expect(added).toHaveText("fn answer() -> u32 { 42 }");
     await expect(removed).toHaveText("fn answer() -> u32 { 0 }");
     await expect.poll(async () => (await tokenColors(added)).length).toBeGreaterThan(1);
@@ -308,9 +334,12 @@ test.describe("workspace CL attachment pages (WA-10)", () => {
     await page.goto(`${CL_PATH}/files?file=notes.undetected`);
     const patch = page.locator('[data-mega-cls="diff-patch"]');
     await expect(patchLine(patch, "addition")).toHaveText("Plain file contents <example>");
-    await page.getByRole("button", { name: /empty[.]txt/ }).click();
+    const tree = page.getByRole("tree", { name: "Changed files" });
+    await tree.getByRole("treeitem", { name: "notes", exact: true }).click();
+    await tree.getByRole("treeitem", { name: /^empty\.txt\b/ }).click();
     await expect(patch).toHaveText("(empty patch)");
-    await page.getByRole("button", { name: /logo[.]bin/ }).click();
+    await tree.getByRole("treeitem", { name: "assets", exact: true }).click();
+    await tree.getByRole("treeitem", { name: /^logo\.bin\b/ }).click();
     await expect(patch.getByRole("status")).toHaveText("Binary file · no text diff available");
   });
 
@@ -330,22 +359,44 @@ test.describe("workspace CL attachment pages (WA-10)", () => {
     await expect.poll(async () => (await tokenColors(last)).length).toBeGreaterThan(1);
   });
 
+  test("a deep link reveals a file beyond the first screen of a large directory", async ({ page }) => {
+    const files = Array.from({ length: 1200 }, (_, i) => ({
+      path: `project/src/file-${String(i).padStart(4, "0")}.ts`,
+      status: "added",
+      additions: 1,
+      deletions: 0,
+      patch: `@@ -0,0 +1 @@\n+export const value = ${i};\n`,
+    }));
+    await stubAttachmentApis(page, { files });
+    await page.goto(`${CL_PATH}/files?file=project%2Fsrc%2Ffile-1199.ts`);
+    const tree = page.getByRole("tree", { name: "Changed files" });
+    const target = tree.getByRole("treeitem", { name: /^file-1199\.ts\b/, level: 3, selected: true });
+    await expect(target).toBeInViewport();
+    expect(await tree.getByRole("treeitem").count()).toBeLessThan(files.length);
+    await expect(patchLine(page.locator('[data-mega-cls="diff-patch"]'), "addition")).toHaveText("export const value = 1199;");
+  });
+
   test("files empty state", async ({ page }) => {
-    await stubAttachmentApis(page, { emptyFiles: true });
+    await stubAttachmentApis(page, { files: [] });
     await page.goto(`${CL_PATH}/files`);
     await expect(page.locator('[data-mega-cls="files-empty"]')).toBeVisible();
   });
 
   test("legacy range link retains its tab, comparison and fragment on refresh", async ({ page }) => {
     await stubAttachmentApis(page);
-    const suffix = "/files?range=1..2#diff";
+    const suffix = "/files?range=1..2&file=tools%2Findex.ts#diff";
     await page.goto(`/en/workspace/cls/1${suffix}`);
     await expect(page).toHaveURL(`${CL_PATH}${suffix}`);
     const patch = page.locator('[data-mega-cls="diff-patch"]');
-    await expect(patchLine(patch, "addition")).toHaveText("export const ranged = true;");
+    const tree = page.getByRole("tree", { name: "Changed files" });
+    const selected = tree.getByRole("treeitem", { name: /^index\.ts\b/, level: 2, selected: true });
+    await expect(tree.getByRole("treeitem", { name: "tools", level: 1 })).toHaveAttribute("aria-expanded", "true");
+    await expect(selected).toBeVisible();
+    await expect(patchLine(patch, "addition")).toHaveText("export const rangedTool = true;");
     await page.reload();
     await expect(page).toHaveURL(`${CL_PATH}${suffix}`);
-    await expect(patchLine(patch, "addition")).toHaveText("export const ranged = true;");
+    await expect(selected).toBeVisible();
+    await expect(patchLine(patch, "addition")).toHaveText("export const rangedTool = true;");
 
     const revisions = page.locator('[data-mega-cls="tabs"] [data-tab="revisions"]');
     await expect(revisions).toHaveAttribute("href", `${CL_PATH}/revisions`);
@@ -448,6 +499,7 @@ test.describe("workspace CL attachment pages (WA-10)", () => {
       await page.reload();
       await expect.poll(() => page.locator("html").evaluate(node => node.classList.contains("dark"))).toBe(mode === "dark");
       await expect(added).toBeVisible();
+      await expect(page.getByRole("tree").getByRole("treeitem", { name: /^index\.ts\b/, selected: true })).toBeInViewport();
       await expect.poll(async () => (await tokenColors(added)).length).toBeGreaterThan(1);
       modes.set(mode, await tokenColors(added));
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);

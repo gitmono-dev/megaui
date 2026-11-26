@@ -1,42 +1,30 @@
 .layout {
   display: grid;
-  grid-template-columns: minmax(12rem, 16rem) minmax(0, 1fr);
+  grid-template-columns: clamp(14rem, 28%, 20rem) minmax(0, 1fr);
   align-items: start;
   gap: 16px;
 }
 
 .fileList {
-  max-height: 70vh;
-  overflow: auto;
+  --tree-max-height: 70vh;
+  min-width: 0;
+  overflow: hidden;
   border: 1px solid var(--mega-border);
+  border-right: 0;
   border-radius: var(--mega-panel-radius);
-  background: var(--mega-bg);
 }
 
-.fileList ul {
-  margin: 0;
-  padding: 4px;
-  list-style: none;
-}
-
-.fileList .fileButton {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-  width: 100%;
-  padding: 6px 8px;
-  border: 0;
-  background: transparent;
-  text-align: start;
-  font-weight: 400;
-}
-
-.fileButton:hover { background: var(--mega-subtle); }
-.fileButton[aria-pressed="true"] { background: var(--mega-active-bg); color: var(--mega-active-fg); }
-.fileList .fileButton:focus-visible { outline-offset: -2px; }
+.fileList > :global([data-mega-tree="root"]) { max-height: var(--tree-max-height); }
+.fileList :global([data-mega-tree="row"]) > svg { flex: none; }
 .filePath { min-width: 0; overflow-wrap: anywhere; }
-.stat { flex: none; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.stat {
+  flex: none;
+  margin-inline-start: auto;
+  font-size: 0.85em;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
 .added { color: var(--mega-diff-add-fg); }
 .deleted { color: var(--mega-diff-del-fg); }
 
@@ -65,5 +53,5 @@
 
 @container (max-width: 48rem) {
   .layout { grid-template-columns: minmax(0, 1fr); gap: 12px; }
-  .fileList { max-height: min(32vh, 14rem); }
+  .fileList { --tree-max-height: min(32vh, 14rem); }
 }

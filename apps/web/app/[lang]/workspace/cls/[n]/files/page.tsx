@@ -6,9 +6,11 @@ import { useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { clFilePatchForRange, isCLReference, parseRevRange, type CL } from "@megaui/core";
 import { MegaPatchView } from "@megaui/ui/code-view";
+import { MegaFileTree } from "@megaui/ui/file-tree";
 import { MegaApiError, megaGet, megaPost, megaQueryKeys } from "@megaui/ui/query";
 
 import { useTranslation } from "@/hooks/use-translation";
+import { buildChangedFilesTree } from "./changed-files-tree";
 import styles from "./files.module.css";
 
 // megaui-only (FS-92): wait for navigation before mounting actionable content.
@@ -19,7 +21,7 @@ export default function CLFilesPage() {
   if (params === null || searchParams === null) {
     return <section aria-busy="true" data-mega-cls="files"><p>{t.workspace.clDetail.files.loading}</p></section>;
   }
-  return <ReadyCLFilesPage key={params.n} routeId={params.n} searchParams={searchParams} />;
+  return <ReadyCLFilesPage key={`${params.n}:${searchParams.get("file") ?? ""}`} routeId={params.n} searchParams={searchParams} />;
 }
 
 function ReadyCLFilesPage({ routeId, searchParams }: {
@@ -49,10 +51,10 @@ function ReadyCLFilesPage({ routeId, searchParams }: {
     () => clQuery.data && parseRevRange(rangeParam, clQuery.data.revisions),
     [clQuery.data, rangeParam],
   );
-  const files = clQuery.data?.files ?? [];
+  const files = clQuery.data?.files;
+  const { nodes, filesByPath } = useMemo(() => buildChangedFilesTree(files ?? []), [files]);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
-  const activePath = selectedPath ?? fileParam ?? files[0]?.path ?? null;
-  const activeFile = files.find((file) => file.path === activePath) ?? files[0];
+  const activeFile = filesByPath.get(selectedPath ?? fileParam ?? "") ?? files?.[0];
   const patch = activeFile ? clFilePatchForRange(activeFile, range) : "";
 
   const viewedMutation = useMutation({
@@ -93,27 +95,25 @@ function ReadyCLFilesPage({ routeId, searchParams }: {
 
   return (
     <section className={styles.layout} data-mega-cls="files">
-      <aside aria-label={filesText.list.treeAriaLabel} className={styles.fileList} data-mega-cls="files-list">
-        <ul>
-          {files.map((file) => (
-            <li key={file.path}>
-              <button
-                aria-pressed={file.path === activeFile.path}
-                className={styles.fileButton}
-                data-mega-cls="file-row"
-                data-active={file.path === activeFile.path ? "true" : "false"}
-                onClick={() => setSelectedPath(file.path)}
-                type="button"
-              >
-                <span className={styles.filePath}>{file.path}</span>
-                <span className={styles.stat}>
-                  <span className={styles.added}>+{file.additions}</span>{" "}
-                  <span className={styles.deleted}>−{file.deletions}</span>
-                </span>
-              </button>
-            </li>
-          ))}
-        </ul>
+      <aside className={styles.fileList} data-mega-cls="files-list">
+        <MegaFileTree
+          activePath={activeFile.path}
+          directoryAction="toggle"
+          labels={{ treeAriaLabel: filesText.list.treeAriaLabel }}
+          nodes={nodes}
+          onSelect={(node) => setSelectedPath(node.path)}
+          renderRowEnd={(node) => {
+            const file = node.kind === "file" ? filesByPath.get(node.path) : undefined;
+            return file && (
+              <span className={styles.stat}>
+                <span className={styles.added}>+{file.additions}</span>{" "}
+                <span className={styles.deleted}>−{file.deletions}</span>
+              </span>
+            );
+          }}
+          revealActiveFile
+          width="100%"
+        />
       </aside>
       <div className={styles.diffPane} data-mega-cls="files-diff">
         {rangeParam && !range ? (

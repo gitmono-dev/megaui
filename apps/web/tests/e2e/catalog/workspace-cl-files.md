@@ -11,11 +11,12 @@ End-to-end coverage of `/[lang]/workspace/cls/[publicId]/{files,revisions,checks
 
 | ID | Name | AC |
 |----|------|----|
-| S-01 | Keyboard file selection, TypeScript and Rust token colors, added and deleted lines | AC-1 |
+| S-01 | Nested directories, folder toggles that preserve the open diff, keyboard file selection, per-file line counts, TypeScript and Rust syntax colors | AC-1 |
 | S-01b | Readable unknown file types and distinct empty and binary states | AC-1 |
 | S-01c | A 500-line Rust diff keeps the rendered line count bounded and highlights code at both ends | AC-1 |
+| S-01d | A deep link into a directory of 1,200 files reveals the selected leaf while rendering just the visible rows and overscan | AC-1 |
 | S-02 | Files empty | AC-1 |
-| S-03 | Numeric deep links retain their tab, comparison query and fragment after canonicalization and refresh. Enter opens the revisions tab by public ID | AC-1 |
+| S-03 | A numeric deep link opens the requested index.ts among duplicate filenames, with its directory expanded and its revision range and fragment preserved across refresh. Enter opens the revisions tab by public ID | AC-1 |
 | S-03b | Bookmarks for both hyphenated and underscored public IDs keep the file range and fragment at the current alphanumeric ID | AC-1 |
 | S-04 | Revision cards, commits and a comparison link with the same public ID | AC-1 |
 | S-04b | Revisions empty | AC-1 |
