@@ -168,6 +168,11 @@ export async function deleteCommonResultVoid(
   await readCommonResult<null>(response, path, true);
 }
 
+export async function deleteCommonResultWithBody(path: string, body: unknown, options: Mega2RequestOptions = {}): Promise<void> {
+  const response = await mega2WriteFetch(path, { ...options, method: "DELETE", body });
+  await readCommonResult<null>(response, path, true);
+}
+
 export async function postCommonResultJson<Schema extends z.ZodTypeAny>(
   path: string,
   body: unknown,

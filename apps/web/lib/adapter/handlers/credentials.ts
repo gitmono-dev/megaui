@@ -4,6 +4,9 @@ import { z } from "zod";
 
 import {
   addSshKey,
+  addGpgKey,
+  deleteGpgKey,
+  listGpgKeys,
   deletePersonalAccessToken,
   deleteSshKey,
   generatePersonalAccessToken,
@@ -17,6 +20,11 @@ const addSshKeySchema = z.object({
   title: z.string().trim().min(1),
   publicKey: z.string().trim().min(1),
 });
+const addGpgKeySchema = z.object({
+  publicKey: z.string().trim().max(100_000)
+    .startsWith("-----BEGIN PGP PUBLIC KEY BLOCK-----")
+    .refine(value => !value.includes("-----BEGIN PGP PRIVATE KEY BLOCK-----")),
+});
 
 async function dispatchCredentialsGet(context: MegaDispatchContext): Promise<unknown> {
   const { segments, headers } = context;
@@ -24,6 +32,7 @@ async function dispatchCredentialsGet(context: MegaDispatchContext): Promise<unk
   if (only(segments, ["user", "ssh"])) {
     return listSshKeys(headers);
   }
+  if (only(segments, ["user", "gpg"])) return listGpgKeys(headers);
   if (only(segments, ["user", "tokens"])) {
     return listPersonalAccessTokens(headers);
   }
@@ -36,6 +45,9 @@ async function dispatchCredentialsPost(context: MegaDispatchContext): Promise<un
 
   if (only(segments, ["user", "ssh"])) {
     return addSshKey(addSshKeySchema.parse(body), headers);
+  }
+  if (only(segments, ["user", "gpg"])) {
+    return addGpgKey(addGpgKeySchema.parse(body).publicKey, headers);
   }
   if (only(segments, ["user", "tokens", "generate"])) {
     return generatePersonalAccessToken(headers);
@@ -50,6 +62,9 @@ async function dispatchCredentialsDelete(context: MegaDispatchContext): Promise<
   if (segments[0] === "user" && segments[1] === "ssh" && segments.length === 3) {
     return deleteSshKey(segmentNumber(segments[2]), headers);
   }
+  if (segments[0] === "user" && segments[1] === "gpg" && segments.length === 3) {
+    return deleteGpgKey(z.string().min(1).max(128).parse(segments[2]), headers);
+  }
   if (segments[0] === "user" && segments[1] === "tokens" && segments.length === 3) {
     return deletePersonalAccessToken(segmentNumber(segments[2]), headers);
   }
@@ -58,7 +73,7 @@ async function dispatchCredentialsDelete(context: MegaDispatchContext): Promise<
 }
 
 function matchesCredentialsRoutes(segments: readonly string[]): boolean {
-  return segments[0] === "user" && (segments[1] === "ssh" || segments[1] === "tokens");
+  return segments[0] === "user" && (segments[1] === "ssh" || segments[1] === "gpg" || segments[1] === "tokens");
 }
 
 registerMegaRoute({

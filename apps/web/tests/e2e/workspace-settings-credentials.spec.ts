@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import { mintSessionCookies } from "./helpers/session";
 import { e2eBaseURL } from "./helpers/base-url";
@@ -38,6 +38,14 @@ async function stubCredentials(page: Page): Promise<void> {
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: { deleted: true } }) });
   });
 
+  let gpg = [{ id: "ABC123", fingerprint: "0123456789ABCDEF", createdAt: "2026-09-01T00:00:00Z", expiresAt: null as string | null }];
+  await page.route("**/api/mega/user/gpg**", async route => {
+    const method = route.request().method();
+    if (method === "POST") gpg = [...gpg, { id: "DEF456", fingerprint: "FEDCBA9876543210", createdAt: "2026-09-04T00:00:00Z", expiresAt: null }];
+    if (method === "DELETE") gpg = gpg.filter(key => key.id !== route.request().url().split("/").at(-1));
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: method === "GET" ? gpg : { ok: true } }) });
+  });
+
   await page.route("**/api/mega/user/tokens**", async (route) => {
     const url = route.request().url();
     const method = route.request().method();
@@ -60,8 +68,64 @@ async function newCredentialsPage(page: Page): Promise<void> {
   await stubCredentials(page);
 }
 
+function textStyle(locator: Locator) {
+  return locator.evaluate(element => {
+    const style = getComputedStyle(element);
+    return [style.fontFamily, style.fontSize, style.fontWeight, style.lineHeight, style.color];
+  });
+}
+
+function buttonColors(locator: Locator) {
+  return locator.evaluate(element => {
+    const { backgroundColor, color } = getComputedStyle(element);
+    return { backgroundColor, color };
+  });
+}
+
 test.describe("workspace settings credentials (WA-18)", () => {
   test.describe.configure({ mode: "serial" });
+
+  test("Chinese SSH and GPG cards use consistent empty states, key hints and add buttons", async ({ page, context }) => {
+    await context.addCookies(mintSessionCookies().cookies);
+    await stubRail(page);
+    await page.route(/\/api\/mega\/user\/(ssh|gpg)$/, route => route.fulfill({ json: { data: [] } }));
+    await page.goto("/zh-CN/workspace/settings?section=ssh-keys");
+
+    const cards = page.locator('[data-mega-settings="card"]');
+    const ssh = cards.filter({ has: page.getByRole("heading", { name: "SSH 密钥", exact: true }) });
+    const gpg = cards.filter({ has: page.getByRole("heading", { name: "GPG 密钥", exact: true }) });
+    const sshEmpty = ssh.getByRole("paragraph").filter({ hasText: /^添加 SSH /u });
+    const gpgEmpty = gpg.getByRole("paragraph").filter({ hasText: /^暂无 GPG /u });
+    await expect(sshEmpty).toBeVisible();
+    await expect(gpgEmpty).toBeVisible();
+    expect(await textStyle(gpgEmpty)).toEqual(await textStyle(sshEmpty));
+    await expect(sshEmpty).toHaveText("添加 SSH 密钥后即可通过 SSH 向 Mega2 推送代码");
+    await expect(gpgEmpty).toHaveText("暂无 GPG 密钥");
+
+    const sshToggle = ssh.getByRole("button", { expanded: false });
+    const gpgToggle = gpg.getByRole("button", { expanded: false });
+    const toggleColors = await buttonColors(sshToggle);
+    expect(await buttonColors(gpgToggle)).toEqual(toggleColors);
+    await sshToggle.click();
+    await gpgToggle.click();
+    const submitColors = await buttonColors(ssh.locator('button[type="submit"]'));
+    expect(await buttonColors(gpg.locator('button[type="submit"]'))).toEqual(submitColors);
+    expect(submitColors.backgroundColor).not.toBe(toggleColors.backgroundColor);
+
+    for (const card of [ssh, gpg]) {
+      const hint = card.locator("form small");
+      await expect(hint).toBeVisible();
+      await expect(card.getByLabel("公钥", { exact: true })).toHaveAccessibleDescription(await hint.innerText());
+      for (const message of [...await card.locator("p").all(), hint]) {
+        await expect(message).toHaveText(/[^.。\s]$/u);
+      }
+    }
+    const sshHint = ssh.locator("form small");
+    const gpgHint = gpg.locator("form small");
+    await expect(sshHint).toContainText("~/.ssh/id_ed25519.pub");
+    await expect(gpgHint).toContainText("GPG 公钥");
+    expect(await textStyle(gpgHint)).toEqual(await textStyle(sshHint));
+  });
 
   test("adds a valid SSH key and rejects an invalid key", async ({ browser }) => {
     const { cookies } = mintSessionCookies();
@@ -71,15 +135,36 @@ test.describe("workspace settings credentials (WA-18)", () => {
     await newCredentialsPage(page);
 
     await page.goto("/en/workspace/settings?section=ssh-keys");
+    await page.getByRole("button", { name: "Add SSH key" }).click();
     await page.locator('[data-mega-settings="ssh-add-title"]').fill("Work laptop");
     await page.locator('[data-mega-settings="ssh-add-key"]').fill("ssh-ed25519 AAAA valid@example.com");
     await page.locator('[data-mega-settings="ssh-add"]').click();
     await expect(page.getByText("SHA256:valid-fingerprint")).toBeVisible();
 
+    await page.getByRole("button", { name: "Add SSH key" }).click();
     await page.locator('[data-mega-settings="ssh-add-title"]').fill("Invalid key");
     await page.locator('[data-mega-settings="ssh-add-key"]').fill("ssh-dss AAAA invalid@example.com");
     await page.locator('[data-mega-settings="ssh-add"]').click();
     await expect(page.getByText("SSH key type is not supported")).toBeVisible();
+    await context.close();
+  });
+
+  test("adds and deletes GPG keys", async ({ browser }) => {
+    const { cookies } = mintSessionCookies();
+    const context = await browser.newContext({ baseURL: e2eBaseURL() });
+    await context.addCookies(cookies);
+    const page = await context.newPage();
+    await newCredentialsPage(page);
+    await page.goto("/en/workspace/settings?section=ssh-keys");
+    await expect(page.getByText("ABC123")).toBeVisible();
+    await page.getByRole("button", { name: "Add GPG key" }).click();
+    await page.getByLabel("Key", { exact: true }).fill("synthetic public GPG key");
+    await page.locator('[data-mega-settings="gpg-add-form"]').getByRole("button", { name: "Add GPG key" }).click();
+    await expect(page.getByText("DEF456")).toBeVisible();
+    const gpgCard = page.locator('[data-mega-settings="gpg-row"]').filter({ hasText: "ABC123" });
+    await gpgCard.getByRole("button", { name: "Delete" }).first().click();
+    await page.getByRole("heading", { name: "Delete GPG key?" }).locator('..').getByRole("button", { name: "Delete" }).click();
+    await expect(page.getByText("ABC123")).toHaveCount(0);
     await context.close();
   });
 

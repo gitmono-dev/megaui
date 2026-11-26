@@ -23,6 +23,7 @@
 }
 
 :where([data-mega-settings="page"], [data-mega-session="page"], [data-mega-chat], [data-mega-agent="sources"]) h2,
+:where([data-mega-settings="ssh-keys"]) h3,
 [data-mega-home="card"] h2 {
   font-size: var(--mega-section-title-size) !important;
   font-weight: 700 !important;
@@ -104,7 +105,7 @@
   [data-mega-tags="open-draft"], [data-mega-tags="draft-submit"], [data-mega-tags="publish"],
   [data-mega-cls="new"], [data-mega-cls="new-submit"], [data-mega-cls="merge-action"],
   [data-mega-settings="save"], [data-mega-settings="notifications-save"],
-  [data-mega-settings="ssh-add"], [data-mega-settings="tokens-generate"],
+  [data-mega-settings="ssh-add"], [data-mega-settings="gpg-add"], [data-mega-settings="tokens-generate"],
   [data-mega-chat="create-submit"], [data-mega-chat="composer-send"],
   [data-mega-chat="thread-composer-send"], [data-mega-chat="invite-submit"],
   [data-mega-surface] [data-slot="button"][data-variant="default"]
@@ -120,7 +121,7 @@
   [data-mega-tags="open-draft"], [data-mega-tags="draft-submit"], [data-mega-tags="publish"],
   [data-mega-cls="new"], [data-mega-cls="new-submit"], [data-mega-cls="merge-action"],
   [data-mega-settings="save"], [data-mega-settings="notifications-save"],
-  [data-mega-settings="ssh-add"], [data-mega-settings="tokens-generate"],
+  [data-mega-settings="ssh-add"], [data-mega-settings="gpg-add"], [data-mega-settings="tokens-generate"],
   [data-mega-chat="create-submit"], [data-mega-chat="composer-send"],
   [data-mega-chat="thread-composer-send"], [data-mega-chat="invite-submit"],
   [data-mega-surface] [data-slot="button"][data-variant="default"]
@@ -134,7 +135,7 @@
   color: var(--mega-active-fg) !important;
 }
 
-:is([data-mega-settings="token-delete"], [data-mega-settings="ssh-delete"], [data-mega-settings="token-delete-confirm"], [data-mega-settings="ssh-delete-confirm"], [data-mega-chat="member-remove"], [data-mega-chat="member-leave"]) {
+:is([data-mega-settings="token-delete"], [data-mega-settings="ssh-delete"], [data-mega-settings="gpg-delete"], [data-mega-settings="token-delete-confirm"], [data-mega-settings="ssh-delete-confirm"], [data-mega-settings="gpg-delete-confirm"], [data-mega-chat="member-remove"], [data-mega-chat="member-leave"]) {
   color: var(--mega-danger) !important;
 }
 
@@ -283,7 +284,7 @@
   [data-mega-docs="graph-empty"],
   [data-mega-docs="empty-body"],
   [data-mega-settings="tokens-empty"],
-  [data-mega-settings="ssh-empty"],
+  [data-mega-settings="ssh-empty"], [data-mega-settings="gpg-empty"],
   [data-mega-agent="citations-empty"],
   [data-mega-chat="members-empty"],
   [data-mega-shell="rail-empty"],
@@ -437,6 +438,14 @@
 :is([data-mega-agent="rail"], [data-mega-code="tree"]) { background: var(--mega-subtle); }
 [data-mega-code="content"] { background: var(--mega-bg); }
 [data-mega-settings="page"] > div { min-width: 0; }
+[data-mega-settings="ssh-keys"] header {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  justify-content: space-between;
+}
+[data-mega-settings="ssh-keys"] header h2 { margin-top: 0; }
 [data-mega-settings="card"] :is(input, select, textarea) { margin-top: 6px; }
 [data-mega-settings="card"] :is(input[type="checkbox"], input[type="radio"]) { margin: 0; }
 [data-mega-settings="card"] label { font-size: var(--mega-density-font-size); }

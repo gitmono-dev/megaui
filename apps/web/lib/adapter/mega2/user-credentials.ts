@@ -17,6 +17,7 @@ import {
 } from "./user-mappers";
 import {
   deleteCommonResultVoid,
+  deleteCommonResultWithBody,
   getCommonResultJson,
   postCommonResultJson,
   postCommonResultVoid,
@@ -25,6 +26,23 @@ import {
 export interface AddSshKeyInput {
   title: string;
   publicKey: string;
+}
+
+const gpgWire = z.object({ key_id: z.string(), fingerprint: z.string(), created_at: z.string(), expires_at: z.string().nullable() });
+
+export async function listGpgKeys(headers?: HeadersInit) {
+  const keys = await getCommonResultJson("/api/v1/gpg/list", z.array(gpgWire), requestOptions(headers));
+  return keys.map(key => ({ id: key.key_id, fingerprint: key.fingerprint, createdAt: key.created_at, expiresAt: key.expires_at }));
+}
+
+export async function addGpgKey(publicKey: string, headers?: HeadersInit) {
+  await postCommonResultVoid("/api/v1/gpg/add", { gpg_content: publicKey }, requestOptions(headers));
+  return { added: true };
+}
+
+export async function deleteGpgKey(id: string, headers?: HeadersInit) {
+  await deleteCommonResultWithBody("/api/v1/gpg/remove", { key_id: id }, requestOptions(headers));
+  return { deleted: true };
 }
 
 function requestOptions(headers?: HeadersInit) {
