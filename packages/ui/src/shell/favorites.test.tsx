@@ -80,7 +80,8 @@ describe("favorites pure functions (UI-05 AC4)", () => {
     const derive = (path: string) => deriveFavorite(path, base, NAV_LABELS)
     expect(derive("/en/workspace")).toEqual({ href: "/en/workspace", icon: "home", title: "Home" })
     expect(derive("/en/workspace/cls/1208")).toBeUndefined()
-    expect(derive("/en/workspace/cls/cl_42-testID")).toEqual({ href: "/en/workspace/cls/cl_42-testID", icon: "git-pull", title: "cl_42-testID" })
+    expect(derive("/en/workspace/cls/cl_42-testID")).toBeUndefined()
+    expect(derive("/en/workspace/cls/cl_42_testID")).toEqual({ href: "/en/workspace/cls/cl_42_testID", icon: "git-pull", title: "cl_42_testID" })
     expect(derive("/en/workspace/issues/482")).toEqual({ href: "/en/workspace/issues/482", icon: "bug", title: "#482" })
     expect(derive("/en/workspace/channels/git-internal")).toEqual({ href: "/en/workspace/channels/git-internal", icon: "hash", title: "#git-internal" })
     expect(derive("/en/workspace/dm/rafael")).toEqual({ href: "/en/workspace/dm/rafael", icon: "chat", title: "@rafael" })
@@ -119,7 +120,7 @@ describe("favorites storage boundaries (UI-05 AC4)", () => {
 
 describe("useFavorites persistence (UI-05 AC4: add/remove + persistence)", () => {
   function Probe({ cls }: { cls?: readonly Pick<CL, "number" | "publicId">[] }) {
-    const { favorites, remove, toggle } = useFavorites(cls)
+    const { favorites, remove, resolveCL, toggle } = useFavorites(cls, NAV_LABELS.cls)
     return (
       <div>
         <span data-testid="count">{favorites.length}</span>
@@ -136,6 +137,7 @@ describe("useFavorites persistence (UI-05 AC4: add/remove + persistence)", () =>
         <button data-testid="add-a" onClick={() => toggle(entry("/en/workspace/docs/d1"))} type="button">
           add
         </button>
+        <button onClick={() => resolveCL("cl_42-testID", "abc123XYZ_98")} type="button">Open old CL</button>
       </div>
     )
   }
@@ -149,19 +151,37 @@ describe("useFavorites persistence (UI-05 AC4: add/remove + persistence)", () =>
 
   it("migrates accessible CL bookmarks, preserving nested destinations and deduplicating aliases", () => {
     const oldHref = "/en/workspace/cls/42/files?range=1..2#diff"
-    const newHref = "/en/workspace/cls/cl_42-testID/files?range=1..2#diff"
+    const newHref = "/en/workspace/cls/cl_42_testID/files?range=1..2#diff"
     window.localStorage.setItem(MEGA_FAVORITES_STORAGE_KEY, serializeFavorites([
       { href: oldHref, title: "!42", icon: "git-pull" },
-      { href: newHref, title: "cl_42-testID", icon: "git-pull" },
+      { href: newHref, title: "cl_42_testID", icon: "git-pull" },
       entry("/en/workspace/cls/7"),
     ]))
     const { rerender } = render(<Probe />)
-    rerender(<Probe cls={[{ number: 42, publicId: "cl_42-testID" }]} />)
+    rerender(<Probe cls={[{ number: 42, publicId: "cl_42_testID" }]} />)
     expect(screen.getByTestId("count")).toHaveTextContent("2")
-    expect(screen.getByTestId(`title-${newHref}`)).toHaveTextContent("cl_42-testID")
+    expect(screen.getByTestId(`title-${newHref}`)).toHaveTextContent("cl_42_testID")
     expect(parseFavorites(window.localStorage.getItem(MEGA_FAVORITES_STORAGE_KEY))).toEqual([
-      { href: newHref, title: "cl_42-testID", icon: "git-pull" },
+      { href: newHref, title: "cl_42_testID", icon: "git-pull" },
       entry("/en/workspace/cls/7"),
+    ])
+    window.localStorage.clear()
+  })
+
+  it("updates favorites for a resolved legacy code across locales without losing custom titles", () => {
+    const oldHref = "/zh-CN/workspace/cls/cl_42-testID/files?range=1..2#diff"
+    const newHref = "/zh-CN/workspace/cls/abc123XYZ_98/files?range=1..2#diff"
+    window.localStorage.setItem(MEGA_FAVORITES_STORAGE_KEY, serializeFavorites([
+      { href: oldHref, title: "cl_42-testID", icon: "git-pull" },
+      { href: "/en/workspace/cls/cl_42-testID", title: "My review", icon: "git-pull" },
+      { href: newHref, title: "abc123XYZ_98", icon: "git-pull" },
+    ]))
+    render(<Probe />)
+    expect(screen.getByTestId(`title-${oldHref}`)).toHaveTextContent(NAV_LABELS.cls)
+    fireEvent.click(screen.getByText("Open old CL"))
+    expect(parseFavorites(window.localStorage.getItem(MEGA_FAVORITES_STORAGE_KEY))).toEqual([
+      { href: newHref, title: "abc123XYZ_98", icon: "git-pull" },
+      { href: "/en/workspace/cls/abc123XYZ_98", title: "My review", icon: "git-pull" },
     ])
     window.localStorage.clear()
   })

@@ -241,7 +241,8 @@ describe.skipIf(!adminDatabaseUrl)("links service (EG-03, throwaway PG)", () => 
       });
 
       const publicId = "DocIndex42_a";
-      await client.db.insert(megaClPublicIds).values({ number: 42, publicId });
+      const oldCode = "DocIndex42-a";
+      await client.db.insert(megaClPublicIds).values({ number: 42, publicId, legacyPublicId: oldCode });
 
       // Signed-in workspace users can see the seeded doc without a collaborator row.
       const ownerIndex = await getTitleIndex(client.db, acl, USERS.tianjing.id);
@@ -255,13 +256,14 @@ describe.skipIf(!adminDatabaseUrl)("links service (EG-03, throwaway PG)", () => 
       const body = JSON.stringify({ root: { children: [{
         type: "mega-block", blockId: "cl_ref_block", variant: "text", children: [
           { type: "text", text: "Some CL" },
-          { type: "mega-ref", ref: { kind: "cl", targetTitle: "Some CL", targetId: "42" } },
+          { type: "mega-ref", ref: { kind: "cl", targetTitle: "Some CL", targetId: oldCode } },
         ],
       }] } });
       const source = await docs.createDoc({ title: "Legacy CL reference", body }, USERS.tianjing.id);
       const canonicalBacklinks = await listBacklinks(client.db, links, blocks, acl, "cl", publicId, USERS.tianjing.id);
       expect(canonicalBacklinks.items).toContainEqual(expect.objectContaining({ sourceId: source.id }));
       expect(await listBacklinks(client.db, links, blocks, acl, "cl", "42", USERS.tianjing.id)).toEqual(canonicalBacklinks);
+      expect(await listBacklinks(client.db, links, blocks, acl, "cl", oldCode, USERS.tianjing.id)).toEqual(canonicalBacklinks);
       const unlinked = await listDocUnlinked(client.db, acl, body, source.id, USERS.tianjing.id);
       expect(unlinked.items.some(item => item.kind === "cl" && item.targetId === publicId)).toBe(false);
 

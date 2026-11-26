@@ -31,6 +31,7 @@ import { buildTitleIndex, isLegacyCLNumber, searchTitleIndex, type TitleIndexEnt
 import { parseRoamEmbed } from "@megaui/content";
 import { MegaBadRequestError, MegaConflictError, MegaNotFoundError, MegaTitleConflictError } from "../../errors";
 import type { AclService } from "../acl";
+import { matchesCLPublicId } from "../cls/public-id";
 import { listBlocksForDoc, type BlocksRepo } from "./blocks";
 import type { BacklinkItem, BacklinkTargetKind, ResolveOrCreateResult, UnlinkedItem } from "./types";
 
@@ -300,15 +301,25 @@ export async function deleteLinksForDoc(repo: LinksRepo, docId: string): Promise
 /** CLs with locally stored content, indexed by the same public IDs as the workspace list. */
 export function selectDocumentCLs(database: Database) {
   return database
-    .select({ id: megaCls.id, number: megaCls.number, publicId: megaClPublicIds.publicId, title: megaCls.title })
+    .select({
+      id: megaCls.id, number: megaCls.number, title: megaCls.title,
+      publicId: megaClPublicIds.publicId, legacyPublicId: megaClPublicIds.legacyPublicId,
+    })
     .from(megaCls)
     .innerJoin(megaClPublicIds, eq(megaClPublicIds.number, megaCls.number));
+}
+
+/** All addresses that may be stored in a document or its derived link index. */
+export function documentCLReferences(cl: { id: string; number: number; publicId: string; legacyPublicId: string | null }): string[] {
+  const refs = [cl.publicId, String(cl.number), cl.id];
+  if (cl.legacyPublicId) refs.push(cl.legacyPublicId);
+  return [...new Set(refs)];
 }
 
 async function findDocumentCL(database: Database, ref: string) {
   const [cl] = await selectDocumentCLs(database)
     .where(or(
-      eq(megaClPublicIds.publicId, ref),
+      matchesCLPublicId(ref),
       eq(megaCls.id, ref),
       isLegacyCLNumber(ref) ? eq(megaCls.number, Number(ref)) : undefined,
     ))
@@ -528,7 +539,7 @@ async function backlinkTargetIds(
     case "cl": {
       const cl = await findDocumentCL(database, id);
       if (!cl) throw new MegaNotFoundError("CL", id);
-      return [...new Set([cl.publicId, String(cl.number), cl.id])];
+      return documentCLReferences(cl);
     }
     default: {
       const _exhaustive: never = kind;
@@ -715,8 +726,7 @@ export async function listDocUnlinked(
   const { entries, clRows } = await readTitleIndex(database, acl, actorUserId);
   const clAliases = new Map<string, string>();
   for (const cl of clRows) {
-    clAliases.set(cl.id, cl.publicId);
-    clAliases.set(String(cl.number), cl.publicId);
+    for (const ref of documentCLReferences(cl)) clAliases.set(ref, cl.publicId);
   }
 
   const linkedTargetIds = new Set<string>();

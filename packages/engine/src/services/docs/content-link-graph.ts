@@ -26,7 +26,7 @@ import {
 } from "@megaui/database";
 import type { AclService } from "../acl";
 import { extractEmbedsFromEditorState } from "./embed";
-import { decodeBlockTargetId, selectDocumentCLs } from "./links";
+import { decodeBlockTargetId, documentCLReferences, selectDocumentCLs } from "./links";
 
 export type ContentGraphNodeKind = "doc" | "issue" | "cl";
 export type ContentGraphEdgeKind = "wikilink" | "embed";
@@ -309,10 +309,7 @@ export async function getContentLinkGraph(
 
   const clsByRef: EntityCatalog["clsByRef"] = new Map();
   for (const cl of clRows) {
-    // Existing document bodies may reference the local row ID or the old CL number.
-    clsByRef.set(cl.id, cl);
-    clsByRef.set(String(cl.number), cl);
-    clsByRef.set(cl.publicId, cl);
+    for (const ref of documentCLReferences(cl)) clsByRef.set(ref, cl);
   }
 
   const catalog: EntityCatalog = {

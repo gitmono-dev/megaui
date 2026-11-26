@@ -1,14 +1,17 @@
 // megaui:libs/react-shared/components/mega/shell/favorites.tsx@0ff3a9d
 "use client"
 
-import { isBlockId, isLegacyCLNumber, type CL } from "@megaui/core"
-import { useCallback, useEffect, useRef, useState } from "react"
+import { isCLPublicId, isCLReference, isLegacyCLNumber, type CL } from "@megaui/core"
+import { createContext, useCallback, useEffect, useRef, useState } from "react"
 
 import { SHELL_ICON_NAMES, type ShellIconName } from "./icons"
 import { MEGA_NAV_ITEMS, type MegaNavId } from "./nav-config"
 
 export const MEGA_FAVORITES_STORAGE_KEY = "mega-favorites"
 export const MEGA_FAVORITES_LIMIT = 20
+export const CLFavoriteRedirectContext = createContext<((ref: string, publicId: string) => void) | null>(null)
+
+const CL_FAVORITE_PATH = /^(\/[^/]+\/workspace\/cls\/)([^/?#]+)(?=\/|[?#]|$)/
 
 export interface FavoriteEntry {
   href: string
@@ -79,7 +82,7 @@ export function deriveFavorite(
   if (second !== undefined) {
     switch (first) {
       case "cls":
-        return isBlockId(second) ? { href, icon: "git-pull", title: second } : undefined
+        return isCLPublicId(second) ? { href, icon: "git-pull", title: second } : undefined
       case "issues":
         return { href, icon: "bug", title: `#${second}` }
       case "channels":
@@ -123,14 +126,20 @@ export function writeFavorites(
 }
 
 /** Z1-01: localStorage-persisted favorites with per-entry degradation. */
-export function useFavorites(cls?: readonly Pick<CL, "number" | "publicId">[]): {
+export function useFavorites(cls?: readonly Pick<CL, "number" | "publicId">[], clLabel?: string): {
   favorites: readonly FavoriteEntry[]
+  resolveCL(ref: string, publicId: string): void
   remove(href: string): void
   toggle(entry: FavoriteEntry): void
 } {
   // Starts empty so the server markup and the first client render agree; the
   // stored list arrives on mount.
   const [favorites, setFavorites] = useState<readonly FavoriteEntry[]>([])
+  const [aliases, setAliases] = useState<ReadonlyMap<string, string>>(() => new Map())
+  const resolveCL = useCallback((ref: string, publicId: string) => {
+    if (!isCLReference(ref) || isCLPublicId(ref) || !isCLPublicId(publicId)) return
+    setAliases((previous) => previous.get(ref) === publicId ? previous : new Map(previous).set(ref, publicId))
+  }, [])
   // The in-memory list is the source of truth for mutations, so a rejected
   // write (private mode) never silently discards what the user just starred.
   const entriesRef = useRef<readonly FavoriteEntry[]>([])
@@ -163,19 +172,21 @@ export function useFavorites(cls?: readonly Pick<CL, "number" | "publicId">[]): 
   }, [adopt])
 
   useEffect(() => {
-    if (!cls?.length) return
+    if (!cls?.length && !aliases.size) return
     const entries = entriesRef.current
     const next = entries.map((entry) => {
-      const match = /^(\/[^/]+\/workspace\/cls\/)([1-9]\d*)(?=\/|[?#]|$)/.exec(entry.href)
-      if (!match || !isLegacyCLNumber(match[2]!)) return entry
-      const cl = cls.find((row) => row.number === Number(match[2]))
-      if (!cl || !isBlockId(cl.publicId)) return entry
-      return { ...entry, href: match[1] + cl.publicId + entry.href.slice(match[0].length), title: cl.publicId }
+      const match = CL_FAVORITE_PATH.exec(entry.href)
+      if (!match) return entry
+      const ref = match[2]!
+      const publicId = aliases.get(ref) ?? (isLegacyCLNumber(ref) ? cls?.find((row) => row.number === Number(ref))?.publicId : undefined)
+      if (!isCLPublicId(publicId)) return entry
+      const title = entry.title === ref || entry.title === `!${ref}` ? publicId : entry.title
+      return { ...entry, href: match[1] + publicId + entry.href.slice(match[0].length), title }
     })
     if (next.some((entry, index) => entry !== entries[index])) {
       persist(next.filter((entry, index) => next.findIndex((other) => other.href === entry.href) === index))
     }
-  }, [cls, favorites, persist])
+  }, [aliases, cls, favorites, persist])
 
   const toggle = useCallback((entry: FavoriteEntry) => {
     persist(toggleFavorite(entriesRef.current, entry))
@@ -185,5 +196,12 @@ export function useFavorites(cls?: readonly Pick<CL, "number" | "publicId">[]): 
     persist(entriesRef.current.filter((entry) => entry.href !== href))
   }, [persist])
 
-  return { favorites, remove, toggle }
+  // Keep an unopened old bookmark usable until the server verifies its destination.
+  const visibleFavorites = clLabel ? favorites.map((entry) => {
+    const ref = CL_FAVORITE_PATH.exec(entry.href)?.[2]
+    return ref && isCLReference(ref) && !isCLPublicId(ref) && (entry.title === ref || entry.title === `!${ref}`)
+      ? { ...entry, title: clLabel }
+      : entry
+  }) : favorites
+  return { favorites: visibleFavorites, remove, resolveCL, toggle }
 }

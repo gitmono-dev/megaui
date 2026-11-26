@@ -15,6 +15,7 @@ import type { Channel, CL } from "@megaui/core";
 import { isOpenCLState } from "@megaui/core";
 import { megaGet, megaQueryKeys, MegaApiError } from "@megaui/ui/query";
 import {
+  CLFavoriteRedirectContext,
   deriveFavorite,
   getInitials,
   MEGA_COMMAND_OPEN_EVENT,
@@ -225,7 +226,7 @@ export function WorkspaceShellClient({ children }: { children: ReactNode }) {
     queryFn: () => megaGet<CL[]>("cls"),
     enabled: railQueriesEnabled,
   });
-  const { favorites, toggle, remove } = useFavorites(clsQuery.data);
+  const { favorites, resolveCL, toggle, remove } = useFavorites(clsQuery.data, t.workspace.nav.items.cls);
   const channelsQuery = useQuery({
     queryKey: megaQueryKeys.channels(),
     queryFn: () => megaGet<Channel[]>("channels"),
@@ -383,7 +384,7 @@ export function WorkspaceShellClient({ children }: { children: ReactNode }) {
       useSearchResults={useWorkspaceSearchResults}
       workspaceBase={workspaceBase}
     >
-      {children}
+      <CLFavoriteRedirectContext.Provider value={resolveCL}>{children}</CLFavoriteRedirectContext.Provider>
     </UiWorkspaceShellClient>
   );
 }

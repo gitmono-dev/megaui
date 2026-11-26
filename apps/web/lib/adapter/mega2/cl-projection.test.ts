@@ -1,6 +1,6 @@
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import { isBlockId } from "@megaui/core";
+import { isCLPublicId } from "@megaui/core";
 import { megaClLinks, megaClPublicIds, megaCls, user, type Database } from "@megaui/database";
 import { MegaBadRequestError, MegaInternalError } from "@megaui/engine";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -25,6 +25,7 @@ interface FakeMappingStore {
   byNumber: Map<number, string>;
   legacyLinks: Map<number, string>;
   publicIds: Map<number, string>;
+  legacyPublicIds: Map<number, string>;
   localMegaClsMaxNumber: number;
   advisoryLocks: number;
   updateCalls: number;
@@ -62,6 +63,7 @@ function createFakeMappingDb(
     byNumber: new Map(),
     legacyLinks: new Map(),
     publicIds: new Map(),
+    legacyPublicIds: new Map(),
     localMegaClsMaxNumber,
     advisoryLocks: 0,
     updateCalls: 0,
@@ -113,7 +115,11 @@ function createFakeMappingDb(
                     return Promise.resolve(publicId ? [{ publicId }] : []);
                   }
                   if (table === megaClPublicIds && "liveLink" in fields) {
-                    const entry = [...store.publicIds].find(([, publicId]) => publicId === bound);
+                    const chunks = (expr as { queryChunks: unknown[] }).queryChunks;
+                    const codes = chunks.includes(megaClPublicIds.legacyPublicId)
+                      ? store.legacyPublicIds
+                      : store.publicIds;
+                    const entry = [...codes].find(([, publicId]) => publicId === bound);
                     return Promise.resolve(entry ? [{
                       liveLink: store.byNumber.get(entry[0]),
                       legacyLink: store.legacyLinks.get(entry[0]),
@@ -266,8 +272,8 @@ describe("mega2 live non-mutating CL projection (CLB-22)", () => {
     expect(first.number).toBe(13);
     expect(repeated).toEqual(first);
     expect(second.number).toBe(14);
-    expect(isBlockId(first.publicId)).toBe(true);
-    expect(isBlockId(second.publicId)).toBe(true);
+    expect(isCLPublicId(first.publicId)).toBe(true);
+    expect(isCLPublicId(second.publicId)).toBe(true);
     expect(second.publicId).not.toBe(first.publicId);
     expect(store.advisoryLocks).toBe(2);
     expect(store.megaClLinksInsertCalls).toBe(2);
@@ -284,7 +290,7 @@ describe("mega2 live non-mutating CL projection (CLB-22)", () => {
 
     const identity = await ensureMegaClIdentity(store.db, "legacy-link");
     expect(identity.number).toBe(4);
-    expect(isBlockId(identity.publicId)).toBe(true);
+    expect(isCLPublicId(identity.publicId)).toBe(true);
     expect(await ensureMegaClIdentity(store.db, "legacy-link")).toEqual(identity);
     expect(store.megaClLinksInsertCalls).toBe(0);
   });
@@ -413,6 +419,7 @@ describe("mega2 live non-mutating CL projection (CLB-22)", () => {
     store.legacyLinks.set(7, "cl-live");
     store.legacyLinks.set(4, "cl-live");
     store.publicIds.set(4, "ClPublic_001");
+    store.legacyPublicIds.set(4, "ClPublic-001");
     store.publicIds.set(7, "ClPublic_002");
     let currentStatus: "Open" | "Closed" | "Merged" = "Open";
     const comments: Array<{
@@ -568,9 +575,11 @@ describe("mega2 live non-mutating CL projection (CLB-22)", () => {
     expect(allList[1]?.link).toBe("cl-done");
     expect(allList[1]?.state).toBe("merged");
 
-    for (const query of ["ClPublic_001", "!ClPublic_001"]) {
+    for (const query of ["ClPublic_001", "!ClPublic_001", "ClPublic-001", "!ClPublic-001"]) {
       const result = await listLiveMega2Cls(store.db, { text: query }, { env: env() });
-      expect(result.map((cl) => cl.link)).toEqual(["cl-live"]);
+      expect(result.map(({ link, publicId }) => ({ link, publicId }))).toEqual([
+        { link: "cl-live", publicId: "ClPublic_001" },
+      ]);
     }
     expect(await listLiveMega2Cls(store.db, { text: "!clpublic_001" }, { env: env() })).toEqual([]);
 
@@ -1050,7 +1059,9 @@ describe("mega2 live non-mutating CL projection (CLB-22)", () => {
     expect(filteredAccessible.map((c) => c.link)).toEqual(["cl-allowed"]);
     expect(store.byLink.has("cl-secret")).toBe(false);
     const secret = await ensureMegaClIdentity(store.db, "cl-secret");
+    store.legacyPublicIds.set(secret.number, "ClSecret-001");
     expect(await listLiveMega2Cls(store.db, { text: secret.publicId }, { env: env() })).toEqual([]);
+    expect(await listLiveMega2Cls(store.db, { text: "!ClSecret-001" }, { env: env() })).toEqual([]);
 
     // Draft -> ready fails closed instead of silently calling reopen
     const { number: draftNumber } = await ensureMegaClIdentity(store.db, "cl-draft");

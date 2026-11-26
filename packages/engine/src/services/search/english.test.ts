@@ -343,7 +343,13 @@ describe("searchTextScore (title group, ADR-FS-01 §③ — still used, not tsve
     ];
     const ranked = rankByTitleScore("auth", items);
     expect(ranked.map((hit) => hit.item.id)).toEqual(["2", "5", "3", "1"]);
-    const cl = { id: "cl-1", title: "unrelated", publicId: "cl_42-testID" };
+    const cl = { id: "cl-1", title: "unrelated", publicId: "cl_42_testID" };
     expect(rankByTitleScore(cl.publicId, [...items, cl])).toEqual([{ item: cl, score: SEARCH_TITLE_SCORE.EXACT }]);
+    const legacy = "cl_42-testID";
+    const titleHit = { id: "cl-2", title: `${legacy} details` };
+    expect(rankByTitleScore(legacy, [titleHit, cl], cl.publicId)).toEqual([
+      { item: cl, score: SEARCH_TITLE_SCORE.EXACT },
+      { item: titleHit, score: SEARCH_TITLE_SCORE.PREFIX },
+    ]);
   });
 });

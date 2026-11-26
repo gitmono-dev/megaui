@@ -5,7 +5,7 @@ import { e2eBaseURL } from "./helpers/base-url";
 
 const SAMPLE_CL = {
   id: "cl_1",
-  publicId: "aB19_pX-7ZrQ",
+  publicId: "aB19_pX_7ZrQ",
   number: 1,
   title: "Wire WA-09 conversation",
   description: "Exercise list + detail.",

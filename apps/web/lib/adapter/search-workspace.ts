@@ -315,10 +315,11 @@ async function searchWorkspaceTitles(
   const { issues } = getIssuesDomain();
   const { cls } = getClsDomain();
 
-  const [docRows, issueRows, clRows] = await Promise.all([
+  const [docRows, issueRows, clRows, exactCLCode] = await Promise.all([
     docsDomain.docs.listDocs(actorUserId),
     issues.listIssues({}, actorUserId),
     cls.listCLs({}, actorUserId),
+    cls.resolveSearchPublicId(query),
   ]);
 
   return {
@@ -330,7 +331,7 @@ async function searchWorkspaceTitles(
         title: item.title,
         state: item.state,
       })),
-    cls: rankByTitleScore(query, clRows)
+    cls: rankByTitleScore(query, clRows, exactCLCode)
       .slice(0, limit)
       .map(({ item }) => ({
         id: item.id,

@@ -4,8 +4,9 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams, usePathname, useRouter } from "next/navigation";
 import { createContext, useContext, useEffect } from "react";
 
-import { isBlockId, isCLReference, type CL } from "@megaui/core";
+import { isCLPublicId, isCLReference, type CL } from "@megaui/core";
 import { MegaApiError, megaGet, megaQueryKeys } from "@megaui/ui/query";
+import { CLFavoriteRedirectContext } from "@megaui/ui/shell";
 
 const CLContext = createContext<CL | null>(null);
 export const CLRouteProvider = CLContext.Provider;
@@ -20,6 +21,7 @@ export function useCLDetailRoute() {
   const params = useParams<{ lang: string; n: string }>();
   const pathname = usePathname();
   const router = useRouter();
+  const resolveFavorite = useContext(CLFavoriteRedirectContext);
   const queryClient = useQueryClient();
   const routeId = params?.n ?? "";
   const validRoute = isCLReference(routeId);
@@ -45,13 +47,14 @@ export function useCLDetailRoute() {
   const baseHref = `${prefix}${cl?.publicId ?? routeId}`;
 
   useEffect(() => {
-    if (!cl || !isBlockId(cl.publicId) || routeId === cl.publicId || !pathname) return;
+    if (!cl || !isCLPublicId(cl.publicId) || routeId === cl.publicId || !pathname) return;
     if (pathname !== routeBase && !pathname.startsWith(routeBase + "/")) return;
     const { pathname: currentPath, search, hash } = window.location;
     if (currentPath !== pathname) return;
+    resolveFavorite?.(routeId, cl.publicId);
     queryClient.setQueryData(keyForView(cl.publicId), cl);
     router.replace(baseHref + pathname.slice(routeBase.length) + search + hash, { scroll: false });
-  }, [baseHref, cl, keyForView, pathname, queryClient, routeBase, routeId, router]);
+  }, [baseHref, cl, keyForView, pathname, queryClient, resolveFavorite, routeBase, routeId, router]);
 
   return { clQuery, routeId, validRoute, baseHref, detailKey };
 }

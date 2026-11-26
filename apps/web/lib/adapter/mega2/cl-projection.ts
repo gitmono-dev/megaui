@@ -28,6 +28,7 @@ import {
   fetchMega2ClFilesList,
   fetchMega2ClList,
   fetchMega2ClMergeBox,
+  matchesCLPublicId,
   mergeMega2Cl,
   reopenMega2Cl,
   type ClCommit,
@@ -713,7 +714,7 @@ export async function listLiveMega2Cls(
       .from(megaClPublicIds)
       .leftJoin(megaClLinks, eq(megaClPublicIds.number, megaClLinks.number))
       .leftJoin(megaCls, eq(megaClPublicIds.number, megaCls.number))
-      .where(eq(megaClPublicIds.publicId, publicId))
+      .where(matchesCLPublicId(publicId))
       .limit(1);
     matchingLink = mapping?.liveLink ?? mapping?.legacyLink ?? undefined;
   }

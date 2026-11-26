@@ -99,8 +99,9 @@ describe.skipIf(!adminDatabaseUrl)("getContentLinkGraph (EG-03, throwaway PG)", 
         merge: megaClMergeStates.NEEDS_REVIEW,
       });
 
-      const publicId = "GraphTX-02_a";
-      await client.db.insert(megaClPublicIds).values({ number: 202, publicId });
+      const publicId = "GraphTX_02_a";
+      const oldCode = "GraphTX-02_a";
+      await client.db.insert(megaClPublicIds).values({ number: 202, publicId, legacyPublicId: oldCode });
       const wikilinker = await docs.createDoc(
         {
           title: "Wikilinker",
@@ -114,8 +115,7 @@ describe.skipIf(!adminDatabaseUrl)("getContentLinkGraph (EG-03, throwaway PG)", 
                   children: [
                     { type: "mega-ref", ref: { kind: "doc", targetTitle: SAMPLE_DOC.title, targetId: SAMPLE_DOC.id } },
                     { type: "mega-ref", ref: { kind: "issue", targetTitle: "Graph issue", targetId: "101" } },
-                    { type: "mega-ref", ref: { kind: "cl", targetTitle: "Graph CL", targetId: "202" } },
-                    { type: "mega-ref", ref: { kind: "cl", targetTitle: "Graph CL", targetId: publicId } },
+                    { type: "mega-ref", ref: { kind: "cl", targetTitle: "Graph CL", targetId: oldCode } },
                   ],
                 },
               ],
@@ -135,7 +135,10 @@ describe.skipIf(!adminDatabaseUrl)("getContentLinkGraph (EG-03, throwaway PG)", 
                   type: "mega-block",
                   blockId: "blk_embed___",
                   variant: "text",
-                  children: [{ type: "mega-embed", embed: { targetDocId: SAMPLE_DOC.id } }],
+                  children: [
+                    { type: "mega-embed", embed: { targetDocId: SAMPLE_DOC.id } },
+                    { type: "mega-ref", ref: { kind: "cl", targetTitle: "Graph CL", targetId: "202" } },
+                  ],
                 },
               ],
             },
@@ -157,6 +160,9 @@ describe.skipIf(!adminDatabaseUrl)("getContentLinkGraph (EG-03, throwaway PG)", 
       expect(graph.edges.filter(edge =>
         edge.sourceNodeId === `doc:${wikilinker.id}` && edge.targetNodeId === `cl:${publicId}`
       )).toHaveLength(1);
+      expect(graph.edges).toContainEqual(expect.objectContaining({
+        sourceNodeId: `doc:${embedder.id}`, targetNodeId: `cl:${publicId}`,
+      }));
 
       expect(graph.edges).toContainEqual(
         expect.objectContaining({

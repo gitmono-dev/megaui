@@ -32,7 +32,7 @@ function escapeRegExp(value: string): string {
  */
 export function searchTextScore(query: string, text: string): SearchTitleScore | null {
   const needle = query.trim().toLowerCase();
-  if (!needle) return null;
+  if (!needle || !text) return null;
   const haystack = text.toLowerCase();
 
   if (haystack === needle) return SEARCH_TITLE_SCORE.EXACT;
@@ -62,11 +62,14 @@ export interface TitleSearchHit<T extends TitleSearchCandidate = TitleSearchCand
 export function rankByTitleScore<T extends TitleSearchCandidate>(
   query: string,
   items: readonly T[],
+  exactPublicId?: string,
 ): TitleSearchHit<T>[] {
   const scored: Array<{ hit: TitleSearchHit<T>; index: number }> = [];
   items.forEach((item, index) => {
     const titleScore = searchTextScore(query, item.title);
-    const refScore = item.publicId ? searchTextScore(query, item.publicId) : null;
+    const refScore = exactPublicId && exactPublicId === item.publicId
+      ? SEARCH_TITLE_SCORE.EXACT
+      : searchTextScore(query, item.publicId ?? "");
     const score = titleScore === null || (refScore !== null && refScore < titleScore) ? refScore : titleScore;
     if (score !== null) scored.push({ hit: { item, score }, index });
   });

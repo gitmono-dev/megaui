@@ -14,6 +14,7 @@ End-to-end coverage of `/[lang]/workspace/cls/[publicId]/{files,revisions,checks
 | S-01 | Files list + patch | AC-1 |
 | S-02 | Files empty | AC-1 |
 | S-03 | Numeric deep links retain their tab, comparison query and fragment after canonicalization and refresh. Enter opens the revisions tab by public ID | AC-1 |
+| S-03b | A bookmarked public ID containing a hyphen opens the same file range and fragment at the current public ID | AC-1 |
 | S-04 | Revision cards, commits and a comparison link with the same public ID | AC-1 |
 | S-04b | Revisions empty | AC-1 |
 | S-05 | Checks passing / empty / failing | AC-1, AC-3 |
