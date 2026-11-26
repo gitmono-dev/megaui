@@ -80,6 +80,13 @@ function expectedBlocker(ci: Exclude<CIStatus, "passing">, labels: MergeBoxLabel
 describe("mergeVisual exhaustive CI x merge-state matrix (CLB-34)", () => {
   const labels = en.workspace.clDetail.conversation.mergeBox;
 
+  it("offers merge without CI only when the remaining requirements are met", () => {
+    const cl = makeCl({ merge: "queue-ready", ci: "skipped", ciRequired: false });
+    expect(mergeVisual(cl, labels).action).toBe("merge");
+    expect(mergeVisual({ ...cl, merge: "needs-review" }, labels).action).toBeUndefined();
+    expect(mergeVisual({ ...cl, ciRequired: true }, labels).ciBlocked).toBe(true);
+  });
+
   it("covers all 25 open CL combinations (5 CI statuses x 5 merge states)", () => {
     for (const merge of ALL_MERGE_STATES) {
       for (const ci of ALL_CI_STATUSES) {

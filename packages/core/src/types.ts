@@ -276,6 +276,8 @@ export interface CL {
   deletions: number
   files: readonly CLFile[]
   revisions: readonly Revision[]
+  /** False when the upstream merge requirements explicitly omit CI. */
+  ciRequired?: boolean
   ci: CIStatus
   merge: CLMergeState
   mergeScore?: number

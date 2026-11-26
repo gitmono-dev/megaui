@@ -84,9 +84,7 @@ export default function CLDetailLayout({ children }: { children: ReactNode }) {
   const isLocalAuthor = Boolean(session?.user?.id && session.user.id === cl.author.id);
   const canTriggerMerge = Boolean(session?.user?.id && (isLocalAuthor || isMega2Backed));
   const canRebase = isLocalAuthor && !isMega2Backed && cl.state === "conflicts";
-  const mergeTarget: CL["state"] | undefined = cl.ci !== "passing"
-    ? undefined
-    : cl.state === "ready" && cl.merge === "queue-ready"
+  const mergeTarget: CL["state"] | undefined = cl.state === "ready" && cl.merge === "queue-ready"
       ? isMega2Backed ? "merged" : "queued"
       : cl.state === "queued" ? "merged" : undefined;
 
@@ -177,10 +175,10 @@ export default function CLDetailLayout({ children }: { children: ReactNode }) {
                   <h2><Folder size={16} aria-hidden="true" />{repoPath ? detail.chrome.repository : side.package}</h2>
                   <p className={styles.path}>{repoPath || cl.packageId}</p>
                 </section>
-                <section>
+                {cl.ciRequired !== false && <section>
                   <h2><ClipboardCheck size={16} aria-hidden="true" />{side.checks}</h2>
                   <Link data-ci={cl.ci} data-mega-cls="detail-ci" href={checksHref}>{detail.revisions.card.ci.replace("{status}", ciLabel)}</Link>
-                </section>
+                </section>}
                 {cl.linkedIssues.length > 0 && (
                   <section>
                     <h2>{side.linkedIssues}</h2>

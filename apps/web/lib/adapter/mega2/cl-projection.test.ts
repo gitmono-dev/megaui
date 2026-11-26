@@ -12,9 +12,16 @@ import {
   getLiveMega2ClDetail,
   isMega2ClBackendEnabled,
   listLiveMega2Cls,
+  projectClCi,
   resolveMegaClLinkByNumber,
   transitionLiveMega2Cl,
 } from "./cl-projection";
+
+it("distinguishes a CI-free requirements list from missing merge data", () => {
+  expect(projectClCi("Open", { merge_requirements: { conditions: [], state: "MERGEABLE" } }))
+    .toEqual({ ci: "skipped", ciRequired: false });
+  expect(projectClCi("Open")).toEqual({ ci: "queued" });
+});
 
 const SHA_A = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const SHA_B = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";

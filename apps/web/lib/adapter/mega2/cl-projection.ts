@@ -115,20 +115,21 @@ export function mapMega2StatusToCLState(
   return hasConflict ? "conflicts" : "ready";
 }
 
-export function deriveCiStatusFromMergeBox(
+export function projectClCi(
   status: Mega2MergeStatus,
   mergeBox?: Mega2MergeBoxRes,
-): CIStatus {
+): Pick<CL, "ci" | "ciRequired"> {
   const ciCondition: Mega2Condition | undefined =
     mergeBox?.merge_requirements?.conditions.find((c) => c.type === "CiStatus");
   if (ciCondition) {
-    if (ciCondition.raw_status === "RUNNING") return "running";
-    if (ciCondition.result === "PASSED") return "passing";
-    if (ciCondition.result === "FAILED") return "failing";
-    return "queued";
+    if (ciCondition.raw_status === "RUNNING") return { ci: "running" };
+    if (ciCondition.result === "PASSED") return { ci: "passing" };
+    if (ciCondition.result === "FAILED") return { ci: "failing" };
+    return { ci: "queued" };
   }
-  // Never report "passing" without explicit CiStatus=PASSED evidence.
-  return status === "Merged" || status === "Closed" ? "skipped" : "queued";
+  // With CI enabled Mega2 always supplies a CiStatus condition, even before the first callback.
+  if (mergeBox?.merge_requirements) return { ci: "skipped", ciRequired: false };
+  return { ci: status === "Merged" || status === "Closed" ? "skipped" : "queued" };
 }
 
 export function deriveMergeStateFromMergeBox(
@@ -246,7 +247,7 @@ export function projectMega2ClListItem(
     diffStatsAvailable: false,
     files: [],
     revisions: [],
-    ci: deriveCiStatusFromMergeBox(item.status, mergeBox),
+    ...projectClCi(item.status, mergeBox),
     merge: deriveMergeStateFromMergeBox(item.status, mergeBox),
     atomic: false,
     crossPackage: [],
@@ -281,7 +282,7 @@ export function projectMega2ClDetailDto(params: {
 }): ProjectedMega2CL {
   const { number, detail, mergeBox, filesList, diffItems, commits } = params;
   const state = mapMega2StatusToCLState(detail.status, mergeBox);
-  const ci = deriveCiStatusFromMergeBox(detail.status, mergeBox);
+  const ciStatus = projectClCi(detail.status, mergeBox);
   const merge = deriveMergeStateFromMergeBox(detail.status, mergeBox);
   const { files, additions, deletions } = buildProjectedFiles(
     filesList,
@@ -290,7 +291,7 @@ export function projectMega2ClDetailDto(params: {
   const revision = buildCurrentRevision(
     detail,
     commits,
-    ci,
+    ciStatus.ci,
     additions,
     deletions,
     files.length,
@@ -311,7 +312,7 @@ export function projectMega2ClDetailDto(params: {
     deletions,
     files,
     revisions: [revision],
-    ci,
+    ...ciStatus,
     merge,
     atomic: false,
     crossPackage: [],

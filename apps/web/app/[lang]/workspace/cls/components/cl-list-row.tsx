@@ -38,10 +38,10 @@ export function CLListRow({ cl, dateFormat }: { cl: CL; dateFormat: Intl.DateTim
           <span className={styles.repo}><Folder size={13} aria-hidden="true" />{cl.packageId}</span>
         </div>
       </div>
-      <span className={styles.ci} data-ci={cl.ci} data-mega-cls="row-ci">
+      {cl.ciRequired !== false && <span className={styles.ci} data-ci={cl.ci} data-mega-cls="row-ci">
         <CiIcon size={14} aria-hidden="true" />
         CI · {text.ci[cl.ci]}
-      </span>
+      </span>}
       {(cl.additions > 0 || cl.deletions > 0) && (
         <span className={styles.stats}>
           <span data-kind="add">+{cl.additions}</span>

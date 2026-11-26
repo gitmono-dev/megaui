@@ -95,9 +95,10 @@ export function mergeVisual(cl: MergeBoxCL, labels: MergeBoxLabels): MergeVisual
 
   const liveRequirements = cl.mergeBox !== undefined;
   const approvals = cl.reviewers.filter((reviewer) => reviewer.verdict === "approved").length;
+  const ciBlocked = cl.ciRequired !== false && cl.ci !== "passing";
   switch (cl.merge) {
     case "queue-ready":
-      if (cl.ci !== "passing") {
+      if (ciBlocked) {
         const blocker = ciBlockerInfo(cl.ci, labels);
         return {
           ciBlocked: true,
@@ -117,7 +118,7 @@ export function mergeVisual(cl: MergeBoxCL, labels: MergeBoxLabels): MergeVisual
         tone: "accent",
       };
     case "in-queue":
-      if (cl.ci !== "passing") {
+      if (ciBlocked) {
         const blocker = ciBlockerInfo(cl.ci, labels);
         return {
           ciBlocked: true,
@@ -135,8 +136,7 @@ export function mergeVisual(cl: MergeBoxCL, labels: MergeBoxLabels): MergeVisual
         tone: "accent",
       };
     case "rebase-needed": {
-      const ciPendingOrFailed = cl.ci !== "passing";
-      const blocker = ciPendingOrFailed ? ciBlockerInfo(cl.ci, labels) : undefined;
+      const blocker = ciBlocked ? ciBlockerInfo(cl.ci, labels) : undefined;
       return {
         action: "rebase",
         ...(blocker
@@ -152,8 +152,7 @@ export function mergeVisual(cl: MergeBoxCL, labels: MergeBoxLabels): MergeVisual
       };
     }
     default: {
-      const ciPendingOrFailed = cl.ci !== "passing";
-      const blocker = ciPendingOrFailed ? ciBlockerInfo(cl.ci, labels) : undefined;
+      const blocker = ciBlocked ? ciBlockerInfo(cl.ci, labels) : undefined;
       return {
         ...(blocker
           ? {
@@ -230,7 +229,7 @@ export function MergeBox({
               {labels.viewChecks}<ChevronRight aria-hidden="true" size={14} />
             </Link>
           )}
-          {showActions && visual.action === "merge" && cl.ci === "passing" && onMerge && (
+          {showActions && visual.action === "merge" && onMerge && (
             <button data-mega-cls="merge-action" disabled={pending} onClick={onMerge} type="button">
               {labels.mergeAction}
             </button>
