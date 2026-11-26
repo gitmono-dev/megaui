@@ -1622,22 +1622,29 @@ export const en = {
       }
     },
     clsList: {
-      title: "Change Lists",
-      replacesPr: "CLs replace Pull Requests",
+      title: "Change lists",
       newCl: "New CL",
       filterAriaLabel: "Filter change lists",
-      filterPlaceholder: "is:open reviewer:@me pkg:*",
+      filterPlaceholder: "Search change lists",
       loading: "Loading change lists",
-      error: "Change Lists are unavailable.",
+      error: "Unable to load change lists",
       retry: "Retry",
-      empty: "No change lists match this filter.",
+      empty: "No matching change lists",
 
+      scopes: {
+        all: "All",
+        open: "Open",
+        merged: "Merged",
+        closed: "Closed"
+      },
       pageSize: 20,
       pagination: {
         previous: "Previous",
         next: "Next",
         pageStatus: "Page {page} of {total}"
-      },      row: {
+      },
+      row: {
+        openedOn: "Opened {date}",
         atomic: "ATOMIC",
         pkgs: "{count} pkgs",
         byRev: "by {author} · rev {rev}",

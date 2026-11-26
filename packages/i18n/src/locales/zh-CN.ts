@@ -1622,16 +1622,21 @@ export const zhCN = {
       }
     },
     clsList: {
-      title: "变更",
-      replacesPr: "CL 取代 Pull Request",
+      title: "变更单",
       newCl: "新建 CL",
       filterAriaLabel: "过滤变更",
-      filterPlaceholder: "is:open reviewer:@me pkg:*",
+      filterPlaceholder: "搜索变更单",
       loading: "正在加载变更",
-      error: "变更暂时不可用。",
+      error: "暂时无法加载变更单",
       retry: "重试",
-      empty: "没有符合过滤条件的变更。",
+      empty: "没有符合条件的变更单",
 
+      scopes: {
+        all: "全部",
+        open: "开放中",
+        merged: "已合并",
+        closed: "已关闭"
+      },
       pageSize: 20,
       pagination: {
         previous: "上一页",
@@ -1639,6 +1644,7 @@ export const zhCN = {
         pageStatus: "第 {page} / {total} 页"
       },
       row: {
+        openedOn: "{date} 创建",
         atomic: "ATOMIC",
         pkgs: "{count} 个包",
         byRev: "由 {author} · rev {rev}",

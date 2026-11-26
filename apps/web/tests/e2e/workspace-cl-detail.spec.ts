@@ -89,7 +89,7 @@ async function stubRail(page: import("@playwright/test").Page): Promise<void> {
 
 async function stubClsApis(
   page: import("@playwright/test").Page,
-  options?: { emptyList?: boolean; failList?: boolean; failCommits?: boolean },
+  options?: { emptyList?: boolean; failList?: boolean; failCommits?: boolean; listRow?: typeof SAMPLE_CL },
 ): Promise<void> {
   await stubRail(page);
   await page.route("**/api/mega/cls**", async (route) => {
@@ -111,7 +111,7 @@ async function stubClsApis(
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ data: options?.emptyList ? [] : [SAMPLE_CL] }),
+        body: JSON.stringify({ data: options?.emptyList ? [] : [options?.listRow ?? SAMPLE_CL] }),
       });
       return;
     }
@@ -213,8 +213,73 @@ test.describe("WA-09 workspace CL list/detail", () => {
     await stubClsApis(page);
     await page.goto("/en/workspace/cls");
     await expect(page.locator('[data-mega-cls="page"]')).toBeVisible();
-    await expect(page.locator('[data-mega-cls="row"]').first()).toContainText("!42");
+    const row = page.locator('[data-mega-cls="row"]').first();
+    await expect(row).toContainText("!42");
+    await expect(row.locator('[data-mega-cls="row-ci"]')).toHaveAttribute("data-ci", "passing");
+    const title = row.getByRole("link", { name: /Wire WA-09 conversation/ });
+    await title.focus();
+    await title.press("Enter");
+    await expect(page.locator('[data-mega-cls="detail-title"]')).toContainText("!42");
     await context.close();
+  });
+
+  test("list preserves search text when filtering by state and sorting", async ({ page, context }) => {
+    await context.addCookies(mintSessionCookies().cookies);
+    await stubClsApis(page);
+    await page.goto("/en/workspace/cls");
+    const filter = page.locator('[data-mega-cls="filter"]');
+    await filter.fill("Libra");
+    await expect.poll(() => new URL(page.url()).searchParams.get("q")).toBe("Libra");
+    await expect(filter).toBeFocused();
+
+    const open = page.locator('[data-scope="open"]');
+    const openRequest = page.waitForRequest(request => {
+      const url = new URL(request.url());
+      return url.pathname === "/api/mega/cls" && url.searchParams.get("filter")?.includes('"ready"') === true;
+    });
+    await open.click();
+    const query = new URL((await openRequest).url()).searchParams.get("filter")!;
+    expect(JSON.parse(query)).toMatchObject({ text: "Libra", states: ["ready", "wip", "queued", "conflicts"] });
+    await expect(open).toHaveAttribute("aria-pressed", "true");
+    await expect(filter).toHaveValue(/is:open/);
+
+    await page.locator('[data-mega-cls="sort"]').selectOption("created-asc");
+    for (const scope of ["merged", "closed"]) {
+      const button = page.locator(`[data-scope="${scope}"]`);
+      await button.click();
+      await expect(button).toHaveAttribute("aria-pressed", "true");
+      await expect.poll(() => new URL(page.url()).searchParams.get("q")?.split(/\s+/).sort()).toEqual(
+        ["Libra", `is:${scope}`, "sort:created-asc"].sort(),
+      );
+    }
+    await page.reload();
+    await expect(page.locator('[data-scope="closed"]')).toHaveAttribute("aria-pressed", "true");
+    await page.locator('[data-scope="all"]').click();
+    await expect.poll(() => new URL(page.url()).searchParams.get("q")?.split(/\s+/).sort()).toEqual(
+      ["Libra", "sort:created-asc"].sort(),
+    );
+  });
+
+  test("narrow list wraps long metadata without placeholder diff totals", async ({ page, context }) => {
+    await context.addCookies(mintSessionCookies().cookies);
+    await page.setViewportSize({ width: 320, height: 720 });
+    await stubClsApis(page, {
+      listRow: {
+        ...SAMPLE_CL,
+        title: "Import Libra source " + "abcdef".repeat(14),
+        author: { ...SAMPLE_CL.author, displayName: "fs_" + "0123456789".repeat(10) },
+        additions: 0,
+        deletions: 0,
+        files: [],
+      },
+    });
+    await page.goto("/zh-CN/workspace/cls");
+    const row = page.locator('[data-mega-cls="row"]');
+    await expect(row.getByRole("link", { name: /Import Libra source/ })).toBeVisible();
+    await expect(row).not.toContainText("+0");
+    await expect(row).not.toContainText("−0");
+    const surface = page.locator('[data-mega-shell="workspace-content"]');
+    await expect.poll(() => surface.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
   });
 
   test("list empty state", async ({ browser }) => {

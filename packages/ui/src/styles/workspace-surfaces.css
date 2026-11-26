@@ -174,7 +174,7 @@
   margin-top: 16px;
 }
 
-:is([data-mega-issues="list"], [data-mega-cls="table"], [data-mega-tags="list"], [data-mega-code="root-table"]) {
+:is([data-mega-issues="list"], [data-mega-tags="list"], [data-mega-code="root-table"]) {
   background: var(--mega-bg);
   border: 1px solid var(--mega-border);
   border-radius: var(--mega-panel-radius);

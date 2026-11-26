@@ -24,7 +24,7 @@
 | `workspace-agent.spec.ts` | [workspace-agent.md](./catalog/workspace-agent.md) | WA-15 | stub | gated DEP-03 (LLM) |
 | `workspace-chat.spec.ts` | [workspace-chat.md](./catalog/workspace-chat.md) | WA-14 | stub | ran |
 | `workspace-chat-live.spec.ts` | [workspace-chat-live.md](./catalog/workspace-chat-live.md) | RT-09 | local collab + real BFF | ran (local `:3000` + spawned/killed collab; compose `:17001/:17002` preferred) |
-| `workspace-cl-detail.spec.ts` | [workspace-cl-detail.md](./catalog/workspace-cl-detail.md) | WA-09 | stub | ran |
+| `workspace-cl-detail.spec.ts` | [workspace-cl-detail.md](./catalog/workspace-cl-detail.md) | WA-09 list filters, responsive rows and conversation | stub | ran |
 | `workspace-cl-files.spec.ts` | [workspace-cl-files.md](./catalog/workspace-cl-files.md) | WA-10 | stub | catalog-ready |
 | `workspace-code.spec.ts` | [workspace-code.md](./catalog/workspace-code.md) | WA-08 | stub | ran (incl. S-05 live) |
 | `workspace-collab.spec.ts` | [workspace-collab.md](./catalog/workspace-collab.md) | CS-01 | local collab process | ran (`megaui-collab` `:17002`) |
