@@ -22,6 +22,13 @@ describe('getTranslation', () => {
   it('defaults to "en"', () => {
     expect(defaultLocale).toBe('en')
   })
+
+  it.each(locales)('omits trailing periods in %s change overview prompts', (locale) => {
+    const { description, inlineSection, mergeBox } = getTranslation(locale).workspace.clDetail.conversation
+    const prompts = [description.empty, inlineSection.empty, mergeBox.ciQueuedSubtitle,
+      mergeBox.ciRunningSubtitle, mergeBox.ciFailingSubtitle, mergeBox.ciSkippedSubtitle]
+    for (const prompt of prompts) expect(prompt).not.toMatch(/[.。]$/)
+  })
 })
 
 describe('isValidLocale', () => {
