@@ -12,12 +12,13 @@ import { MAX_PAGE_LIMIT } from "@megaui/engine";
 import {
   getAgentDomain,
   getChatDomain,
-  getClsDomain,
   getDocsDomain,
   getIssuesDomain,
   getNotificationsDomain,
   getReleasesDomain,
 } from "@/lib/engine";
+
+import { listWorkspaceCLs } from "./cl-list";
 
 export interface HomeKpis {
   reviewsRequested: number;
@@ -37,10 +38,12 @@ export interface HomeDashboard {
       state: CL["state"];
       author: User;
     }[];
+    recentCls: readonly Pick<CL, "publicId" | "title">[];
     assignedIssues: readonly { number: number; title: string; priority: string }[];
     activity: readonly {
       id: string;
       actorName: string;
+      author: Pick<User, "id" | "username" | "displayName" | "avatarInitials">;
       entityRef: string;
       kind: "updated";
       createdAt: string;
@@ -62,10 +65,9 @@ export interface HomeDashboard {
 
 const PAGE = { pagination: { limit: MAX_PAGE_LIMIT, offset: 0 } };
 
-export async function getHomeDashboard(actorUserId: string | null): Promise<HomeDashboard> {
+export async function getHomeDashboard(actorUserId: string | null, headers: Headers): Promise<HomeDashboard> {
   const actor = actorUserId?.trim() || "";
   const { issues } = getIssuesDomain();
-  const { cls } = getClsDomain();
   const docsDomain = getDocsDomain();
   const { chat } = getChatDomain();
   const { notifications } = getNotificationsDomain();
@@ -75,7 +77,7 @@ export async function getHomeDashboard(actorUserId: string | null): Promise<Home
   const [issuePage, clRows, docs, channels, notificationPage, releasePage, threadPage] =
     await Promise.all([
       issues.listIssues(PAGE, actor || null),
-      cls.listCLs({}, actor || null),
+      listWorkspaceCLs({}, actor, headers),
       docsDomain.docs.listDocs(actor || null),
       chat.listChannels(actor || null),
       actor
@@ -153,6 +155,7 @@ export async function getHomeDashboard(actorUserId: string | null): Promise<Home
         state: cl.state,
         author: cl.author,
       })),
+      recentCls: orderedCLs.slice(0, 3).map(({ publicId, title }) => ({ publicId, title })),
       assignedIssues: assignedIssues.slice(0, 3).map((issue) => ({
         number: issue.number,
         title: issue.title,
@@ -161,6 +164,10 @@ export async function getHomeDashboard(actorUserId: string | null): Promise<Home
       activity: orderedCLs.slice(0, 5).map((cl) => ({
         id: `cl_${cl.number}`,
         actorName: cl.author.displayName,
+        author: {
+          id: cl.author.id, username: cl.author.username,
+          displayName: cl.author.displayName, avatarInitials: cl.author.avatarInitials,
+        },
         entityRef: cl.publicId,
         kind: "updated" as const,
         createdAt: cl.updatedAt,

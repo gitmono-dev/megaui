@@ -74,6 +74,26 @@ test.describe("WA-07 workspace home / shell", () => {
     await context.close();
   });
 
+  test("recent CLs appear on home without counting them as personal reviews", async ({ page, context }) => {
+    await context.addCookies(mintSessionCookies().cookies);
+    const recent = { publicId: "aB195pXA7ZrQ", title: "Import project sources" };
+    await page.route("**/api/mega/home", async route => {
+      const response = await route.fetch();
+      const { data } = await response.json();
+      await route.fulfill({ response, json: { data: {
+        ...data,
+        kpis: { ...data.kpis, reviewsRequested: 0 },
+        cards: { ...data.cards, reviewRequests: [], recentCls: [recent] },
+      } } });
+    });
+    await page.goto("/zh-CN/workspace");
+    const card = page.locator('[data-card="review"]');
+    await expect(card.getByRole("heading")).toHaveText("最近变更单");
+    await expect(card.getByRole("link", { name: new RegExp(recent.title) }))
+      .toHaveAttribute("href", `/zh-CN/workspace/cls/${recent.publicId}`);
+    await expect(page.locator('[data-mega-home="kpi"]').filter({ hasText: "待我评审" })).toContainText("0");
+  });
+
   test("home error state shows alert and retry", async ({ browser }) => {
     const { cookies } = await mintSessionCookies();
     const context = await browser.newContext({ baseURL: e2eBaseURL() });

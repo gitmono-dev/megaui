@@ -23,13 +23,13 @@ import { z } from "zod";
 
 import { getClsDomain } from "@/lib/engine";
 import { resolveWebActor } from "@/lib/enterprise-session";
+import { listWorkspaceCLs } from "../cl-list";
 import { registerMegaRoute, type MegaDispatchContext } from "../dispatch";
 import {
   addLiveMega2ClComment,
   getLiveMega2ClDetail,
   isMega2ClBackendEnabled,
   listLiveMega2ClComments,
-  listLiveMega2Cls,
   resolveMegaClLinkByNumber,
   transitionLiveMega2Cl,
 } from "../mega2/cl-projection";
@@ -51,17 +51,14 @@ async function dispatchClsGet(context: MegaDispatchContext): Promise<unknown> {
 
   if (!actorUserId) throw new MegaUnauthorizedError("Authentication required");
 
-  const live = isMega2ClBackendEnabled();
-  const database = getDb();
   if (only(segments, ["cls"])) {
     const filter = filterSchema.parse(readJsonQuery(searchParams.get("filter"), {}));
-    return live
-      ? listLiveMega2Cls(database, filter, { headers, actorUserId })
-      : getClsDomain().cls.listCLs(filter, actorUserId);
+    return listWorkspaceCLs(filter, actorUserId, headers);
   }
 
+  const database = getDb();
   const number = await resolveCLNumber(database, segments[1] ?? "");
-  if (live) {
+  if (isMega2ClBackendEnabled()) {
     if (segments[0] === "cls" && segments[2] === "commits" && segments.length === 3) {
       const link = await resolveMegaClLinkByNumber(database, number);
       return fetchClCommits(link, { headers });

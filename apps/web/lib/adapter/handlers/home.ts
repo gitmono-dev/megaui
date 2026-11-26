@@ -25,7 +25,7 @@ registerMegaRoute({
   match: (method, segments) => method === "GET" && only(segments, ["home"]),
   handle: async (context: MegaDispatchContext) => {
     const actorUserId = await resolveActorUserId(context.headers);
-    return getHomeDashboard(actorUserId);
+    return getHomeDashboard(actorUserId, context.headers);
   },
 });
 

@@ -34,7 +34,9 @@
 
 | # | 路由 | 页面文件 | 核心组件 | 关键交互 | i18n 键域 |
 |---|---|---|---|---|---|
-| 1 | `/{lang}/workspace` | `megaui:apps/next-app/app/[lang]/workspace/page.tsx@0ff3a9d` | `HomeHero`（`megaui:apps/next-app/app/[lang]/workspace/components/hero.tsx@0ff3a9d`）、`KpiStrip`（`megaui:apps/next-app/app/[lang]/workspace/components/kpi-strip.tsx@0ff3a9d`）、`HomeCardGrid`（`megaui:apps/next-app/app/[lang]/workspace/components/home-cards/home-card-grid.tsx@0ff3a9d`）；数据型 `HomeDashboard` | 仪表盘交互：Hero → Agent / New Doc（`docs?new=1`）；八卡网格含 Review CLs→`/cls`、Assigned Issues→`/issues`、Activity→`/inbox`、Latest release→`/tags`、Agent sessions→`/agent`、Recent docs→`/docs`、Active channels→`/channels/[id]`；QuickActions：New CL / Report issue / Ask agent / Write doc / Draft release→`/tags`，**Search code 打开 ⌘K palette（不导航到 Code）** | `workspace.home` / `workspace.nav` |
+| 1 | `/{lang}/workspace` | `megaui:apps/next-app/app/[lang]/workspace/page.tsx@0ff3a9d` | `HomeHero`（`megaui:apps/next-app/app/[lang]/workspace/components/hero.tsx@0ff3a9d`）、`KpiStrip`（`megaui:apps/next-app/app/[lang]/workspace/components/kpi-strip.tsx@0ff3a9d`）、`HomeCardGrid`（`megaui:apps/next-app/app/[lang]/workspace/components/home-cards/home-card-grid.tsx@0ff3a9d`）；数据型 `HomeDashboard` | 仪表盘交互：Hero → Agent / New Doc（`docs?new=1`）；八卡网格含 待我评审或最近变更单→`/cls`、Assigned Issues→`/issues`、Activity→`/inbox`、Latest release→`/tags`、Agent sessions→`/agent`、Recent docs→`/docs`、Active channels→`/channels/[id]`；QuickActions：New CL / Report issue / Ask agent / Write doc / Draft release→`/tags`，**Search code 打开 ⌘K palette（不导航到 Code）** | `workspace.home` / `workspace.nav` |
+
+主页和变更列表共用当前登录用户可见的 CL 数据源。个人评审卡优先展示待我评审的变更单，没有评审请求时改为最近更新的三条变更单。「待我评审」只统计分配给当前用户且尚待处理的请求。
 
 ### Code（2）
 

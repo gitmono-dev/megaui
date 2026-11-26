@@ -396,7 +396,7 @@ export const zhCN = {
       error: "仪表盘暂时不可用。",
       retry: "重试",
       kpis: {
-        reviewsRequested: "待我 review",
+        reviewsRequested: "待我评审",
         mentions: "@我",
         myOpenIssues: "我的 open issue",
         mainCI: "CI · main",
@@ -412,9 +412,10 @@ export const zhCN = {
       },
       cards: {
         reviewCls: {
-          title: "待我 review 的 CL",
+          title: "待我评审的变更单",
+          recent: "最近变更单",
           action: "全部",
-          empty: "暂无待你 review 的变更。"
+          empty: "暂无变更单"
         },
         assignedIssues: {
           title: "指派给我的 Issue",

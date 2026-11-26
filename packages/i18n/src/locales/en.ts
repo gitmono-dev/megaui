@@ -413,8 +413,9 @@ export const en = {
       cards: {
         reviewCls: {
           title: "CLs for my review",
+          recent: "Recent changes",
           action: "All",
-          empty: "No Change Lists are waiting for your review."
+          empty: "No changes yet"
         },
         assignedIssues: {
           title: "Issues assigned to me",

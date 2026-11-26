@@ -114,6 +114,7 @@ export default function WorkspaceHomePage() {
       </div>
       <HomeCardGrid
         cards={homeQuery.data.cards}
+        viewer={session?.user}
         labels={home.cards}
         workspaceBase={workspaceBase}
       />

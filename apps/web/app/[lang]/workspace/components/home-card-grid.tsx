@@ -6,8 +6,10 @@ import { MEGA_RADIUS_TOKENS, MEGA_SPACING_TOKENS, MEGA_TOKENS } from "@megaui/ui
 
 import type { HomeDashboard } from "@/lib/adapter/home";
 
+import { presentCLAuthor, type CLViewer } from "../cls/[n]/cl-author";
+
 type CardLabels = {
-  reviewCls: { title: string; action: string; empty: string };
+  reviewCls: { title: string; recent: string; action: string; empty: string };
   assignedIssues: { title: string; action: string; empty: string };
   activity: { title: string; action: string; empty: string; updated: string };
   latestRelease: { title: string; action: string; latest: string; empty: string };
@@ -64,11 +66,15 @@ export function HomeCardGrid({
   cards,
   labels,
   workspaceBase,
+  viewer,
 }: {
   cards: HomeDashboard["cards"];
   labels: CardLabels;
   workspaceBase: string;
+  viewer?: CLViewer | null;
 }) {
+  const hasReviews = cards.reviewRequests.length > 0;
+  const cls = hasReviews ? cards.reviewRequests : cards.recentCls ?? [];
   return (
     <div
       data-mega-home="card-grid"
@@ -82,13 +88,13 @@ export function HomeCardGrid({
       <Card
         actionHref={`${workspaceBase}/cls`}
         actionLabel={labels.reviewCls.action}
-        empty={cards.reviewRequests.length === 0}
+        empty={cls.length === 0}
         testId="review"
-        title={labels.reviewCls.title}
+        title={hasReviews ? labels.reviewCls.title : labels.reviewCls.recent}
       >
-        {cards.reviewRequests.length === 0
+        {cls.length === 0
           ? labels.reviewCls.empty
-          : cards.reviewRequests.map((cl) => (
+          : cls.map((cl) => (
               <Link href={`${workspaceBase}/cls/${cl.publicId}`} key={cl.publicId} style={{ display: "block", marginBottom: MEGA_SPACING_TOKENS[6] }}>
                 {cl.publicId} {cl.title}
               </Link>
@@ -120,7 +126,7 @@ export function HomeCardGrid({
           ? labels.activity.empty
           : cards.activity.map((row) => (
               <p key={row.id} style={{ margin: `0 0 ${MEGA_SPACING_TOKENS[6]}` }}>
-                {labels.activity.updated.replace("{actor}", row.actorName).replace("{ref}", row.entityRef)}
+                {labels.activity.updated.replace("{actor}", row.author ? presentCLAuthor(row.author, viewer).displayName : row.actorName).replace("{ref}", row.entityRef)}
               </p>
             ))}
       </Card>
