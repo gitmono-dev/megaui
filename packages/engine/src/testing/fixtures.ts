@@ -54,7 +54,7 @@ export const CURRENT_USER = USERS.tianjing;
 const EMPTY_EDITOR_STATE =
   '{"root":{"children":[],"direction":null,"format":"","indent":0,"type":"root","version":1}}';
 
-const SAMPLE_CL_PUBLIC_ID = "Q7rE8kzpY_1A";
+const SAMPLE_CL_PUBLIC_ID = "Q7rE8kzpY01A";
 
 export const SAMPLE_DOC: Doc = {
   id: "doc_arch_overview",

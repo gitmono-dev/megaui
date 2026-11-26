@@ -124,6 +124,7 @@ describe.skipIf(!dockerAvailable)(
     it("backfills local and live CLs, preserves unaffected codes, and retains colliding old spellings", async () => {
       const migration = await readFile(join(resolveMigrationsFolder(), "0024_mega_cl_public_ids.sql"), "utf8");
       const removeHyphens = await readFile(join(resolveMigrationsFolder(), "0025_hyphen_free_cl_ids.sql"), "utf8");
+      const removeUnderscores = await readFile(join(resolveMigrationsFolder(), "0026_alphanumeric_cl_ids.sql"), "utf8");
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
@@ -152,19 +153,38 @@ describe.skipIf(!dockerAvailable)(
           { number: 3, public_id: "a__d012345_2", legacy_public_id: "a--d012345_2" },
         ]);
         expect(new Set(upgraded.rows.map(row => row.public_id)).size).toBe(3);
+        // Cover an already-compliant code with a first-generation alias, and
+        // an already-issued code that occupies another CL's preferred spelling.
+        await client.query("UPDATE mega_cl_public_ids SET public_id = 'HasOnlyA1234' WHERE number = 2");
+        await client.query("INSERT INTO mega_cl_public_ids (number, public_id) VALUES (4, 'Abcd01234501')");
+        await client.query(removeUnderscores);
+        const final = await client.query(
+          "SELECT number, public_id, legacy_public_id, underscore_public_id FROM mega_cl_public_ids ORDER BY number",
+        );
+        expect(final.rows).toEqual([
+          { number: 1, public_id: expect.stringMatching(/^[A-Za-z0-9]{12}$/), legacy_public_id: null, underscore_public_id: "Abcd012345_1" },
+          { number: 2, public_id: "HasOnlyA1234", legacy_public_id: "Abcd012345-1", underscore_public_id: null },
+          { number: 3, public_id: "a00d01234502", legacy_public_id: "a--d012345_2", underscore_public_id: "a__d012345_2" },
+          { number: 4, public_id: "Abcd01234501", legacy_public_id: null, underscore_public_id: null },
+        ]);
+        expect(new Set(final.rows.map(row => row.public_id)).size).toBe(4);
       } finally {
         await client.query("ROLLBACK");
         client.release();
       }
     });
 
-    it("enforces unique numbers, case-sensitive hyphen-free codes and distinct hyphenated aliases", async () => {
-      const insert = (number: number, code: string, legacy: string | null = null) =>
-        pool.query("INSERT INTO mega_cl_public_ids (number, public_id, legacy_public_id) VALUES ($1, $2, $3)", [number, code, legacy]);
-      await insert(1, "Abcd012345_1", "Abcd012345-1");
-      await insert(2, "abcd012345_1", "abcd012345-1");
+    it("enforces case-sensitive alphanumeric codes and disjoint historical aliases", async () => {
+      const insert = (number: number, code: string, legacy: string | null = null, underscore: string | null = null) =>
+        pool.query("INSERT INTO mega_cl_public_ids (number, public_id, legacy_public_id, underscore_public_id) VALUES ($1, $2, $3, $4)", [number, code, legacy, underscore]);
+      await insert(1, "Abcd01234501", "Abcd012345-1", "Abcd012345_1");
+      await insert(2, "abcd01234501", "abcd012345-1", "abcd012345_1");
       await expect(insert(1, "Different123")).rejects.toMatchObject({ code: "23505" });
-      await expect(insert(3, "Abcd012345_1")).rejects.toMatchObject({ code: "23505" });
+      await expect(insert(3, "Abcd01234501")).rejects.toMatchObject({ code: "23505" });
+      await expect(insert(3, "Abcd012345_1")).rejects.toMatchObject({ code: "23514" });
+      await expect(insert(3, "Different123", null, "Abcd012345_1")).rejects.toMatchObject({ code: "23505" });
+      await expect(insert(3, "Different123", null, "Abcd012345-1")).rejects.toMatchObject({ code: "23514" });
+      await expect(insert(3, "Different123", null, "Abcd01234501")).rejects.toMatchObject({ code: "23514" });
       await expect(insert(3, "Different123", "abcd012345-1")).rejects.toMatchObject({ code: "23505" });
       await expect(insert(3, "Different123", "abcd012345_1")).rejects.toMatchObject({ code: "23514" });
       await expect(insert(3, "Different123", "bad-")).rejects.toMatchObject({ code: "23514" });

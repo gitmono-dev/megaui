@@ -259,7 +259,7 @@ export interface InlineComment {
 
 export interface CL {
   id: string
-  /** Stable, URL-safe block-style code used in user-facing CL references. */
+  /** Stable twelve-character alphanumeric code used in user-facing CL references. */
   publicId: string
   number: number
   title: string

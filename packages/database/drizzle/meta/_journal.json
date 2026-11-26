@@ -183,6 +183,13 @@
       "when": 1795684085753,
       "tag": "0025_hyphen_free_cl_ids",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1795684692021,
+      "tag": "0026_alphanumeric_cl_ids",
+      "breakpoints": true
     }
   ]
 }

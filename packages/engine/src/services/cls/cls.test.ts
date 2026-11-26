@@ -155,14 +155,17 @@ describe.skipIf(!adminDatabaseUrl)("createClsService list/detail/comments/descri
       const number = 2_050;
       const codes = await Promise.all(Array.from({ length: 8 }, () => ensureCLPublicId(client.db, number)));
       expect(new Set(codes).size).toBe(1);
-      // The alias and canonical value deliberately differ beyond just punctuation.
+      // Both historical codes deliberately differ from the canonical value beyond punctuation.
       await client.db.insert(megaClPublicIds).values({
-        number: number + 1, publicId: "000000000001", legacyPublicId: "0123-56789AB",
+        number: number + 1, publicId: "000000000001",
+        legacyPublicId: "0123-567_9AB", underscorePublicId: "0123_567_9AB",
       });
       expect(await resolveCLNumber(client.db, "000000000001")).toBe(number + 1);
-      expect(await resolveCLNumber(client.db, "0123-56789AB")).toBe(number + 1);
+      expect(await resolveCLNumber(client.db, "0123-567_9AB")).toBe(number + 1);
+      expect(await resolveCLNumber(client.db, "0123_567_9AB")).toBe(number + 1);
       expect(await ensureCLPublicId(client.db, number + 1)).toBe("000000000001");
-      await expect(resolveCLNumber(client.db, "0123-56789Ab")).rejects.toBeInstanceOf(MegaNotFoundError);
+      await expect(resolveCLNumber(client.db, "0123-567_9Ab")).rejects.toBeInstanceOf(MegaNotFoundError);
+      await expect(resolveCLNumber(client.db, "0123_567_9Ab")).rejects.toBeInstanceOf(MegaNotFoundError);
       await expect(resolveCLNumber(client.db, "000000000002")).rejects.toBeInstanceOf(MegaNotFoundError);
       await expect(resolveCLNumber(client.db, "2147483648")).rejects.toBeInstanceOf(MegaBadRequestError);
       await expect(resolveCLNumber(client.db, "../1")).rejects.toBeInstanceOf(MegaBadRequestError);
@@ -210,13 +213,15 @@ describe.skipIf(!adminDatabaseUrl)("createClsService list/detail/comments/descri
     try {
       const cls = createClsService(client.db);
       const oldCode = "Old-Test2026";
+      const intermediateCode = "Old_Test2026";
       const migrated = await cls.createCL({ title: "Migrated CL", packageId: "migrated", branch: "m" }, USERS.eleanor.id);
       const byTitle = await cls.createCL({ title: `See ${oldCode}`, packageId: "literal", branch: "l" }, USERS.eleanor.id);
-      await client.db.update(megaClPublicIds).set({ legacyPublicId: oldCode })
+      await client.db.update(megaClPublicIds).set({ legacyPublicId: oldCode, underscorePublicId: intermediateCode })
         .where(eq(megaClPublicIds.number, migrated.number));
 
       const hits = await cls.listCLs({ text: oldCode });
       expect(hits.map((cl) => cl.publicId).sort()).toEqual([migrated.publicId, byTitle.publicId].sort());
+      expect((await cls.listCLs({ text: `!${intermediateCode}` })).map((cl) => cl.publicId)).toEqual([migrated.publicId]);
       expect(await cls.listCLs({ text: `!${oldCode}`, packageIds: ["literal"] })).toEqual([]);
       expect(await cls.resolveSearchPublicId(oldCode.toLowerCase())).toBeUndefined();
     } finally {

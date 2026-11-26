@@ -1,12 +1,12 @@
 import { generateBlockId, isBlockId } from './block-id'
 
-/** Shareable CL codes use the document block alphabet with the hyphen excluded. */
+/** Canonical CL codes consist of twelve case-sensitive ASCII letters and digits. */
 export function isCLPublicId(value: unknown): value is string {
-  return isBlockId(value) && !value.includes('-')
+  return isBlockId(value) && !/[-_]/.test(value)
 }
 
 export function generateCLPublicId(): string {
-  // Resampling keeps all 63 allowed characters equally likely.
+  // Resampling keeps the 62 alphanumeric characters equally likely.
   let id = generateBlockId()
   while (!isCLPublicId(id)) id = generateBlockId()
   return id

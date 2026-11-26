@@ -1,4 +1,4 @@
-import { generateCLPublicId, isCLPublicId, isCLReference, isLegacyCLNumber } from "@megaui/core";
+import { generateCLPublicId, isCLReference, isLegacyCLNumber } from "@megaui/core";
 import { megaClLinks, megaClPublicIds, megaCls, type Database } from "@megaui/database";
 import { eq, max, sql } from "drizzle-orm";
 import { MegaBadRequestError, MegaInternalError, MegaNotFoundError } from "../../errors";
@@ -38,7 +38,9 @@ export async function ensureCLPublicId(
 
 /** The canonical and historical code formats are disjoint and separately indexed. */
 export function matchesCLPublicId(ref: string) {
-  return eq(isCLPublicId(ref) ? megaClPublicIds.publicId : megaClPublicIds.legacyPublicId, ref);
+  if (ref.includes("-")) return eq(megaClPublicIds.legacyPublicId, ref);
+  if (ref.includes("_")) return eq(megaClPublicIds.underscorePublicId, ref);
+  return eq(megaClPublicIds.publicId, ref);
 }
 
 /** Resolving an address only yields a key; the caller still performs the normal CL access check. */

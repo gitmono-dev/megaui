@@ -29,7 +29,7 @@ const baseIssue: Issue = {
 
 const baseCL: CL = {
   id: 'cl-1',
-  publicId: 'Q7rE8kzpY_1A',
+  publicId: 'Q7rE8kzpY91A',
   number: 10,
   title: 'Add feature',
   state: 'ready',
