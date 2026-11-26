@@ -3,18 +3,17 @@
 // Diff vs upstream (GC-03 / WA-11): issue list filtering and creation through the BFF.
 "use client";
 
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { redirect, usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
 import { Suspense, type CSSProperties, useMemo, useState } from "react";
 
 import type { Issue } from "@megaui/core";
 import { parseQuery, serializeQuery } from "@megaui/core";
-import { MegaApiError, megaGet, megaPost, megaQueryKeys } from "@megaui/ui/query";
+import { MegaApiError, megaGet, megaQueryKeys } from "@megaui/ui/query";
 import { MEGA_SPACING_TOKENS, MEGA_TOKENS } from "@megaui/ui/tokens";
 
 import { useTranslation } from "@/hooks/use-translation";
 
-import { IssueCreateDialog, type IssuePriority } from "./components/issue-create-dialog";
 import { IssueListControls } from "./components/issue-list-controls";
 import { IssueListResults } from "./components/issue-list-results";
 
@@ -35,14 +34,8 @@ function IssuesListContent() {
   const router = useRouter();
   const pathname = usePathname() ?? "";
   const searchParams = useSearchParams();
-  const queryClient = useQueryClient();
   const issuesText = t.workspace.issues;
   const workspaceBase = `/${locale}/workspace`;
-  const [dialogOpen, setDialogOpen] = useState(searchParams?.get("new") === "1");
-  const [draftTitle, setDraftTitle] = useState("");
-  const [draftBody, setDraftBody] = useState("");
-  const [draftPackage, setDraftPackage] = useState("pkg_engine");
-  const [draftPriority, setDraftPriority] = useState<IssuePriority>("P2");
   const [page, setPage] = useState(1);
   const query = searchParams?.get("q") ?? "is:open";
   const filter = useMemo(() => parseQuery(query), [query]);
@@ -59,7 +52,10 @@ function IssuesListContent() {
   const setStateTab = (next: "open" | "closed") => {
     setQuery(serializeQuery({ ...filter, states: [next] }));
   };
+  const newHref = `${workspaceBase}/issues/new${searchParams?.get("q") ? `?q=${encodeURIComponent(query)}` : ""}`;
+  const legacyNew = searchParams?.get("new") === "1";
   const listQuery = useQuery({
+    enabled: !legacyNew,
     queryKey: [...megaQueryKeys.issues(filter), page, PAGE_SIZE],
     queryFn: () =>
       megaGet<IssueListPage>("issues", {
@@ -69,20 +65,7 @@ function IssuesListContent() {
       }),
     retry: (count, error) => !(error instanceof MegaApiError && error.status === 404) && count < 2,
   });
-  const createMutation = useMutation({
-    mutationFn: (input: {
-      readonly body?: string;
-      readonly packageId: string;
-      readonly priority: IssuePriority;
-      readonly title: string;
-    }) => megaPost<Issue>("issues", input),
-    onSuccess: (issue) => {
-      void queryClient.invalidateQueries({ queryKey: megaQueryKeys.issues() });
-      setDialogOpen(false);
-      router.push(`${workspaceBase}/issues/${issue.number}`);
-    },
-  });
-
+  if (legacyNew) redirect(newHref);
   if (listQuery.isPending) return <IssueListLoading label={issuesText.loading} />;
   if (listQuery.isError) {
     return (
@@ -101,7 +84,7 @@ function IssuesListContent() {
     <main data-mega-issues="page" style={{ background: MEGA_TOKENS.bg, minHeight: "100%" }}>
       <div style={sectionPad}>
         <IssueListControls
-          onNewIssue={() => setDialogOpen(true)}
+          onNewIssue={() => router.push(newHref)}
           onQueryChange={setQuery}
           onSortChange={(sort) => setQuery(serializeQuery({ ...filter, sort }))}
           onStateChange={setStateTab}
@@ -121,22 +104,6 @@ function IssuesListContent() {
           workspaceBase={workspaceBase}
         />
       </div>
-      {dialogOpen ? (
-        <IssueCreateDialog
-          body={draftBody}
-          copy={issuesText.newDialog}
-          isPending={createMutation.isPending}
-          onBodyChange={setDraftBody}
-          onCancel={() => setDialogOpen(false)}
-          onPackageChange={setDraftPackage}
-          onPriorityChange={setDraftPriority}
-          onSubmit={(input) => createMutation.mutate(input)}
-          onTitleChange={setDraftTitle}
-          packageId={draftPackage}
-          priority={draftPriority}
-          title={draftTitle}
-        />
-      ) : null}
     </main>
   );
 }

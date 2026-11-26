@@ -48,8 +48,8 @@ export const filterSchema = z.object({
 
 export const createIssueSchema = z.object({
   title: z.string().trim().min(1),
-  packageId: z.string().trim().min(1),
-  priority: prioritySchema,
+  packageId: z.string().trim().min(1).optional(),
+  priority: prioritySchema.optional(),
   body: z.string().trim().min(1).optional(),
 });
 

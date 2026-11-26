@@ -82,8 +82,8 @@ export function IssueDetailHeader({
         {metaTemplate
           .replace("{author}", issue.author.displayName)
           .replace("{time}", issue.createdAt)
-          .replace("{comments}", String(issue.commentCount))
-          .replace("{package}", issue.packageId)}
+          .replace("{comments}", String(issue.commentCount))}
+        {issue.packageId && ` · ${issue.packageId}`}
       </p>
     </header>
   );

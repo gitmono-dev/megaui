@@ -17,6 +17,7 @@ End-to-end coverage of `/[lang]/workspace/issues` list (filter/tabs/empty/error)
 | S-04 | Closed tab filter | AC-1 |
 | S-04b | Sort control + order | AC-1 |
 | S-04c | Pagination beyond page 1 | AC-1 |
+| S-04d | Full-width creation, write/preview and two-field submit; mobile legacy link and cancellation with filter | AC-1 |
 | S-05 | Detail body / timeline / reactions; default session has no Edit | WA-11 AC-1 / IB-03 AC-1 |
 | S-05b | Author Edit → Done updates body-text | IB-03 AC-2 |
 | S-05c | Assignee Edit → Done updates body-text | IB-03 AC-1 / AC-2 |

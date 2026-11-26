@@ -293,6 +293,42 @@ test.describe("workspace issues (WA-11)", () => {
     await context.addCookies(cookies);
   });
 
+  test("full-width issue composer previews and submits only title and body", async ({ page }) => {
+    await stubIssuesApis(page);
+    await page.goto("/zh-CN/workspace/issues");
+    await page.locator('[data-mega-issues="new"]').click();
+    await expect(page).toHaveURL(/\/issues\/new$/);
+    const form = page.locator('[data-mega-issues="create"]');
+    await expect(form.getByRole("heading")).toHaveText("新建议题");
+    await expect(form.locator("input, textarea, select")).toHaveCount(2);
+    const widths = await form.evaluate(el => [el.clientWidth, el.parentElement!.clientWidth]);
+    expect(widths[0]).toBe(widths[1]);
+    const submit = form.getByRole("button", { name: "创建议题" });
+    await expect(submit).toBeDisabled();
+    await form.getByLabel("标题", { exact: true }).fill("Review new issue");
+    await form.getByRole("textbox", { name: "描述（可选）", exact: true }).fill("First line\nSecond line");
+    await form.getByRole("button", { name: "预览" }).click();
+    await expect(form.getByText("First line Second line")).toBeVisible();
+    await form.getByRole("button", { name: "编辑" }).click();
+    await expect(form.locator("textarea")).toHaveValue("First line\nSecond line");
+    const sent = page.waitForRequest(request => request.method() === "POST" && new URL(request.url()).pathname === "/api/mega/issues");
+    await submit.click();
+    expect((await sent).postDataJSON()).toEqual({ title: "Review new issue", body: "First line\nSecond line" });
+    await expect(page).toHaveURL(/\/issues\/99$/);
+  });
+
+  test("legacy create link opens the page and cancel restores the filter on mobile", async ({ page }) => {
+    await stubIssuesApis(page);
+    await page.setViewportSize({ width: 390, height: 840 });
+    await page.goto("/en/workspace/issues?new=1&q=is%3Aclosed");
+    await expect(page).toHaveURL(/\/issues\/new\?q=is%3Aclosed$/);
+    await expect(page.getByRole("heading", { name: "New issue" })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+    await page.getByRole("button", { name: "Cancel" }).click();
+    await expect(page).toHaveURL(/\/issues\?q=is%3Aclosed$/);
+    await expect(page.locator('[data-mega-issues="filter"]')).toHaveValue("is:closed");
+  });
+
   test("list rows render with open tab", async ({ page }) => {
     await stubIssuesApis(page);
     await page.goto("/en/workspace/issues?q=is:open");

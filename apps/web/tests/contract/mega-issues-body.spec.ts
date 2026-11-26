@@ -49,8 +49,6 @@ describe("IB-02 mega issues body BFF contract", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           title,
-          packageId: "pkg_engine",
-          priority: "P2",
           ...(body ? { body } : {}),
         }),
       }),
@@ -59,6 +57,7 @@ describe("IB-02 mega issues body BFF contract", () => {
     expect(response.status).toBe(200);
     const payload: unknown = await response.json();
     assertMegaSuccessEnvelope(payload);
+    expect(payload.data).toMatchObject({ title, packageId: "", priority: "P2" });
     const record = payload.data as { number: number };
     expect(typeof record.number).toBe("number");
     return record.number;

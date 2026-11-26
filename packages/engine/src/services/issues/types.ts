@@ -15,8 +15,8 @@ import type { PaginationInput } from "../../context";
 
 export interface CreateIssueInput {
   title: string;
-  packageId: string;
-  priority: IssuePriority;
+  packageId?: string;
+  priority?: IssuePriority;
   /** Plain-text body (no Lexical/plain-text import pipeline ported yet — see issues.ts diff header). */
   body?: string;
 }

@@ -38,7 +38,7 @@
 | `workspace-docs.spec.ts` | [workspace-docs.md](./catalog/workspace-docs.md) | WA-12 | stub | ran |
 | `workspace-home.spec.ts` | [workspace-home.md](./catalog/workspace-home.md) | Recent CL links, WA-07 | stub | catalog-ready |
 | `workspace-inbox.spec.ts` | [workspace-inbox.md](./catalog/workspace-inbox.md) | WA-16 | stub | ran |
-| `workspace-issues.spec.ts` | [workspace-issues.md](./catalog/workspace-issues.md) | WA-11 | stub | ran |
+| `workspace-issues.spec.ts` | [workspace-issues.md](./catalog/workspace-issues.md) | WA-11 list, full-width issue composer and detail | stub | ran |
 | `workspace-surface-style.spec.ts` | [workspace-surface-style.md](./catalog/workspace-surface-style.md) | UI-01 | stub | ran (compose `:17001`) |
 | `workspace-settings-credentials.spec.ts` | [workspace-settings-credentials.md](./catalog/workspace-settings-credentials.md) | WA-18 | stub | ran (isolated Web/Postgres) |
 | `workspace-images.spec.ts` | [workspace-images.md](./catalog/workspace-images.md) | Images | stub | catalog-ready |

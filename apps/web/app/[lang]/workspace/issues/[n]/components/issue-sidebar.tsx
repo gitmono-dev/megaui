@@ -24,9 +24,9 @@ export function IssueSidebar({
         padding: MEGA_SPACING_TOKENS[8],
       }}
     >
-      <p style={{ margin: 0 }}>
+      {issue.packageId && <p style={{ margin: 0 }}>
         <strong>{packageLabel}</strong>: {issue.packageId}
-      </p>
+      </p>}
       <p style={{ margin: `${MEGA_SPACING_TOKENS[6]} 0 0` }}>
         <strong>{linkedClsLabel}</strong>:{" "}
         {issue.linkedClPublicIds?.length

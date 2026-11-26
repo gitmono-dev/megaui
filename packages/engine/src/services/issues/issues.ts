@@ -316,9 +316,10 @@ export function createIssuesService(database: Database) {
     const authorId = await assertWorkspaceMember(actorUserId);
     const title = input.title.trim();
     if (!title) throw new MegaBadRequestError("Issue title is required");
-    const packageId = input.packageId.trim();
-    if (!packageId) throw new MegaBadRequestError("Issue packageId is required");
-    if (!MEGA_ISSUE_PRIORITIES.includes(input.priority)) {
+    const packageId = input.packageId?.trim() ?? "";
+    if (input.packageId !== undefined && !packageId) throw new MegaBadRequestError("Issue packageId is required");
+    const priority = input.priority ?? megaIssuePriorities.P2;
+    if (!MEGA_ISSUE_PRIORITIES.includes(priority)) {
       throw new MegaBadRequestError(`Invalid issue priority: ${input.priority}`);
     }
 
@@ -335,7 +336,7 @@ export function createIssuesService(database: Database) {
         number: nextNumber,
         title,
         state: megaIssueStates.OPEN,
-        priority: input.priority,
+        priority,
         packageId,
         authorId,
         milestone: null,

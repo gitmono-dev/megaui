@@ -2102,11 +2102,11 @@ export const zhCN = {
       }
     },
     issues: {
-      title: "Issues",
+      title: "议题",
       scopeAllPackages: "全部 package",
       labelsChip: "Labels · {count}",
       milestonesChip: "Milestones · {count}",
-      newIssue: "New issue",
+      newIssue: "新建议题",
       filterAriaLabel: "过滤议题",
       filterPlaceholder: "is:open priority:P0..P2 pkg:git-internal…",
       openTab: "Open",
@@ -2140,14 +2140,16 @@ export const zhCN = {
           "priority-desc": "优先级"
         }
       },
-      newDialog: {
+      create: {
         title: "新建议题",
         titleLabel: "标题",
         titlePlaceholder: "描述问题…",
         descriptionLabel: "描述（可选）",
         descriptionPlaceholder: "补充背景、预期行为或复现步骤…",
-        packageLabel: "Package",
-        priorityLabel: "优先级",
+        write: "编辑",
+        preview: "预览",
+        emptyPreview: "暂无可预览的内容",
+        failed: "创建议题失败，请重试",
         cancel: "取消",
         submit: "创建议题",
         submitting: "创建中…"
@@ -2171,7 +2173,7 @@ export const zhCN = {
           breadcrumbIssues: "Issues",
           openPill: "Open",
           closedPill: "Closed",
-          meta: "{author} 创建于 {time} · {comments} 条评论 · pkg{package}",
+          meta: "{author} 创建于 {time} · {comments} 条评论",
           watching: "关注中",
           watch: "关注"
         },

@@ -473,7 +473,7 @@
 
 /* List/dialog/toolbars wrap instead of compressing their labels off-screen. */
 :is([data-mega-issues="tabs"], [data-mega-agent="composer"], [data-mega-settings="card"] > div, [data-mega-chat="header"]) { flex-wrap: wrap; }
-:is([data-mega-issues="new-dialog"], [data-mega-cls="new-dialog"]) form {
+[data-mega-cls="new-dialog"] form {
   background: var(--mega-bg);
   border: 1px solid var(--mega-border);
   border-radius: var(--mega-panel-radius) !important;

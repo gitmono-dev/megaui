@@ -2140,14 +2140,16 @@ export const en = {
           "priority-desc": "Priority"
         }
       },
-      newDialog: {
+      create: {
         title: "New issue",
         titleLabel: "Title",
         titlePlaceholder: "Describe the problem…",
         descriptionLabel: "Description (optional)",
         descriptionPlaceholder: "Add context, expected behavior, or reproduction steps…",
-        packageLabel: "Package",
-        priorityLabel: "Priority",
+        write: "Write",
+        preview: "Preview",
+        emptyPreview: "Nothing to preview",
+        failed: "Could not create the issue. Try again",
         cancel: "Cancel",
         submit: "Create issue",
         submitting: "Creating…"
@@ -2171,7 +2173,7 @@ export const en = {
           breadcrumbIssues: "Issues",
           openPill: "Open",
           closedPill: "Closed",
-          meta: "{author} opened {time} · {comments} comments · pkg{package}",
+          meta: "{author} opened {time} · {comments} comments",
           watching: "Watching",
           watch: "Watch"
         },

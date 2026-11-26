@@ -72,7 +72,9 @@
 
 Diffs 按文件名识别语言，显示语法颜色、新旧行号和增删标记。未知语言保留纯文本差异，二进制文件显示提示。长补丁按可见行渲染。[Diffs 文档](https://diffs.com/docs)
 
-### Issues（2）
+### Issues
+
+新建议题使用独立的全宽页面 `/{lang}/workspace/issues/new`，填写标题即可创建，也可编辑和预览描述。旧的 `?new=1` 链接会跳转到新页面。创建时可以省略 Package 和优先级，未指定 Package 的议题属于整个工作区，优先级沿用数据库默认值 P2。[GitHub 创建议题流程](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/creating-an-issue)
 
 | # | 路由 | 页面文件 | 核心组件 | 关键交互 | i18n 键域 |
 |---|---|---|---|---|---|
