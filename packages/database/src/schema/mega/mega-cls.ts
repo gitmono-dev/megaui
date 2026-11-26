@@ -1,9 +1,10 @@
 // megaui:libs/database/schema/pg/mega-cls.ts@0ff3a9d
 //
 // Ported for PK-05 (REF-07). SaaS tables intentionally omitted at package scope.
-import { InferInsertModel, InferSelectModel } from "drizzle-orm";
+import { sql, type InferInsertModel, type InferSelectModel } from "drizzle-orm";
 import {
   boolean,
+  check,
   index,
   integer,
   jsonb,
@@ -126,6 +127,19 @@ export const megaClLinks = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [uniqueIndex("mega_cl_links_number_uidx").on(table.number)],
+);
+
+/** Shared, permanent public identities for local and live CLs in the same number space. */
+export const megaClPublicIds = pgTable(
+  "mega_cl_public_ids",
+  {
+    number: integer("number").primaryKey(),
+    publicId: text("public_id").notNull(),
+  },
+  (table) => [
+    uniqueIndex("mega_cl_public_ids_public_id_uidx").on(table.publicId),
+    check("mega_cl_public_ids_format_check", sql`${table.publicId} COLLATE "C" ~ '^[A-Za-z0-9_-]{12}$'`),
+  ],
 );
 
 export type MegaClLink = InferSelectModel<typeof megaClLinks>;

@@ -1,13 +1,14 @@
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import { megaClLinks, megaCls, user, type Database } from "@megaui/database";
+import { isBlockId } from "@megaui/core";
+import { megaClLinks, megaClPublicIds, megaCls, user, type Database } from "@megaui/database";
 import { MegaBadRequestError, MegaInternalError } from "@megaui/engine";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { CSRF_ORIGIN_REJECTED_CODE } from "../csrf";
 import { assertMegaFailureEnvelope } from "../envelope";
 import {
   addLiveMega2ClComment,
-  ensureMegaClNumberMapping,
+  ensureMegaClIdentity,
   getLiveMega2ClDetail,
   isMega2ClBackendEnabled,
   listLiveMega2Cls,
@@ -22,6 +23,8 @@ const SHA_C = "cccccccccccccccccccccccccccccccccccccccc";
 interface FakeMappingStore {
   byLink: Map<string, number>;
   byNumber: Map<number, string>;
+  legacyLinks: Map<number, string>;
+  publicIds: Map<number, string>;
   localMegaClsMaxNumber: number;
   advisoryLocks: number;
   updateCalls: number;
@@ -48,9 +51,7 @@ function extractBoundValue(expr: unknown): unknown {
 }
 
 /**
- * In-memory fake Drizzle DB verifying that `cl-projection.ts` ONLY writes
- * immutable `(link <-> number)` rows to `mega_cl_links`, NEVER inserts into
- * `mega_cls`, and NEVER calls `db.update(...)`.
+ * Models the two immutable identity tables, and detects any writes to mutable CL data.
  */
 function createFakeMappingDb(
   localMegaClsMaxNumber = 0,
@@ -59,6 +60,8 @@ function createFakeMappingDb(
   const store: FakeMappingStore = {
     byLink: new Map(),
     byNumber: new Map(),
+    legacyLinks: new Map(),
+    publicIds: new Map(),
     localMegaClsMaxNumber,
     advisoryLocks: 0,
     updateCalls: 0,
@@ -74,15 +77,19 @@ function createFakeMappingDb(
           from(table: unknown) {
             const isMaxQuery = "maxNumber" in fields;
             if (isMaxQuery) {
-              const maxNumber =
-                table === megaCls
-                  ? store.localMegaClsMaxNumber
-                  : store.byNumber.size === 0
-                    ? 0
-                    : Math.max(...store.byNumber.keys());
+              const numbers = table === megaClPublicIds ? store.publicIds : store.byNumber;
+              const maxNumber = table === megaCls
+                ? store.localMegaClsMaxNumber
+                : Math.max(0, ...numbers.keys());
               return Promise.resolve([{ maxNumber }]);
             }
             return {
+              innerJoin() {
+                return this;
+              },
+              leftJoin() {
+                return this;
+              },
               where(expr: unknown) {
                 const resolveRows = () => {
                   const bound = extractBoundValue(expr);
@@ -91,10 +98,33 @@ function createFakeMappingDb(
                     return Promise.resolve(row ? [row] : []);
                   }
                   if (table === megaCls) {
-                    return Promise.resolve([]);
+                    if (typeof bound === "number") {
+                      const link = store.legacyLinks.get(bound);
+                      return Promise.resolve(link === undefined ? [] : [{ link }]);
+                    }
+                    return Promise.resolve([...store.legacyLinks]
+                      .filter(([, link]) => link === bound)
+                      .sort(([a], [b]) => a - b)
+                      .slice(0, 1)
+                      .map(([number]) => ({ number })));
+                  }
+                  if (table === megaClPublicIds && typeof bound === "number") {
+                    const publicId = store.publicIds.get(bound);
+                    return Promise.resolve(publicId ? [{ publicId }] : []);
+                  }
+                  if (table === megaClPublicIds && "liveLink" in fields) {
+                    const entry = [...store.publicIds].find(([, publicId]) => publicId === bound);
+                    return Promise.resolve(entry ? [{
+                      liveLink: store.byNumber.get(entry[0]),
+                      legacyLink: store.legacyLinks.get(entry[0]),
+                    }] : []);
                   }
                   if ("number" in fields && typeof bound === "string") {
                     const num = store.byLink.get(bound);
+                    if ("publicId" in fields) {
+                      const publicId = num === undefined ? undefined : store.publicIds.get(num);
+                      return Promise.resolve(publicId ? [{ number: num, publicId }] : []);
+                    }
                     return Promise.resolve(num !== undefined ? [{ number: num }] : []);
                   }
                   if ("link" in fields && typeof bound === "number") {
@@ -122,9 +152,20 @@ function createFakeMappingDb(
           throw new Error("cl-projection must NEVER insert placeholder rows into mega_cls");
         }
         return {
-          values(row: { link: string; number: number }) {
+          values(row: { link: string; number: number; publicId: string }) {
             return {
               onConflictDoNothing() {
+                if (table === megaClPublicIds) {
+                  return {
+                    returning() {
+                      if (store.publicIds.has(row.number) || [...store.publicIds.values()].includes(row.publicId)) {
+                        return Promise.resolve([]);
+                      }
+                      store.publicIds.set(row.number, row.publicId);
+                      return Promise.resolve([{ publicId: row.publicId }]);
+                    },
+                  };
+                }
                 if (table === megaClLinks) {
                   store.megaClLinksInsertCalls += 1;
                   if (!store.byLink.has(row.link)) {
@@ -215,26 +256,42 @@ describe("mega2 live non-mutating CL projection (CLB-22)", () => {
     expect(isMega2ClBackendEnabled({ MEGA_CODE_DATA_BACKEND: "mega2" })).toBe(true);
   });
 
-  it("persists only immutable (link <-> number) mapping in mega_cl_links above local max number with zero mega_cls writes", async () => {
+  it("reserves stable block-style public IDs and never reuses a deleted CL's number", async () => {
     const store = createFakeMappingDb(10);
-    const n1 = await ensureMegaClNumberMapping(store.db, "cl-alpha");
-    const n1Again = await ensureMegaClNumberMapping(store.db, "cl-alpha");
-    const n2 = await ensureMegaClNumberMapping(store.db, "cl-beta");
+    store.publicIds.set(12, "oldClCode_01");
+    const first = await ensureMegaClIdentity(store.db, "cl-alpha");
+    const repeated = await ensureMegaClIdentity(store.db, "cl-alpha");
+    const second = await ensureMegaClIdentity(store.db, "cl-beta");
 
-    expect(n1).toBe(11);
-    expect(n1Again).toBe(11);
-    expect(n2).toBe(12);
+    expect(first.number).toBe(13);
+    expect(repeated).toEqual(first);
+    expect(second.number).toBe(14);
+    expect(isBlockId(first.publicId)).toBe(true);
+    expect(isBlockId(second.publicId)).toBe(true);
+    expect(second.publicId).not.toBe(first.publicId);
     expect(store.advisoryLocks).toBe(2);
     expect(store.megaClLinksInsertCalls).toBe(2);
     expect(store.megaClsWriteCalls).toBe(0);
     expect(store.updateCalls).toBe(0);
-    expect(await resolveMegaClLinkByNumber(store.db, 11)).toBe("cl-alpha");
-    expect(await resolveMegaClLinkByNumber(store.db, 12)).toBe("cl-beta");
+    expect(await resolveMegaClLinkByNumber(store.db, first.number)).toBe("cl-alpha");
+    expect(await resolveMegaClLinkByNumber(store.db, second.number)).toBe("cl-beta");
+  });
+
+  it("keeps a pre-existing live link and its legacy number when assigning a public ID", async () => {
+    const store = createFakeMappingDb();
+    store.byLink.set("legacy-link", 4);
+    store.byNumber.set(4, "legacy-link");
+
+    const identity = await ensureMegaClIdentity(store.db, "legacy-link");
+    expect(identity.number).toBe(4);
+    expect(isBlockId(identity.publicId)).toBe(true);
+    expect(await ensureMegaClIdentity(store.db, "legacy-link")).toEqual(identity);
+    expect(store.megaClLinksInsertCalls).toBe(0);
   });
 
   it("never overwrites newer headRevision/state when overlapping concurrent refreshes resolve out of order", async () => {
     const store = createFakeMappingDb();
-    await ensureMegaClNumberMapping(store.db, "cl-race");
+    await ensureMegaClIdentity(store.db, "cl-race");
 
     let detailCallCount = 0;
     let releaseSlowOlderRequest!: () => void;
@@ -353,6 +410,10 @@ describe("mega2 live non-mutating CL projection (CLB-22)", () => {
 
   it("projects multi-status list with mergeBox, author filter, transitions, and comments", async () => {
     const store = createFakeMappingDb();
+    store.legacyLinks.set(7, "cl-live");
+    store.legacyLinks.set(4, "cl-live");
+    store.publicIds.set(4, "ClPublic_001");
+    store.publicIds.set(7, "ClPublic_002");
     let currentStatus: "Open" | "Closed" | "Merged" = "Open";
     const comments: Array<{
       id: number;
@@ -496,13 +557,22 @@ describe("mega2 live non-mutating CL projection (CLB-22)", () => {
     };
 
     // Unfiltered list returns BOTH open and merged CLs with live mergeBox attached
+    const legacyDetail = await getLiveMega2ClDetail(store.db, 7, { env: env() });
+    expect(legacyDetail).toMatchObject({ number: 4, publicId: "ClPublic_001" });
     const allList = await listLiveMega2Cls(store.db, {}, { env: env() });
     expect(allList).toHaveLength(2);
     expect(allList[0]?.link).toBe("cl-live");
+    expect(allList[0]?.publicId).toBe(legacyDetail.publicId);
     expect(allList[0]?.mergeBox?.merge_requirements?.state).toBe("UNMERGEABLE");
     expect(allList[0]?.ci).toBe("running");
     expect(allList[1]?.link).toBe("cl-done");
     expect(allList[1]?.state).toBe("merged");
+
+    for (const query of ["ClPublic_001", "!ClPublic_001"]) {
+      const result = await listLiveMega2Cls(store.db, { text: query }, { env: env() });
+      expect(result.map((cl) => cl.link)).toEqual(["cl-live"]);
+    }
+    expect(await listLiveMega2Cls(store.db, { text: "!clpublic_001" }, { env: env() })).toEqual([]);
 
     // Multi-state + author filtering works accurately
     const onlyCarol = await listLiveMega2Cls(
@@ -513,18 +583,19 @@ describe("mega2 live non-mutating CL projection (CLB-22)", () => {
     expect(onlyCarol).toHaveLength(1);
     expect(onlyCarol[0]?.link).toBe("cl-done");
 
-    const closed = await transitionLiveMega2Cl(store.db, 1, "closed", { env: env() });
+    const closed = await transitionLiveMega2Cl(store.db, 4, "closed", { env: env() });
     expect(closed.state).toBe("closed");
+    expect(closed.publicId).toBe(allList[0]?.publicId);
 
-    const reopened = await transitionLiveMega2Cl(store.db, 1, "ready", { env: env() });
+    const reopened = await transitionLiveMega2Cl(store.db, 4, "ready", { env: env() });
     expect(reopened.state).toBe("ready");
 
-    const comment = await addLiveMega2ClComment(store.db, 1, "Looks solid", {
+    const comment = await addLiveMega2ClComment(store.db, 4, "Looks solid", {
       env: env(),
     });
     expect(comment.body).toBe("Looks solid");
 
-    const merged = await transitionLiveMega2Cl(store.db, 1, "merged", { env: env() });
+    const merged = await transitionLiveMega2Cl(store.db, 4, "merged", { env: env() });
     expect(merged.state).toBe("merged");
     expect(store.updateCalls).toBe(0);
     expect(store.megaClsWriteCalls).toBe(0);
@@ -533,6 +604,7 @@ describe("mega2 live non-mutating CL projection (CLB-22)", () => {
   it("honors @me/packageIds/reviewer/sort filters, paginates >50 detail diffs, rejects wip transition, and isolates concurrent comments", async () => {
     const users = new Map([["user_bob", { name: "bob", email: "bob@example.com" }]]);
     const store = createFakeMappingDb(0, users);
+    const requestedDiffPages: number[] = [];
     let nextCommentId = 1;
     const comments: Array<{
       id: number;
@@ -634,6 +706,7 @@ describe("mega2 live non-mutating CL projection (CLB-22)", () => {
       }
       if (method === "POST" && url === "/api/v1/cl/cl-bob/files-changed") {
         const parsed = JSON.parse(body) as { pagination: { page: number; per_page: number } };
+        requestedDiffPages.push(parsed.pagination.page);
         const start = (parsed.pagination.page - 1) * parsed.pagination.per_page;
         const end = Math.min(start + parsed.pagination.per_page, 52);
         const items = [];
@@ -651,7 +724,12 @@ describe("mega2 live non-mutating CL projection (CLB-22)", () => {
         return;
       }
       if (method === "GET" && url === "/api/v1/cl/cl-bob/commits") {
-        sendCommon(res, []);
+        sendCommon(res, [{
+          sha: SHA_B,
+          message: "Update alpha",
+          author_name: "bob",
+          author_email: "bob@example.com",
+        }]);
         return;
       }
       if (method === "POST" && url === "/api/v1/cl/cl-bob/comment") {
@@ -710,9 +788,22 @@ describe("mega2 live non-mutating CL projection (CLB-22)", () => {
       listLiveMega2Cls(store.db, { reviewer: "alice" }, { env: env() }),
     ).rejects.toBeInstanceOf(MegaBadRequestError);
 
-    // Detail paginates beyond 50 files-changed items and counts `++`/`--` hunk lines accurately
-    const bobNumber = await ensureMegaClNumberMapping(store.db, "cl-bob");
+    const { number: bobNumber } = await ensureMegaClIdentity(store.db, "cl-bob");
+    const overview = await getLiveMega2ClDetail(store.db, bobNumber, { env: env(), view: "overview" });
+    expect(requestedDiffPages).toEqual([]);
+    expect(overview.files).toHaveLength(52);
+    expect(overview.files[51]?.path).toBe("src/f51.ts");
+    expect(overview).toMatchObject({
+      baseBranch: "main",
+      branch: "refs/cl/cl-bob",
+      diffStatsAvailable: false,
+      merge: "queue-ready",
+      revisions: [{ filesChanged: 52, commitList: [{ sha: SHA_B, message: "Update alpha" }] }],
+    });
+
+    // Full detail paginates and counts `++`/`--` hunk lines accurately.
     const detail = await getLiveMega2ClDetail(store.db, bobNumber, { env: env() });
+    expect(requestedDiffPages).toEqual([1, 2]);
     expect(detail.files).toHaveLength(52);
     expect(detail.additions).toBe(52);
     expect(detail.deletions).toBe(1);
@@ -958,9 +1049,11 @@ describe("mega2 live non-mutating CL projection (CLB-22)", () => {
     const filteredAccessible = await listLiveMega2Cls(store.db, {}, { env: env() });
     expect(filteredAccessible.map((c) => c.link)).toEqual(["cl-allowed"]);
     expect(store.byLink.has("cl-secret")).toBe(false);
+    const secret = await ensureMegaClIdentity(store.db, "cl-secret");
+    expect(await listLiveMega2Cls(store.db, { text: secret.publicId }, { env: env() })).toEqual([]);
 
     // Draft -> ready fails closed instead of silently calling reopen
-    const draftNumber = await ensureMegaClNumberMapping(store.db, "cl-draft");
+    const { number: draftNumber } = await ensureMegaClIdentity(store.db, "cl-draft");
     await expect(
       transitionLiveMega2Cl(store.db, draftNumber, "ready", { env: env() }),
     ).rejects.toBeInstanceOf(MegaBadRequestError);

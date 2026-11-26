@@ -10,13 +10,13 @@ describe('buildTitleIndex', () => {
     const index = buildTitleIndex({
       docs: [{ id: 'doc-1', title: 'Runbook' }],
       issues: [{ number: 7, title: 'Bug' }],
-      cls: [{ number: 12, title: 'Feature' }],
+      cls: [{ publicId: 'CLtx_AbCd-12', title: 'Feature' }],
       users: [{ username: 'octocat', displayName: 'Octo Cat' }],
     })
     expect(index).toEqual([
       { kind: 'doc', targetTitle: 'Runbook', targetId: 'doc-1', detail: 'doc' },
       { kind: 'issue', targetTitle: 'Bug', targetId: '7', detail: '#7' },
-      { kind: 'cl', targetTitle: 'Feature', targetId: '12', detail: '!12' },
+      { kind: 'cl', targetTitle: 'Feature', targetId: 'CLtx_AbCd-12', detail: 'CLtx_AbCd-12' },
       { kind: 'user', targetTitle: 'Octo Cat', targetId: 'octocat', detail: '@octocat' },
     ])
   })
@@ -42,7 +42,7 @@ describe('searchTitleIndex', () => {
   const entries: TitleIndexEntry[] = [
     { kind: 'doc', targetTitle: 'Runbook', targetId: 'doc-1', detail: 'doc' },
     { kind: 'issue', targetTitle: 'Bug fix', targetId: '7', detail: '#7' },
-    { kind: 'cl', targetTitle: 'Feature work', targetId: '12', detail: '!12' },
+    { kind: 'cl', targetTitle: 'Feature work', targetId: 'CLtx_AbCd-12', detail: 'CLtx_AbCd-12' },
     { kind: 'user', targetTitle: 'Octo Cat', targetId: 'octocat', detail: '@octocat' },
   ]
 
@@ -54,6 +54,7 @@ describe('searchTitleIndex', () => {
   it('matches case-insensitively against title, id, or detail', () => {
     expect(searchTitleIndex(entries, 'RUN')).toEqual([entries[0]])
     expect(searchTitleIndex(entries, '#7')).toEqual([entries[1]])
+    expect(searchTitleIndex(entries, 'cltx_abcd-12')).toEqual([entries[2]])
     expect(searchTitleIndex(entries, 'octocat')).toEqual([entries[3]])
   })
 

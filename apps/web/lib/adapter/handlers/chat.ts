@@ -1,5 +1,6 @@
 // megaui:apps/next-app/lib/mega-api.ts@0ff3a9d (chat segments)
 
+import { isBlockId } from "@megaui/core";
 import { MegaForbiddenError } from "@megaui/engine";
 import { z } from "zod";
 
@@ -8,10 +9,11 @@ import { registerMegaRoute, type MegaDispatchContext } from "../dispatch";
 import { resolveActorUserId } from "../session";
 import { invalidRoute, only, segmentText } from "./shared";
 
-const segmentsSchema = z.array(z.discriminatedUnion("type", [
+const segmentsSchema = z.array(z.union([
   z.object({ type: z.literal("text"), text: z.string() }),
   z.object({ type: z.literal("code"), language: z.string().optional(), text: z.string() }),
   z.object({ type: z.literal("link"), url: z.string(), text: z.string() }),
+  z.object({ type: z.literal("cl-ref"), publicId: z.string().refine(isBlockId) }),
   z.object({ type: z.literal("cl-ref"), number: z.number().int().positive() }),
   z.object({ type: z.literal("issue-ref"), number: z.number().int().positive() }),
   z.object({ type: z.literal("user-ref"), username: z.string().trim().min(1) }),

@@ -9,6 +9,8 @@
  *   stay plain text.
  */
 
+import { BLOCK_ID_SOURCE, isBlockId } from './block-id'
+
 export type RefKind = 'cl' | 'issue' | 'user' | 'thread' | 'sha' | 'plain'
 
 interface RefTokenBase {
@@ -17,10 +19,10 @@ interface RefTokenBase {
   end: number
 }
 
-export interface CLRefToken extends RefTokenBase {
-  kind: 'cl'
-  number: number
-}
+export type CLRefToken = RefTokenBase & { kind: 'cl' } & (
+  | { publicId: string; number?: never }
+  | { number: number; publicId?: never }
+)
 
 export interface IssueRefToken extends RefTokenBase {
   kind: 'issue'
@@ -49,7 +51,10 @@ export interface PlainRefToken extends RefTokenBase {
 
 export type RefToken = CLRefToken | IssueRefToken | UserRefToken | ThreadRefToken | ShaRefToken | PlainRefToken
 
-const candidatePattern = /!([1-9]\d*)|#([1-9]\d*)|@([A-Za-z][A-Za-z0-9_-]*)|(thr_[A-Za-z0-9][A-Za-z0-9_-]*)|([a-f0-9]{7,40})/gi
+const candidatePattern = new RegExp(
+  String.raw`!(${BLOCK_ID_SOURCE}(?![A-Za-z0-9_-])|[1-9]\d*)|#([1-9]\d*)|@([A-Za-z][A-Za-z0-9_-]*)|(thr_[A-Za-z0-9][A-Za-z0-9_-]*)|([a-f0-9]{7,40})`,
+  'gi',
+)
 const asciiIdentifierCharacter = /[A-Za-z0-9_-]/
 
 function hasIdentifierBoundary(text: string, start: number, end: number): boolean {
@@ -75,6 +80,7 @@ function createReference(
   const end = start + raw.length
 
   if (match[1]) {
+    if (isBlockId(match[1])) return { kind: 'cl', raw, start, end, publicId: match[1] }
     const number = parseSafeRefNumber(match[1])
     if (number === undefined) return undefined
     return { kind: 'cl', raw, start, end, number }

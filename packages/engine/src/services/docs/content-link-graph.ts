@@ -13,7 +13,6 @@
 // - Single PG dialect (ADR-ARCH-02).
 import { inArray, isNull } from "drizzle-orm";
 import {
-  megaCls,
   megaClComments,
   megaContent,
   megaContentContainerTypes,
@@ -27,7 +26,7 @@ import {
 } from "@megaui/database";
 import type { AclService } from "../acl";
 import { extractEmbedsFromEditorState } from "./embed";
-import { decodeBlockTargetId } from "./links";
+import { decodeBlockTargetId, selectDocumentCLs } from "./links";
 
 export type ContentGraphNodeKind = "doc" | "issue" | "cl";
 export type ContentGraphEdgeKind = "wikilink" | "embed";
@@ -57,8 +56,7 @@ type EntityCatalog = {
   docs: Map<string, { title: string }>;
   issuesById: Map<string, { number: number; title: string }>;
   issuesByNumber: Map<number, { id: string; title: string }>;
-  clsById: Map<string, { number: number; title: string }>;
-  clsByNumber: Map<number, { id: string; title: string }>;
+  clsByRef: Map<string, { publicId: string; title: string }>;
   issueComments: Map<string, { issueNumber: number }>;
   clComments: Map<string, { clNumber: number }>;
   docComments: Map<string, { docId: string }>;
@@ -75,7 +73,7 @@ function hrefForNode(kind: ContentGraphNodeKind, entityId: string, entityNumber?
     case "issue":
       return `/issues/${entityNumber ?? entityId}`;
     case "cl":
-      return `/cls/${entityNumber ?? entityId}`;
+      return `/cls/${entityId}`;
     default: {
       const _exhaustive: never = kind;
       return _exhaustive;
@@ -91,7 +89,7 @@ function buildNode(
 ): ContentGraphNode | null {
   const normalizedTitle = title.trim();
   if (!normalizedTitle) return null;
-  const key = kind === "doc" ? entityId : String(entityNumber ?? entityId);
+  const key = String(entityNumber ?? entityId);
   return {
     id: nodeId(kind, key),
     kind,
@@ -100,6 +98,11 @@ function buildNode(
     title: normalizedTitle,
     href: hrefForNode(kind, entityId, entityNumber),
   };
+}
+
+function resolveCLNode(catalog: EntityCatalog, ref: string): ContentGraphNode | null {
+  const cl = catalog.clsByRef.get(ref);
+  return cl ? buildNode("cl", cl.publicId, cl.title) : null;
 }
 
 function resolveTargetNode(catalog: EntityCatalog, targetKind: string, targetId: string): ContentGraphNode | null {
@@ -115,13 +118,8 @@ function resolveTargetNode(catalog: EntityCatalog, targetKind: string, targetId:
       const byNumber = Number.isFinite(asNumber) ? catalog.issuesByNumber.get(asNumber) : undefined;
       return byNumber ? buildNode("issue", byNumber.id, byNumber.title, asNumber) : null;
     }
-    case megaContentLinkTargetKinds.CL: {
-      const byId = catalog.clsById.get(targetId);
-      if (byId) return buildNode("cl", targetId, byId.title, byId.number);
-      const asNumber = Number(targetId);
-      const byNumber = Number.isFinite(asNumber) ? catalog.clsByNumber.get(asNumber) : undefined;
-      return byNumber ? buildNode("cl", byNumber.id, byNumber.title, asNumber) : null;
-    }
+    case megaContentLinkTargetKinds.CL:
+      return resolveCLNode(catalog, targetId);
     case megaContentLinkTargetKinds.BLOCK: {
       // BLOCK targets are persisted as `${targetDocId}:${targetBlockId}`
       // (see `links.ts` `encodeBlockTargetId`) since `target_id` alone can't
@@ -149,13 +147,8 @@ function resolveSourceNode(catalog: EntityCatalog, sourceType: string, sourceId:
       const byNumber = Number.isFinite(asNumber) ? catalog.issuesByNumber.get(asNumber) : undefined;
       return byNumber ? buildNode("issue", byNumber.id, byNumber.title, asNumber) : null;
     }
-    case megaContentContainerTypes.CL: {
-      const byId = catalog.clsById.get(sourceId);
-      if (byId) return buildNode("cl", sourceId, byId.title, byId.number);
-      const asNumber = Number(sourceId);
-      const byNumber = Number.isFinite(asNumber) ? catalog.clsByNumber.get(asNumber) : undefined;
-      return byNumber ? buildNode("cl", byNumber.id, byNumber.title, asNumber) : null;
-    }
+    case megaContentContainerTypes.CL:
+      return resolveCLNode(catalog, sourceId);
     case megaContentContainerTypes.ISSUE_COMMENT: {
       const comment = catalog.issueComments.get(sourceId);
       if (!comment) return null;
@@ -165,8 +158,7 @@ function resolveSourceNode(catalog: EntityCatalog, sourceType: string, sourceId:
     case megaContentContainerTypes.CL_COMMENT: {
       const comment = catalog.clComments.get(sourceId);
       if (!comment) return null;
-      const cl = catalog.clsByNumber.get(comment.clNumber);
-      return cl ? buildNode("cl", cl.id, cl.title, comment.clNumber) : null;
+      return resolveCLNode(catalog, String(comment.clNumber));
     }
     case megaContentContainerTypes.DOC_COMMENT: {
       const comment = catalog.docComments.get(sourceId);
@@ -214,7 +206,9 @@ function buildGraphFromCatalog(
   for (const [issueId, issue] of catalog.issuesById) {
     upsertNode(nodes, buildNode("issue", issueId, issue.title, issue.number));
   }
-  for (const [clId, cl] of catalog.clsById) upsertNode(nodes, buildNode("cl", clId, cl.title, cl.number));
+  for (const cl of new Set(catalog.clsByRef.values())) {
+    upsertNode(nodes, buildNode("cl", cl.publicId, cl.title));
+  }
 
   wikilinkRows.forEach((row) => {
     const source = resolveSourceNode(catalog, row.sourceType, row.sourceId);
@@ -284,7 +278,7 @@ export async function getContentLinkGraph(
     .select({ id: megaIssues.id, number: megaIssues.number, title: megaIssues.title })
     .from(megaIssues);
 
-  const clRows = await database.select({ id: megaCls.id, number: megaCls.number, title: megaCls.title }).from(megaCls);
+  const clRows = await selectDocumentCLs(database);
 
   const issueCommentRows = await database
     .select({ id: megaIssueComments.id, issueNumber: megaIssueComments.issueNumber })
@@ -313,12 +307,19 @@ export async function getContentLinkGraph(
       ]),
     );
 
+  const clsByRef: EntityCatalog["clsByRef"] = new Map();
+  for (const cl of clRows) {
+    // Existing document bodies may reference the local row ID or the old CL number.
+    clsByRef.set(cl.id, cl);
+    clsByRef.set(String(cl.number), cl);
+    clsByRef.set(cl.publicId, cl);
+  }
+
   const catalog: EntityCatalog = {
     docs: new Map(docRows.map((row) => [row.id, { title: row.title }])),
     issuesById: new Map(issueRows.map((row) => [row.id, { number: row.number, title: row.title }])),
     issuesByNumber: new Map(issueRows.map((row) => [row.number, { id: row.id, title: row.title }])),
-    clsById: new Map(clRows.map((row) => [row.id, { number: row.number, title: row.title }])),
-    clsByNumber: new Map(clRows.map((row) => [row.number, { id: row.id, title: row.title }])),
+    clsByRef,
     issueComments: new Map(issueCommentRows.map((row) => [row.id, { issueNumber: row.issueNumber }])),
     clComments: new Map(clCommentRows.map((row) => [row.id, { clNumber: row.clNumber }])),
     docComments: new Map(docCommentRows.map((row) => [row.id, { docId: row.docId }])),

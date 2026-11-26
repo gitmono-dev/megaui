@@ -626,6 +626,8 @@ collab-server（`apps/collab-server`）只按普通协作票据校验连接（FS
 
 ## 数据库角色
 
+变更单通过 `mega_cl_public_ids` 保存可分享的短码，通过 `mega_cl_links` 关联 Mega2 的变更单。按表授权的部署在迁移后需要为 Web 运行角色授予这两张表的 `SELECT` 和 `INSERT` 权限。
+
 飞书模式的 Web 只以运行角色访问数据库，DDL 只由迁移角色执行（GC-15，FSL-158、FSL-162）：
 
 - **运行角色：** Web 的 `DATABASE_URL` 所用角色，只获授 `SELECT` / `INSERT` / `UPDATE` / `DELETE` 与序列 `USAGE`。它及其可 `SET ROLE` 的任何角色都不得为超级用户或具有 `CREATEDB` 属性，不得对当前数据库持有 `CREATE`（可建 schema），也不得对受保护范围内的任一 schema 持有 `CREATE`（可建对象）；它们还不得拥有当前数据库、受保护范围内的任一 schema 或当前数据库中的任一对象（所有者可 `ALTER` / `DROP` 其对象，FSL-162）。

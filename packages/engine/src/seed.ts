@@ -18,6 +18,7 @@ import {
   megaChannelKinds,
   megaCls,
   megaClStates,
+  megaClPublicIds,
   megaClCiStatuses,
   megaClMergeStates,
   megaContent,
@@ -32,6 +33,8 @@ import {
   user,
   type Database,
 } from "@megaui/database";
+import { eq } from "drizzle-orm";
+import { ensureCLPublicId, lockCLNumberAllocation, nextCLNumber } from "./services/cls/public-id";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import {
   ALL_USERS,
@@ -156,37 +159,47 @@ export async function seedMegaDatabase(database: Database): Promise<SeedMegaResu
     await insertOrSkip(counter, starRows);
   }
 
-  const clRows = await database
-    .insert(megaCls)
-    .values({
-      id: SAMPLE_CL.id,
-      number: SAMPLE_CL.number,
-      title: SAMPLE_CL.title,
-      state: SAMPLE_CL.state ?? megaClStates.WIP,
-      packageId: SAMPLE_CL.packageId,
-      authorId: SAMPLE_CL.author.id,
-      reviewers: SAMPLE_CL.reviewers.map((reviewer) => ({
-        userId: reviewer.user.id,
-        verdict: reviewer.verdict,
-        reviewedAt: reviewer.reviewedAt,
-      })),
-      additions: SAMPLE_CL.additions,
-      deletions: SAMPLE_CL.deletions,
-      files: [],
-      revisions: [],
-      ci: SAMPLE_CL.ci ?? megaClCiStatuses.QUEUED,
-      merge: SAMPLE_CL.merge ?? megaClMergeStates.NEEDS_REVIEW,
-      atomic: SAMPLE_CL.atomic,
-      crossPackage: [...SAMPLE_CL.crossPackage],
-      linkedIssues: [...SAMPLE_CL.linkedIssues],
-      branch: SAMPLE_CL.branch,
-      subscribed: SAMPLE_CL.subscribed ?? false,
-      createdAt: new Date(SAMPLE_CL.createdAt),
-      updatedAt: new Date(SAMPLE_CL.updatedAt),
-    })
-    .onConflictDoNothing()
-    .returning({ id: megaCls.id });
-  await insertOrSkip(counter, clRows);
+  const seededCL = await database.transaction(async (tx) => {
+    await lockCLNumberAllocation(tx);
+    const [existing] = await tx.select({ number: megaCls.number }).from(megaCls)
+      .where(eq(megaCls.id, SAMPLE_CL.id)).limit(1);
+    if (existing) {
+      return { inserted: false, publicId: await ensureCLPublicId(tx, existing.number) };
+    }
+    const number = await nextCLNumber(tx);
+    await tx
+      .insert(megaCls)
+      .values({
+        id: SAMPLE_CL.id,
+        number,
+        title: SAMPLE_CL.title,
+        state: SAMPLE_CL.state ?? megaClStates.WIP,
+        packageId: SAMPLE_CL.packageId,
+        authorId: SAMPLE_CL.author.id,
+        reviewers: SAMPLE_CL.reviewers.map((reviewer) => ({
+          userId: reviewer.user.id,
+          verdict: reviewer.verdict,
+          reviewedAt: reviewer.reviewedAt,
+        })),
+        additions: SAMPLE_CL.additions,
+        deletions: SAMPLE_CL.deletions,
+        files: [],
+        revisions: [],
+        ci: SAMPLE_CL.ci ?? megaClCiStatuses.QUEUED,
+        merge: SAMPLE_CL.merge ?? megaClMergeStates.NEEDS_REVIEW,
+        atomic: SAMPLE_CL.atomic,
+        crossPackage: [...SAMPLE_CL.crossPackage],
+        linkedIssues: [...SAMPLE_CL.linkedIssues],
+        branch: SAMPLE_CL.branch,
+        subscribed: SAMPLE_CL.subscribed ?? false,
+        createdAt: new Date(SAMPLE_CL.createdAt),
+        updatedAt: new Date(SAMPLE_CL.updatedAt),
+      });
+    await tx.insert(megaClPublicIds).values({ number, publicId: SAMPLE_CL.publicId }).onConflictDoNothing();
+    return { inserted: true, publicId: await ensureCLPublicId(tx, number) };
+  });
+  if (seededCL.inserted) counter.noteInserted();
+  else counter.noteSkipped(1);
 
   const channelRows = await database
     .insert(megaChannels)
@@ -258,7 +271,10 @@ export async function seedMegaDatabase(database: Database): Promise<SeedMegaResu
     ...SAMPLE_MESSAGES.map((message) => ({
       containerType: megaContentContainerTypes.CHAT_MESSAGE,
       containerId: message.id,
-      bodyJson: { segments: [...message.segments] },
+      bodyJson: {
+        segments: message.segments.map((segment) => segment.type === "cl-ref"
+          ? { type: "cl-ref", publicId: seededCL.publicId } : segment),
+      },
       bodyFormatVersion: 1,
     })),
   ];

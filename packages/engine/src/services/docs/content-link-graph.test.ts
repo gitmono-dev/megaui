@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import {
   createDatabaseClient,
   megaCls,
+  megaClPublicIds,
   megaClCiStatuses,
   megaClMergeStates,
   megaClStates,
@@ -98,6 +99,8 @@ describe.skipIf(!adminDatabaseUrl)("getContentLinkGraph (EG-03, throwaway PG)", 
         merge: megaClMergeStates.NEEDS_REVIEW,
       });
 
+      const publicId = "GraphTX-02_a";
+      await client.db.insert(megaClPublicIds).values({ number: 202, publicId });
       const wikilinker = await docs.createDoc(
         {
           title: "Wikilinker",
@@ -111,6 +114,8 @@ describe.skipIf(!adminDatabaseUrl)("getContentLinkGraph (EG-03, throwaway PG)", 
                   children: [
                     { type: "mega-ref", ref: { kind: "doc", targetTitle: SAMPLE_DOC.title, targetId: SAMPLE_DOC.id } },
                     { type: "mega-ref", ref: { kind: "issue", targetTitle: "Graph issue", targetId: "101" } },
+                    { type: "mega-ref", ref: { kind: "cl", targetTitle: "Graph CL", targetId: "202" } },
+                    { type: "mega-ref", ref: { kind: "cl", targetTitle: "Graph CL", targetId: publicId } },
                   ],
                 },
               ],
@@ -146,7 +151,12 @@ describe.skipIf(!adminDatabaseUrl)("getContentLinkGraph (EG-03, throwaway PG)", 
       expect(nodeIds).toContain(`doc:${wikilinker.id}`);
       expect(nodeIds).toContain(`doc:${embedder.id}`);
       expect(nodeIds).toContain("issue:101");
-      expect(nodeIds).toContain("cl:202");
+      expect(graph.nodes).toContainEqual(expect.objectContaining({
+        id: `cl:${publicId}`, entityId: publicId, href: `/cls/${publicId}`,
+      }));
+      expect(graph.edges.filter(edge =>
+        edge.sourceNodeId === `doc:${wikilinker.id}` && edge.targetNodeId === `cl:${publicId}`
+      )).toHaveLength(1);
 
       expect(graph.edges).toContainEqual(
         expect.objectContaining({

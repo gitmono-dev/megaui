@@ -49,6 +49,7 @@ describe('refExportContract', () => {
   it.each([
     ['issue', '7', '/workspace/issues/7'],
     ['cl', '12', '/workspace/cls/12'],
+    ['cl', 'CLtx_AbCd-12', '/workspace/cls/CLtx_AbCd-12'],
     ['user', 'octocat', '/workspace/dm/octocat'],
   ] as const)('resolves an href for kind=%s', (kind, targetId, href) => {
     const contract = refExportContract({ kind, targetTitle: 'x', targetId }, { workspaceBase: '/workspace' })
@@ -60,7 +61,7 @@ describe('refExportContract', () => {
     expect(contract.href).toBe('/workspace/docs/block-1#block')
   })
 
-  it('falls back to a span when an issue/cl targetId is non-numeric (非规则 slug)', () => {
+  it('falls back to a span when an issue targetId is non-numeric (非规则 slug)', () => {
     const contract = refExportContract({ kind: 'issue', targetTitle: 'x', targetId: 'not-a-number' }, { workspaceBase: '/workspace' })
     expect(contract).toMatchObject({ tagName: 'span', megaContent: 'ref', href: undefined })
   })

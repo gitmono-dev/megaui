@@ -199,8 +199,9 @@ export function matchesCLFilter(cl: CL, filter: Filter, currentUserId: string): 
     if (!matches) return false
   }
   if (filter.text) {
+    const query = filter.text.trim()
     const haystack = `${cl.title} ${cl.description ?? ''}`.toLocaleLowerCase()
-    if (!haystack.includes(filter.text.toLocaleLowerCase())) return false
+    if (query.replace(/^!/, '') !== cl.publicId && !haystack.includes(query.toLocaleLowerCase())) return false
   }
   return true
 }

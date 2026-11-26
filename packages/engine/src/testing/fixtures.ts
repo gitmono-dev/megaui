@@ -54,6 +54,8 @@ export const CURRENT_USER = USERS.tianjing;
 const EMPTY_EDITOR_STATE =
   '{"root":{"children":[],"direction":null,"format":"","indent":0,"type":"root","version":1}}';
 
+const SAMPLE_CL_PUBLIC_ID = "Q7rE8kzpY-1A";
+
 export const SAMPLE_DOC: Doc = {
   id: "doc_arch_overview",
   title: "Architecture overview",
@@ -62,7 +64,7 @@ export const SAMPLE_DOC: Doc = {
   author: USERS.tianjing,
   collaborators: [USERS.eleanor],
   tags: [{ id: "tag_design", name: "design" }],
-  linkedCLs: [1],
+  linkedCLs: [SAMPLE_CL_PUBLIC_ID],
   linkedIssues: [],
   versions: [
     {
@@ -86,6 +88,7 @@ export const SAMPLE_DOCS: readonly Doc[] = [SAMPLE_DOC];
 
 export const SAMPLE_CL: CL = {
   id: "cl_1",
+  publicId: SAMPLE_CL_PUBLIC_ID,
   number: 1,
   title: "Introduce engine result contract",
   description: "Skeleton CL used by the engine seed and tests.",
@@ -145,7 +148,7 @@ export const SAMPLE_MESSAGES: readonly ChatMessage[] = [
     reactions: [],
     segments: [
       { type: "text", text: "Noted — see " },
-      { type: "cl-ref", number: SAMPLE_CL.number },
+      { type: "cl-ref", publicId: SAMPLE_CL.publicId },
       { type: "text", text: "." },
     ],
   },

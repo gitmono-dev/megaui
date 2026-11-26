@@ -11,6 +11,7 @@
  * UI package (UI-06) subclasses `RefNode` to add the real React chip.
  */
 
+import { isCLReference } from '@megaui/core'
 import {
   DecoratorNode,
   type LexicalNode,
@@ -53,10 +54,8 @@ function resolvedHref(ref: RefNodeValue, workspaceBase: string): string | undefi
       const number = Number(ref.targetId)
       return Number.isFinite(number) ? `${base}/issues/${number}` : undefined
     }
-    case 'cl': {
-      const number = Number(ref.targetId)
-      return Number.isFinite(number) ? `${base}/cls/${number}` : undefined
-    }
+    case 'cl':
+      return isCLReference(ref.targetId) ? `${base}/cls/${ref.targetId}` : undefined
     case 'user':
       return `${base}/dm/${encodeURIComponent(ref.targetId)}`
     case 'block':

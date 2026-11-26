@@ -10,8 +10,8 @@
 //   layout input for the frontend's xyflow graph. It never rejects a
 //   cyclic graph — real package dependency graphs can be legitimately
 //   cyclic; this is layout-hint data, not validation.
-import { eq } from "drizzle-orm";
-import { megaCls, type Database } from "@megaui/database";
+import { eq, inArray } from "drizzle-orm";
+import { megaClPublicIds, megaCls, type Database } from "@megaui/database";
 import type { ApiChange, DepEdge, DepNode, RelatedCL, SymbolUsage } from "@megaui/core";
 import { MegaNotFoundError } from "../../errors";
 import { assertWorkspaceMember } from "./authz";
@@ -148,7 +148,20 @@ export async function getCLDependencyGraph(database: Database, number: number): 
   const clId = await requireClId(database, number);
   const envelope = await loadClEnvelope(database, clId);
   const view = parseDependencyView(envelope.dependencyView) ?? emptyDependencyView();
-  return { ...view, cycles: detectDependencyCycles(view.nodes, view.edges) };
+  return projectDependencyGraph(database, view);
+}
+
+async function projectDependencyGraph(database: Database, view: CLDependencyView): Promise<CLDependencyGraphResult> {
+  const numbers = [...new Set(view.relatedCLs.map((related) => related.number))];
+  const rows = numbers.length
+    ? await database.select().from(megaClPublicIds).where(inArray(megaClPublicIds.number, numbers))
+    : [];
+  const byNumber = new Map(rows.map((row) => [row.number, row.publicId]));
+  return {
+    ...view,
+    relatedCLs: view.relatedCLs.map((related) => ({ ...related, publicId: byNumber.get(related.number) })),
+    cycles: detectDependencyCycles(view.nodes, view.edges),
+  };
 }
 
 export async function setCLDependencyGraph(
@@ -179,5 +192,5 @@ export async function setCLDependencyGraph(
     await writeClEnvelope(tx, row.id, { ...envelope, dependencyView: view }, now);
     await tx.update(megaCls).set({ updatedAt: now }).where(eq(megaCls.id, row.id));
   });
-  return { ...view, cycles: detectDependencyCycles(view.nodes, view.edges) };
+  return projectDependencyGraph(database, view);
 }

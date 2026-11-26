@@ -343,5 +343,7 @@ describe("searchTextScore (title group, ADR-FS-01 §③ — still used, not tsve
     ];
     const ranked = rankByTitleScore("auth", items);
     expect(ranked.map((hit) => hit.item.id)).toEqual(["2", "5", "3", "1"]);
+    const cl = { id: "cl-1", title: "unrelated", publicId: "cl_42-testID" };
+    expect(rankByTitleScore(cl.publicId, [...items, cl])).toEqual([{ item: cl, score: SEARCH_TITLE_SCORE.EXACT }]);
   });
 });

@@ -7,7 +7,7 @@ function segmentText(segment: ChatSegment): string {
     case "link":
       return segment.text;
     case "cl-ref":
-      return `!${segment.number}`;
+      return `!${"publicId" in segment ? segment.publicId : segment.number}`;
     case "issue-ref":
       return `#${segment.number}`;
     case "user-ref":

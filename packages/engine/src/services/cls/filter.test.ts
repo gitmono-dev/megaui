@@ -9,6 +9,7 @@ import { matchesCLFilter, parseQuery, type CL } from "@megaui/core";
 function makeCL(overrides: Partial<CL> = {}): CL {
   return {
     id: "cl_1",
+    publicId: "Q7rE8kzpY-1A",
     number: 10,
     title: "Add streaming diff viewer",
     description: "Adds a streaming renderer for large diffs.",

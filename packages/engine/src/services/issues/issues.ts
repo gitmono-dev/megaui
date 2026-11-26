@@ -57,6 +57,7 @@ import { randomUUID } from "node:crypto";
 import type { Issue, IssueComment, Milestone } from "@megaui/core";
 import { ISSUE_PRIORITY_RANK, MEGA_ISSUE_PRIORITIES, matchesIssueFilter } from "@megaui/core";
 import {
+  megaClPublicIds,
   megaContent,
   megaContentContainerTypes,
   megaIssueComments,
@@ -66,7 +67,7 @@ import {
   user,
   type Database,
 } from "@megaui/database";
-import { and, asc, count, desc, eq, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, sql } from "drizzle-orm";
 import {
   MegaBadRequestError,
   MegaConflictError,
@@ -167,7 +168,13 @@ async function loadIssue(database: Database, number: number, actorUserId?: strin
   const assigneeIds = Array.isArray(row.assigneeIds) ? row.assigneeIds : [];
   const watcherIds = Array.isArray(row.watcherIds) ? row.watcherIds : [];
   const linkedCLs = Array.isArray(row.linkedCLs) ? row.linkedCLs : [];
-  const publicUsers = await resolvePublicProfiles(database, [row.authorId, ...assigneeIds]);
+  const [publicUsers, clIds] = await Promise.all([
+    resolvePublicProfiles(database, [row.authorId, ...assigneeIds]),
+    linkedCLs.length
+      ? database.select().from(megaClPublicIds).where(inArray(megaClPublicIds.number, linkedCLs))
+      : [],
+  ]);
+  const publicIdByNumber = new Map(clIds.map((cl) => [cl.number, cl.publicId]));
   const author = publicUsers.get(row.authorId) ?? fallbackPublicProfile(row.authorId);
   const assignees = assigneeIds.map((id) => publicUsers.get(id) ?? fallbackPublicProfile(id));
 
@@ -188,6 +195,7 @@ async function loadIssue(database: Database, number: number, actorUserId?: strin
     labels: [],
     milestone: parseMilestone(row.milestone),
     linkedCLs,
+    linkedClPublicIds: linkedCLs.flatMap((clNumber) => publicIdByNumber.get(clNumber) ?? []),
     reactions: projectReactions(parseReactionRows(row.reactions), actorUserId),
     author,
     assignees,

@@ -3,6 +3,7 @@
  */
 import { ownedContractFixture } from "../helpers/owned-contract";
 
+import { isBlockId } from "@megaui/core";
 import { createDatabaseClient } from "@megaui/database";
 import {
   MEGA_ERROR_CODES,
@@ -301,7 +302,7 @@ describe(
     });
 
     describe("cls domain", () => {
-      it("returns seeded CL detail", async () => {
+      it("resolves the seeded CL and its comments through both the legacy and public links", async () => {
         const response = await GET(
           authedRequest(`/cls/${SAMPLE_CL.number}`, sessionCookieHeader),
           { params: Promise.resolve({ segments: ["cls", String(SAMPLE_CL.number)] }) },
@@ -310,17 +311,32 @@ describe(
         const body: unknown = await response.json();
         assertMegaSuccessEnvelope(body);
         expect(body.data).toMatchObject({ number: SAMPLE_CL.number });
+        const { publicId } = body.data as { publicId: string };
+        expect(isBlockId(publicId)).toBe(true);
+
+        for (const tail of [[], ["comments"]]) {
+          const read = (ref: string) => {
+            const segments = ["cls", ref, ...tail];
+            return GET(authedRequest(`/${segments.join("/")}`, sessionCookieHeader), {
+              params: Promise.resolve({ segments }),
+            });
+          };
+          const byPublicId = await read(publicId);
+          const byNumber = await read(String(SAMPLE_CL.number));
+          expect(byPublicId.status).toBe(200);
+          expect(await byPublicId.json()).toEqual(await byNumber.json());
+        }
       });
 
       it("returns 403 when a non-author mutates CL state", async () => {
         const response = await POST(
-          authedRequest(`/cls/${SAMPLE_CL.number}/transition`, sessionCookieHeader, {
+          authedRequest(`/cls/${SAMPLE_CL.publicId}/transition`, sessionCookieHeader, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ state: "wip" }),
           }),
           { params: Promise.resolve({
-            segments: ["cls", String(SAMPLE_CL.number), "transition"],
+            segments: ["cls", SAMPLE_CL.publicId, "transition"],
           }) },
         );
         expect(response.status).toBe(403);
@@ -329,15 +345,23 @@ describe(
         expect(body.error.code).toBe(MEGA_ERROR_CODES.FORBIDDEN);
       });
 
-      it("returns 404 for a missing CL", async () => {
+      it.each(["999999", "missingCL123"])("returns 404 for an unknown CL reference %s", async (ref) => {
         const response = await GET(
-          authedRequest("/cls/999999", sessionCookieHeader),
-          { params: Promise.resolve({ segments: ["cls", "999999"] }) },
+          authedRequest(`/cls/${ref}`, sessionCookieHeader),
+          { params: Promise.resolve({ segments: ["cls", ref] }) },
         );
         expect(response.status).toBe(404);
         const body: unknown = await response.json();
         assertMegaFailureEnvelope(body);
         expect(body.error.code).toBe(MEGA_ERROR_CODES.NOT_FOUND);
+      });
+
+      it("requires a signed-in actor before looking up a public ID", async () => {
+        const ref = SAMPLE_CL.publicId;
+        const response = await GET(new Request(megaUrl(`/cls/${ref}`)), {
+          params: Promise.resolve({ segments: ["cls", ref] }),
+        });
+        expect(response.status).toBe(401);
       });
 
       it("GET cls/[n]/commits returns empty array when link is unset (WA-09)", async () => {
@@ -410,26 +434,28 @@ describe(
         );
         const createBody: unknown = await created.json();
         assertMegaSuccessEnvelope(createBody);
-        const number = (createBody.data as { number: number }).number;
-        const initialSubscribed = (createBody.data as { subscribed: boolean }).subscribed;
+        const { publicId, subscribed: initialSubscribed } = createBody.data as {
+          publicId: string; subscribed: boolean;
+        };
+        expect(isBlockId(publicId)).toBe(true);
 
         const first = await POST(
-          authedRequest(`/cls/${number}/subscribe`, sessionCookieHeader, {
+          authedRequest(`/cls/${publicId}/subscribe`, sessionCookieHeader, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({}),
           }),
-          { params: Promise.resolve({ segments: ["cls", String(number), "subscribe"] }) },
+          { params: Promise.resolve({ segments: ["cls", publicId, "subscribe"] }) },
         );
         expect(first.status).toBe(200);
 
         const second = await POST(
-          authedRequest(`/cls/${number}/subscribe`, sessionCookieHeader, {
+          authedRequest(`/cls/${publicId}/subscribe`, sessionCookieHeader, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({}),
           }),
-          { params: Promise.resolve({ segments: ["cls", String(number), "subscribe"] }) },
+          { params: Promise.resolve({ segments: ["cls", publicId, "subscribe"] }) },
         );
         expect(second.status).toBe(200);
         const toggled: unknown = await second.json();

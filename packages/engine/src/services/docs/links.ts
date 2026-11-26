@@ -13,9 +13,10 @@
 // - `resolveOrCreateDoc` takes the doc-creation capability as a parameter
 //   (`createEmptyDoc`) instead of importing `./docs` — same reasoning.
 // - Single PG dialect (ADR-ARCH-02): no sqlite/d1 transaction branch.
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, or } from "drizzle-orm";
 import {
   megaCls,
+  megaClPublicIds,
   megaClComments,
   megaContentContainerTypes,
   megaContentLinks,
@@ -26,7 +27,7 @@ import {
   megaIssues,
   type Database,
 } from "@megaui/database";
-import { buildTitleIndex, searchTitleIndex, type TitleIndexEntry } from "@megaui/core";
+import { buildTitleIndex, isLegacyCLNumber, searchTitleIndex, type TitleIndexEntry } from "@megaui/core";
 import { parseRoamEmbed } from "@megaui/content";
 import { MegaBadRequestError, MegaConflictError, MegaNotFoundError, MegaTitleConflictError } from "../../errors";
 import type { AclService } from "../acl";
@@ -296,16 +297,35 @@ export async function deleteLinksForDoc(repo: LinksRepo, docId: string): Promise
   await repo.deleteForSource(megaContentContainerTypes.DOC, docId);
 }
 
+/** CLs with locally stored content, indexed by the same public IDs as the workspace list. */
+export function selectDocumentCLs(database: Database) {
+  return database
+    .select({ id: megaCls.id, number: megaCls.number, publicId: megaClPublicIds.publicId, title: megaCls.title })
+    .from(megaCls)
+    .innerJoin(megaClPublicIds, eq(megaClPublicIds.number, megaCls.number));
+}
+
+async function findDocumentCL(database: Database, ref: string) {
+  const [cl] = await selectDocumentCLs(database)
+    .where(or(
+      eq(megaClPublicIds.publicId, ref),
+      eq(megaCls.id, ref),
+      isLegacyCLNumber(ref) ? eq(megaCls.number, Number(ref)) : undefined,
+    ))
+    .limit(1);
+  return cl;
+}
+
 /**
  * GET title index — doc + issue + CL titles (no soft-deleted docs), read
  * directly off domain tables. Doc entries are filtered fail-closed against
  * the actor's ACL read grant; issue/CL ACL do not exist yet (EG-04/EG-05).
  */
-export async function getTitleIndex(
+async function readTitleIndex(
   database: Database,
   acl: AclService,
   actorUserId: string | null | undefined,
-): Promise<TitleIndexEntry[]> {
+) {
   const docRows = await database
     .select({ id: megaDocs.id, title: megaDocs.title })
     .from(megaDocs)
@@ -314,13 +334,22 @@ export async function getTitleIndex(
     docRows.map(async (doc) => ((await acl.canRead(doc.id, actorUserId)).allow ? doc : null)),
   );
   const issueRows = await database.select({ number: megaIssues.number, title: megaIssues.title }).from(megaIssues);
-  const clRows = await database.select({ number: megaCls.number, title: megaCls.title }).from(megaCls);
+  const clRows = await selectDocumentCLs(database);
 
-  return buildTitleIndex({
+  const entries = buildTitleIndex({
     docs: readableDocs.filter((doc): doc is { id: string; title: string } => doc !== null),
     issues: issueRows,
     cls: clRows,
   });
+  return { entries, clRows };
+}
+
+export async function getTitleIndex(
+  database: Database,
+  acl: AclService,
+  actorUserId: string | null | undefined,
+): Promise<TitleIndexEntry[]> {
+  return (await readTitleIndex(database, acl, actorUserId)).entries;
 }
 
 export async function searchDocTitleIndex(
@@ -422,22 +451,9 @@ async function resolveSourcePresentation(
         : { sourceTitle: sourceId, href: "/issues" };
     }
     case megaContentContainerTypes.CL: {
-      const [byId] = await database
-        .select({ number: megaCls.number, title: megaCls.title })
-        .from(megaCls)
-        .where(eq(megaCls.id, sourceId))
-        .limit(1);
-      if (byId) return { sourceTitle: byId.title, href: `/cls/${byId.number}` };
-      const number = Number(sourceId);
-      const [cl] = Number.isFinite(number)
-        ? await database
-            .select({ number: megaCls.number, title: megaCls.title })
-            .from(megaCls)
-            .where(eq(megaCls.number, number))
-            .limit(1)
-        : [];
+      const cl = await findDocumentCL(database, sourceId);
       return cl
-        ? { sourceTitle: cl.title, href: `/cls/${cl.number}` }
+        ? { sourceTitle: cl.title, href: `/cls/${cl.publicId}` }
         : { sourceTitle: sourceId, href: "/cls" };
     }
     case megaContentContainerTypes.ISSUE_COMMENT: {
@@ -456,19 +472,13 @@ async function resolveSourcePresentation(
       return { sourceTitle: issue?.title ?? `#${comment.issueNumber}`, href };
     }
     case megaContentContainerTypes.CL_COMMENT: {
-      const [comment] = await database
-        .select({ clNumber: megaClComments.clNumber })
-        .from(megaClComments)
+      const [cl] = await selectDocumentCLs(database)
+        .innerJoin(megaClComments, eq(megaClComments.clNumber, megaCls.number))
         .where(eq(megaClComments.id, sourceId))
         .limit(1);
-      if (!comment) return { sourceTitle: sourceId, href: "/cls" };
-      const [cl] = await database
-        .select({ title: megaCls.title })
-        .from(megaCls)
-        .where(eq(megaCls.number, comment.clNumber))
-        .limit(1);
-      const href = `/cls/${comment.clNumber}#comment-${encodeURIComponent(sourceId)}`;
-      return { sourceTitle: cl?.title ?? `!${comment.clNumber}`, href };
+      return cl
+        ? { sourceTitle: cl.title, href: `/cls/${cl.publicId}#comment-${encodeURIComponent(sourceId)}` }
+        : { sourceTitle: sourceId, href: "/cls" };
     }
     case megaContentContainerTypes.DOC_COMMENT: {
       const [comment] = await database
@@ -492,11 +502,11 @@ async function resolveSourcePresentation(
 
 type BacklinkRow = LinkTargetRow & { targetBlockId?: string; targetBlockSummary?: string };
 
-async function assertBacklinkTargetExists(
+async function backlinkTargetIds(
   database: Database,
   kind: BacklinkTargetKind,
   id: string,
-): Promise<void> {
+): Promise<string[]> {
   switch (kind) {
     case "doc": {
       const [row] = await database
@@ -505,7 +515,7 @@ async function assertBacklinkTargetExists(
         .where(and(eq(megaDocs.id, id), isNull(megaDocs.deletedAt)))
         .limit(1);
       if (!row) throw new MegaNotFoundError("Document", id);
-      return;
+      return [id];
     }
     case "issue": {
       const number = Number(id);
@@ -513,15 +523,12 @@ async function assertBacklinkTargetExists(
         ? await database.select({ number: megaIssues.number }).from(megaIssues).where(eq(megaIssues.number, number)).limit(1)
         : [];
       if (!row) throw new MegaNotFoundError("Issue", id);
-      return;
+      return [id];
     }
     case "cl": {
-      const number = Number(id);
-      const [row] = Number.isFinite(number)
-        ? await database.select({ number: megaCls.number }).from(megaCls).where(eq(megaCls.number, number)).limit(1)
-        : [];
-      if (!row) throw new MegaNotFoundError("CL", id);
-      return;
+      const cl = await findDocumentCL(database, id);
+      if (!cl) throw new MegaNotFoundError("CL", id);
+      return [...new Set([cl.publicId, String(cl.number), cl.id])];
     }
     default: {
       const _exhaustive: never = kind;
@@ -638,11 +645,11 @@ export async function listBacklinks(
   id: string,
   actorUserId: string | null | undefined,
 ): Promise<{ items: BacklinkItem[] }> {
-  await assertBacklinkTargetExists(database, kind, id);
   if (kind === "doc") {
     return listDocBacklinks(database, linksRepo, blocksRepo, acl, id, actorUserId);
   }
-  const rows = await linksRepo.listByTarget(targetKindFor(kind), id);
+  const ids = await backlinkTargetIds(database, kind, id);
+  const rows = (await Promise.all(ids.map(ref => linksRepo.listByTarget(targetKindFor(kind), ref)))).flat();
   const readableRows = await filterReadableSources(database, acl, actorUserId, rows);
   return presentBacklinks(database, readableRows);
 }
@@ -661,7 +668,7 @@ export async function listDocBacklinks(
   docId: string,
   actorUserId: string | null | undefined,
 ): Promise<{ items: BacklinkItem[] }> {
-  await assertBacklinkTargetExists(database, "doc", docId);
+  await backlinkTargetIds(database, "doc", docId);
   await acl.assert(docId, actorUserId, "read");
   const docLinkRows = await linksRepo.listByTarget(megaContentLinkTargetKinds.DOC, docId);
 
@@ -705,15 +712,21 @@ export async function listDocUnlinked(
   actorUserId: string | null | undefined,
 ): Promise<{ items: UnlinkedItem[] }> {
   const plain = bodyPlainText(docBody);
-  const index = await getTitleIndex(database, acl, actorUserId);
+  const { entries, clRows } = await readTitleIndex(database, acl, actorUserId);
+  const clAliases = new Map<string, string>();
+  for (const cl of clRows) {
+    clAliases.set(cl.id, cl.publicId);
+    clAliases.set(String(cl.number), cl.publicId);
+  }
 
   const linkedTargetIds = new Set<string>();
   for (const ref of extractRefsFromEditorState(docBody)) {
-    linkedTargetIds.add(`${ref.targetKind}:${ref.targetId}`);
+    const id = ref.targetKind === "cl" ? clAliases.get(ref.targetId) ?? ref.targetId : ref.targetId;
+    linkedTargetIds.add(`${ref.targetKind}:${id}`);
   }
 
   const items: UnlinkedItem[] = [];
-  for (const entry of index) {
+  for (const entry of entries) {
     if (entry.kind === "user") continue;
     if (entry.kind === "doc" && entry.targetId === docId) continue;
     const key = `${entry.kind}:${entry.targetId}`;

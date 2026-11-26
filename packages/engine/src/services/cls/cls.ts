@@ -33,11 +33,11 @@
 //   `user` (matches the EG-03 docs-service convention: no synthetic user
 //   rows are created on write).
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, getTableColumns, inArray } from "drizzle-orm";
 import {
   megaClCiStatuses,
   megaClComments,
-  megaClLinks,
+  megaClPublicIds,
   megaClMergeStates,
   megaCls,
   megaClStates,
@@ -55,6 +55,7 @@ import { assertWorkspaceMember } from "./authz";
 import { deleteCLCheckRun, getCLChecks, upsertCLCheckRun, type CLCheckRunInput, type CLChecksView } from "./checks";
 import { isEmptyCommentBody, normalizeCommentBodyJson } from "./comment-body";
 import { normalizeCLDescriptionJson, plainSummaryFromDescription } from "./description";
+import { ensureCLPublicId, lockCLNumberAllocation, nextCLNumber } from "./public-id";
 import {
   getCLDependencyGraph,
   setCLDependencyGraph,
@@ -74,9 +75,6 @@ import { createCLRevision, listCLRevisions, parseRevisions, type CreateCLRevisio
 import { assertCLTransitionAllowed, decideCLTransition, mergeStateForTransition } from "./state";
 import type { CLDescriptionPayload, CreateCLInput } from "./types";
 import { fallbackUser, resolveUsers } from "./users";
-
-/** Advisory-lock namespace serializing `mega_cls.number` allocation (GC-08). */
-const CL_NUMBER_LOCK_NS = 1_396_386_881;
 
 function newClId(prefix: string): string {
   return `${prefix}_${randomUUID().replace(/-/g, "").slice(0, 20)}`;
@@ -175,7 +173,11 @@ export function createClsService(database: Database) {
   }
 
   async function loadCL(number: number): Promise<CL> {
-    const [row] = await database.select().from(megaCls).where(eq(megaCls.number, number)).limit(1);
+    const [row] = await database
+      .select({ ...getTableColumns(megaCls), publicId: megaClPublicIds.publicId })
+      .from(megaCls)
+      .leftJoin(megaClPublicIds, eq(megaClPublicIds.number, megaCls.number))
+      .where(eq(megaCls.number, number)).limit(1);
     if (!row) throw new MegaNotFoundError("CL", number);
 
     const reviewerRows = parseReviewerRows(row.reviewers);
@@ -196,6 +198,7 @@ export function createClsService(database: Database) {
 
     return {
       id: row.id,
+      publicId: row.publicId ?? await ensureCLPublicId(database, row.number),
       number: row.number,
       title: row.title,
       description: plainSummaryFromDescription(content?.bodyJson),
@@ -254,14 +257,9 @@ export function createClsService(database: Database) {
     let number = 0;
 
     await database.transaction(async (tx) => {
-      await tx.execute(sql`SELECT pg_advisory_xact_lock(${CL_NUMBER_LOCK_NS})`);
-      const [maxRow] = await tx.select({ number: megaCls.number }).from(megaCls).orderBy(desc(megaCls.number)).limit(1);
-      const [maxLinkRow] = await tx
-        .select({ number: megaClLinks.number })
-        .from(megaClLinks)
-        .orderBy(desc(megaClLinks.number))
-        .limit(1);
-      number = Math.max(maxRow?.number ?? 0, maxLinkRow?.number ?? 0) + 1;
+      await lockCLNumberAllocation(tx);
+      number = await nextCLNumber(tx);
+      await ensureCLPublicId(tx, number);
       await tx.insert(megaCls).values({
         id,
         number,
@@ -548,10 +546,10 @@ export function createClsService(database: Database) {
       input: AddInlineCommentInput,
       actorUserId: string | null | undefined,
     ) => addInlineComment(database, clNumber, input, actorUserId),
-    replyInlineComment: (commentId: string, body: string, actorUserId: string | null | undefined) =>
-      replyInlineComment(database, commentId, body, actorUserId),
-    resolveInlineComment: (commentId: string, actorUserId: string | null | undefined) =>
-      resolveInlineComment(database, commentId, actorUserId),
+    replyInlineComment: (commentId: string, body: string, actorUserId: string | null | undefined, expectedClNumber?: number) =>
+      replyInlineComment(database, commentId, body, actorUserId, expectedClNumber),
+    resolveInlineComment: (commentId: string, actorUserId: string | null | undefined, expectedClNumber?: number) =>
+      resolveInlineComment(database, commentId, actorUserId, expectedClNumber),
     setCLFileViewed: (number: number, path: string, viewed: boolean, actorUserId: string | null | undefined) =>
       setCLFileViewed(database, number, path, viewed, actorUserId),
   };

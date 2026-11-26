@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createDatabaseClient, megaCls, megaContent, megaContentContainerTypes } from "@megaui/database";
+import { isBlockId } from "@megaui/core";
+import { createDatabaseClient, megaClPublicIds, megaCls, megaContent, megaContentContainerTypes } from "@megaui/database";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { and, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -15,6 +16,7 @@ import {
 import { seedMegaDatabase } from "../../seed";
 import { SAMPLE_CL, USERS } from "../../testing/fixtures";
 import { createClsService } from "./cls";
+import { ensureCLPublicId, resolveCLNumber } from "./public-id";
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const migrationsFolder = path.resolve(dirname, "../../../../database/drizzle");
@@ -72,6 +74,10 @@ describe.skipIf(!adminDatabaseUrl)("createClsService list/detail/comments/descri
         USERS.tianjing.id,
       );
       expect(created.number).toBe(SAMPLE_CL.number + 1);
+      expect(isBlockId(created.publicId)).toBe(true);
+      expect(await resolveCLNumber(client.db, created.publicId)).toBe(created.number);
+      expect(await resolveCLNumber(client.db, String(created.number))).toBe(created.number);
+      expect((await cls.getCL(created.number)).publicId).toBe(created.publicId);
       expect(created.state).toBe("wip");
       expect(created.merge).toBe("needs-review");
       expect(created.ci).toBe("queued");
@@ -120,6 +126,7 @@ describe.skipIf(!adminDatabaseUrl)("createClsService list/detail/comments/descri
       );
       const numbers = created.map((cl) => cl.number);
       expect(new Set(numbers).size).toBe(RACERS);
+      expect(new Set(created.map((cl) => cl.publicId)).size).toBe(RACERS);
     } finally {
       await client.close();
     }
@@ -130,12 +137,33 @@ describe.skipIf(!adminDatabaseUrl)("createClsService list/detail/comments/descri
     try {
       const cls = createClsService(client.db);
       const cl = await cls.getCL(SAMPLE_CL.number);
+      expect(cl.publicId).toBe(SAMPLE_CL.publicId);
       expect(cl.title).toBe(SAMPLE_CL.title);
       expect(cl.author.id).toBe(SAMPLE_CL.author.id);
       expect(cl.reviewers).toHaveLength(1);
       expect(cl.reviewers[0]).toMatchObject({ user: { id: USERS.tianjing.id }, verdict: "approved" });
 
       await expect(cls.getCL(999_999)).rejects.toBeInstanceOf(MegaNotFoundError);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("reserves stable codes on concurrent legacy reads and treats twelve digits as a public code", async () => {
+    const client = createDatabaseClient({ connectionString });
+    try {
+      const number = 2_050;
+      const codes = await Promise.all(Array.from({ length: 8 }, () => ensureCLPublicId(client.db, number)));
+      expect(new Set(codes).size).toBe(1);
+      await client.db.insert(megaClPublicIds).values({ number: number + 1, publicId: "000000000001" });
+      expect(await resolveCLNumber(client.db, "000000000001")).toBe(number + 1);
+      await expect(resolveCLNumber(client.db, "000000000002")).rejects.toBeInstanceOf(MegaNotFoundError);
+      await expect(resolveCLNumber(client.db, "2147483648")).rejects.toBeInstanceOf(MegaBadRequestError);
+      await expect(resolveCLNumber(client.db, "../1")).rejects.toBeInstanceOf(MegaBadRequestError);
+      const created = await createClsService(client.db).createCL(
+        { title: "Retired CL numbers stay reserved", packageId: "pkg_engine", branch: "retired" }, USERS.tianjing.id,
+      );
+      expect(created.number).toBeGreaterThan(number + 1);
     } finally {
       await client.close();
     }

@@ -9,6 +9,9 @@
 //
 // The suite needs a docker daemon. Without one it is skipped locally with a
 // warning, and in CI it is a hard failure.
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { isBlockId } from "@megaui/core";
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -39,6 +42,7 @@ const EXPECTED_PUBLIC_TABLES = [
   "mega_channels",
   "mega_cl_comments",
   "mega_cl_links",
+  "mega_cl_public_ids",
   "mega_cls",
   "mega_content",
   "mega_content_blocks",
@@ -115,6 +119,41 @@ describe.skipIf(!dockerAvailable)(
 
     it("creates no table outside the explicit manifest (FSL-168: the enterprise tables are dropped)", async () => {
       expect(await readPublicTables(pool)).toEqual([...EXPECTED_PUBLIC_TABLES]);
+    });
+
+    it("backfills one block-format public ID per distinct local or live CL number", async () => {
+      const migration = await readFile(join(resolveMigrationsFolder(), "0024_mega_cl_public_ids.sql"), "utf8");
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query("CREATE SCHEMA cl_upgrade");
+        await client.query("SET LOCAL search_path = cl_upgrade");
+        await client.query("CREATE TABLE mega_cls (number integer)");
+        await client.query("CREATE TABLE mega_cl_links (number integer)");
+        await client.query("INSERT INTO mega_cls VALUES (1), (2)");
+        await client.query("INSERT INTO mega_cl_links VALUES (2), (3)");
+        await client.query(migration);
+        const { rows } = await client.query<{ number: number; public_id: string }>(
+          "SELECT number, public_id FROM mega_cl_public_ids ORDER BY number",
+        );
+        expect(rows.map(row => row.number)).toEqual([1, 2, 3]);
+        expect(rows.every(row => isBlockId(row.public_id))).toBe(true);
+        expect(new Set(rows.map(row => row.public_id)).size).toBe(3);
+      } finally {
+        await client.query("ROLLBACK");
+        client.release();
+      }
+    });
+
+    it("enforces unique, case-sensitive block-format CL codes and unique internal numbers", async () => {
+      const insert = (number: number, code: string) =>
+        pool.query("INSERT INTO mega_cl_public_ids (number, public_id) VALUES ($1, $2)", [number, code]);
+      await insert(1, "Abcd012345_-");
+      await insert(2, "abcd012345_-");
+      await expect(insert(1, "Different123")).rejects.toMatchObject({ code: "23505" });
+      await expect(insert(3, "Abcd012345_-")).rejects.toMatchObject({ code: "23505" });
+      await expect(insert(3, "too.short")).rejects.toMatchObject({ code: "23514" });
+      await expect(insert(3, "é12345678901")).rejects.toMatchObject({ code: "23514" });
     });
 
     it("preserves a legacy session row on re-migration; session has no enterprise columns (FSL-168)", async () => {

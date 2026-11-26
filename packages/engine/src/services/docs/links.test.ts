@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import {
   createDatabaseClient,
   megaCls,
+  megaClPublicIds,
   megaClCiStatuses,
   megaClMergeStates,
   megaClStates,
@@ -239,11 +240,30 @@ describe.skipIf(!adminDatabaseUrl)("links service (EG-03, throwaway PG)", () => 
         merge: megaClMergeStates.NEEDS_REVIEW,
       });
 
+      const publicId = "DocIndex42_a";
+      await client.db.insert(megaClPublicIds).values({ number: 42, publicId });
+
       // Signed-in workspace users can see the seeded doc without a collaborator row.
       const ownerIndex = await getTitleIndex(client.db, acl, USERS.tianjing.id);
       expect(ownerIndex.some((entry) => entry.kind === "doc" && entry.targetId === SAMPLE_DOC.id)).toBe(true);
       expect(ownerIndex.some((entry) => entry.kind === "issue" && entry.targetId === "1")).toBe(true);
-      expect(ownerIndex.some((entry) => entry.kind === "cl" && entry.targetId === "42")).toBe(true);
+      expect(ownerIndex.some((entry) => entry.kind === "cl" && entry.targetId === publicId && entry.detail === publicId)).toBe(true);
+
+      const blocks = createBlocksRepo(client.db);
+      const links = createLinksRepo(client.db);
+      const docs = createDocsService(client.db, acl, blocks, links);
+      const body = JSON.stringify({ root: { children: [{
+        type: "mega-block", blockId: "cl_ref_block", variant: "text", children: [
+          { type: "text", text: "Some CL" },
+          { type: "mega-ref", ref: { kind: "cl", targetTitle: "Some CL", targetId: "42" } },
+        ],
+      }] } });
+      const source = await docs.createDoc({ title: "Legacy CL reference", body }, USERS.tianjing.id);
+      const canonicalBacklinks = await listBacklinks(client.db, links, blocks, acl, "cl", publicId, USERS.tianjing.id);
+      expect(canonicalBacklinks.items).toContainEqual(expect.objectContaining({ sourceId: source.id }));
+      expect(await listBacklinks(client.db, links, blocks, acl, "cl", "42", USERS.tianjing.id)).toEqual(canonicalBacklinks);
+      const unlinked = await listDocUnlinked(client.db, acl, body, source.id, USERS.tianjing.id);
+      expect(unlinked.items.some(item => item.kind === "cl" && item.targetId === publicId)).toBe(false);
 
       const strangerIndex = await getTitleIndex(client.db, acl, USERS.rafael.id);
       expect(strangerIndex.some((entry) => entry.kind === "doc" && entry.targetId === SAMPLE_DOC.id)).toBe(true);

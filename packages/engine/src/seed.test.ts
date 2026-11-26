@@ -108,6 +108,17 @@ describe.skipIf(!adminDatabaseUrl)(
 
         const usersAfter = await migratePool.query(`select count(*)::int as n from "user"`);
         expect(usersAfter.rows[0]?.n).toBe(3);
+
+        // A removed fixture's public links remain retired even if seed is run again.
+        await migratePool.query("delete from mega_cls where id = $1", [SAMPLE_CL.id]);
+        await migratePool.query("insert into mega_cl_links (link,number) values ('live-seed-probe',2)");
+        await seedMegaDatabase(client.db);
+        const replacement = await migratePool.query(
+          "select number, public_id from mega_cls join mega_cl_public_ids using (number) where id = $1",
+          [SAMPLE_CL.id],
+        );
+        expect(replacement.rows[0]?.number).toBe(3);
+        expect(replacement.rows[0]?.public_id).not.toBe(SAMPLE_CL.publicId);
       } finally {
         await client.close();
         await migratePool.end();

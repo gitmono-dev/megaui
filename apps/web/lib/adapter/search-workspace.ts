@@ -44,6 +44,7 @@ export interface WorkspaceBodyHit {
   title: string;
   parentTitle?: string;
   entityNumber?: number;
+  publicId?: string;
   docId?: string;
   channelId?: string;
   snippet: string;
@@ -60,7 +61,7 @@ export interface WorkspaceSearchBodyResults {
 
 export interface WorkspaceSearchResults {
   issues: readonly Pick<Issue, "id" | "number" | "title" | "state">[];
-  cls: readonly Pick<CL, "id" | "number" | "title" | "state">[];
+  cls: readonly Pick<CL, "id" | "number" | "publicId" | "title" | "state">[];
   docs: readonly Pick<Doc, "id" | "title" | "updatedAt">[];
   files: [];
   body: WorkspaceSearchBodyResults;
@@ -265,6 +266,7 @@ async function resolveBodyHit(
         sourceId: hit.sourceId,
         blockId: hit.blockId,
         title: cl.title,
+        publicId: cl.publicId,
         entityNumber: cl.number,
         snippet,
         highlightTerms,
@@ -332,6 +334,7 @@ async function searchWorkspaceTitles(
       .slice(0, limit)
       .map(({ item }) => ({
         id: item.id,
+        publicId: item.publicId,
         number: item.number,
         title: item.title,
         state: item.state,

@@ -158,6 +158,7 @@ export interface Issue {
   labels: readonly Label[]
   milestone?: Milestone
   linkedCLs: readonly number[]
+  linkedClPublicIds?: readonly string[]
   reactions: readonly Reaction[]
   author: User
   assignees: readonly User[]
@@ -258,6 +259,8 @@ export interface InlineComment {
 
 export interface CL {
   id: string
+  /** Stable, URL-safe block-style code used in user-facing CL references. */
+  publicId: string
   number: number
   title: string
   description?: string
@@ -265,6 +268,8 @@ export interface CL {
   packageId: string
   author: User
   reviewers: readonly CLReviewer[]
+  /** False when only file metadata was requested and no line counts or patches were loaded. */
+  diffStatsAvailable?: boolean
   additions: number
   deletions: number
   files: readonly CLFile[]
@@ -413,6 +418,7 @@ export interface RelatedCL {
   id: string
   relation: CLRelation
   number: number
+  publicId?: string
   note?: string
 }
 
@@ -496,7 +502,7 @@ export interface Doc {
   collaborators: readonly User[]
   tags: readonly DocTag[]
   folderId?: string
-  linkedCLs: readonly number[]
+  linkedCLs: readonly string[]
   linkedIssues: readonly number[]
   versions: readonly DocVersion[]
   starred: boolean
@@ -607,6 +613,7 @@ export type ChatSegment =
   | { type: 'text'; text: string }
   | { type: 'code'; language?: string; text: string }
   | { type: 'link'; url: string; text: string }
+  | { type: 'cl-ref'; publicId: string }
   | { type: 'cl-ref'; number: number }
   | { type: 'issue-ref'; number: number }
   | { type: 'user-ref'; username: string }

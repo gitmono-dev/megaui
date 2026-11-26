@@ -13,6 +13,7 @@ import {
   MegaBadRequestError,
   MegaUnauthorizedError,
   normalizeCLDescriptionJson,
+  resolveCLNumber,
   type CLChecksView,
   type CLDependencyGraphResult,
   type CLDescriptionPayload,
@@ -40,7 +41,6 @@ import {
   invalidRoute,
   only,
   readJsonQuery,
-  segmentNumber,
   segmentText,
 } from "./shared";
 
@@ -49,37 +49,40 @@ async function dispatchClsGet(context: MegaDispatchContext): Promise<unknown> {
   const actor = await resolveWebActor(headers);
   const actorUserId = actor?.userId ?? null;
 
-  if (isMega2ClBackendEnabled()) {
-    if (!actorUserId) {
-      throw new MegaUnauthorizedError("Authentication required");
-    }
-    const database = getDb();
-    if (only(segments, ["cls"])) {
-      const filter = filterSchema.parse(readJsonQuery(searchParams.get("filter"), {}));
-      return listLiveMega2Cls(database, filter, { headers, actorUserId });
-    }
+  if (!actorUserId) throw new MegaUnauthorizedError("Authentication required");
+
+  const live = isMega2ClBackendEnabled();
+  const database = getDb();
+  if (only(segments, ["cls"])) {
+    const filter = filterSchema.parse(readJsonQuery(searchParams.get("filter"), {}));
+    return live
+      ? listLiveMega2Cls(database, filter, { headers, actorUserId })
+      : getClsDomain().cls.listCLs(filter, actorUserId);
+  }
+
+  const number = await resolveCLNumber(database, segments[1] ?? "");
+  if (live) {
     if (segments[0] === "cls" && segments[2] === "commits" && segments.length === 3) {
-      const number = segmentNumber(segments[1]);
       const link = await resolveMegaClLinkByNumber(database, number);
       return fetchClCommits(link, { headers });
     }
     if (segments[0] === "cls" && segments[2] === "comments" && segments.length === 3) {
-      return listLiveMega2ClComments(database, segmentNumber(segments[1]), { headers });
+      return listLiveMega2ClComments(database, number, { headers });
     }
     if (segments[0] === "cls" && segments[2] === "description" && segments.length === 3) {
-      const link = await resolveMegaClLinkByNumber(database, segmentNumber(segments[1]));
+      const link = await resolveMegaClLinkByNumber(database, number);
       await fetchMega2ClMergeBox(link, { headers });
       return {
         body: normalizeCLDescriptionJson(null),
       } satisfies CLDescriptionPayload;
     }
     if (segments[0] === "cls" && segments[2] === "inline-comments" && segments.length === 3) {
-      const link = await resolveMegaClLinkByNumber(database, segmentNumber(segments[1]));
+      const link = await resolveMegaClLinkByNumber(database, number);
       await fetchMega2ClMergeBox(link, { headers });
       return [];
     }
     if (segments[0] === "cls" && segments[2] === "checks" && segments.length === 3) {
-      const link = await resolveMegaClLinkByNumber(database, segmentNumber(segments[1]));
+      const link = await resolveMegaClLinkByNumber(database, number);
       if (isOrion2Configured()) {
         return getOrionBackedClChecks({
           actor,
@@ -98,7 +101,7 @@ async function dispatchClsGet(context: MegaDispatchContext): Promise<unknown> {
       } satisfies CLChecksView;
     }
     if (segments[0] === "cls" && segments[2] === "dependency-graph" && segments.length === 3) {
-      const link = await resolveMegaClLinkByNumber(database, segmentNumber(segments[1]));
+      const link = await resolveMegaClLinkByNumber(database, number);
       await fetchMega2ClMergeBox(link, { headers });
       return {
         nodes: [],
@@ -110,27 +113,22 @@ async function dispatchClsGet(context: MegaDispatchContext): Promise<unknown> {
       } satisfies CLDependencyGraphResult;
     }
     if (segments[0] === "cls" && segments.length === 2) {
-      return getLiveMega2ClDetail(database, segmentNumber(segments[1]), { headers });
+      return getLiveMega2ClDetail(database, number, {
+        headers,
+        view: searchParams.get("view") === "overview" ? "overview" : "full",
+      });
     }
     return invalidRoute(segments);
   }
 
   const { cls } = getClsDomain();
 
-  if (only(segments, ["cls"])) {
-    return cls.listCLs(
-      filterSchema.parse(readJsonQuery(searchParams.get("filter"), {})),
-      actorUserId,
-    );
-  }
   if (segments[0] === "cls" && segments[2] === "description" && segments.length === 3) {
-    return cls.getCLDescription(segmentNumber(segments[1]));
+    return cls.getCLDescription(number);
   }
   if (segments[0] === "cls" && segments[2] === "commits" && segments.length === 3) {
-    const number = segmentNumber(segments[1]);
     // Ensure the CL exists (404) before looking up the mega2 link.
     await cls.getCL(number);
-    const database = getDb();
     const [row] = await database
       .select({ link: megaCls.link })
       .from(megaCls)
@@ -141,19 +139,17 @@ async function dispatchClsGet(context: MegaDispatchContext): Promise<unknown> {
     return fetchClCommits(link, { headers });
   }
   if (segments[0] === "cls" && segments.length === 2) {
-    return cls.getCL(segmentNumber(segments[1]));
+    return cls.getCL(number);
   }
   if (segments[0] === "cls" && segments[2] === "inline-comments" && segments.length === 3) {
-    return cls.listInlineComments(segmentNumber(segments[1]));
+    return cls.listInlineComments(number);
   }
   if (segments[0] === "cls" && segments[2] === "comments" && segments.length === 3) {
-    return cls.listCLComments(segmentNumber(segments[1]));
+    return cls.listCLComments(number);
   }
   if (segments[0] === "cls" && segments[2] === "checks" && segments.length === 3) {
-    const number = segmentNumber(segments[1]);
     if (isOrion2Configured()) {
       await cls.getCL(number);
-      const database = getDb();
       const [mapped] = await database
         .select({ link: megaClLinks.link })
         .from(megaClLinks)
@@ -180,7 +176,7 @@ async function dispatchClsGet(context: MegaDispatchContext): Promise<unknown> {
     return cls.getCLChecks(number);
   }
   if (segments[0] === "cls" && segments[2] === "dependency-graph" && segments.length === 3) {
-    return cls.getCLDependencyGraph(segmentNumber(segments[1]));
+    return cls.getCLDependencyGraph(number);
   }
 
   return invalidRoute(segments);
@@ -190,18 +186,29 @@ async function dispatchClsPost(context: MegaDispatchContext): Promise<unknown> {
   const { segments, body, headers } = context;
   const actorUserId = await resolveActorUserId(headers);
 
-  if (isMega2ClBackendEnabled()) {
-    if (!actorUserId) {
-      throw new MegaUnauthorizedError("Authentication required");
-    }
-    const database = getDb();
+  if (!actorUserId) throw new MegaUnauthorizedError("Authentication required");
+
+  const live = isMega2ClBackendEnabled();
+  if (only(segments, ["cls"])) {
+    if (live) throw new MegaBadRequestError("CL mutation is not supported in live mega2 backend mode");
+    const input = z.object({
+      title: z.string().trim().min(1),
+      packageId: z.string().trim().min(1),
+      branch: z.string().trim().min(1),
+    }).parse(body);
+    return getClsDomain().cls.createCL(input, actorUserId);
+  }
+
+  const database = getDb();
+  const number = await resolveCLNumber(database, segments[1] ?? "");
+  if (live) {
     if (segments[0] === "cls" && segments[2] === "transition" && segments.length === 3) {
       const state = z.object({ state: clStateSchema }).parse(body).state;
-      return transitionLiveMega2Cl(database, segmentNumber(segments[1]), state, { headers });
+      return transitionLiveMega2Cl(database, number, state, { headers });
     }
     if (segments[0] === "cls" && segments[2] === "comments" && segments.length === 3) {
       const commentBody = z.object({ body: z.string().trim().min(1) }).parse(body).body;
-      return addLiveMega2ClComment(database, segmentNumber(segments[1]), commentBody, {
+      return addLiveMega2ClComment(database, number, commentBody, {
         headers,
         actorUserId,
       });
@@ -218,7 +225,7 @@ async function dispatchClsPost(context: MegaDispatchContext): Promise<unknown> {
       .object({ path: z.string().trim().min(1), viewed: z.boolean() })
       .parse(body);
     return cls.setCLFileViewed(
-      segmentNumber(segments[1]),
+      number,
       input.path,
       input.viewed,
       actorUserId,
@@ -226,10 +233,9 @@ async function dispatchClsPost(context: MegaDispatchContext): Promise<unknown> {
   }
   if (segments[0] === "cls" && segments[2] === "description" && segments.length === 3) {
     const descriptionBody = z.object({ body: z.string().trim().min(1) }).parse(body).body;
-    return cls.saveCLDescription(segmentNumber(segments[1]), descriptionBody, actorUserId);
+    return cls.saveCLDescription(number, descriptionBody, actorUserId);
   }
   if (segments[0] === "cls" && segments[2] === "inline-comments" && segments.length === 3) {
-    const clNumber = segmentNumber(segments[1]);
     const input = z
       .object({
         filePath: z.string().trim().min(1),
@@ -238,7 +244,7 @@ async function dispatchClsPost(context: MegaDispatchContext): Promise<unknown> {
         side: z.enum(["additions", "deletions"]).optional(),
       })
       .parse(body);
-    return cls.addInlineComment(clNumber, input, actorUserId);
+    return cls.addInlineComment(number, input, actorUserId);
   }
   if (
     segments[0] === "cls" &&
@@ -248,7 +254,7 @@ async function dispatchClsPost(context: MegaDispatchContext): Promise<unknown> {
   ) {
     const parentId = segmentText(segments[3]);
     const replyBody = z.object({ body: z.string().trim().min(1) }).parse(body).body;
-    return cls.replyInlineComment(parentId, replyBody, actorUserId);
+    return cls.replyInlineComment(parentId, replyBody, actorUserId, number);
   }
   if (
     segments[0] === "cls" &&
@@ -256,31 +262,18 @@ async function dispatchClsPost(context: MegaDispatchContext): Promise<unknown> {
     segments[4] === "resolve" &&
     segments.length === 5
   ) {
-    return cls.resolveInlineComment(segmentText(segments[3]), actorUserId);
+    return cls.resolveInlineComment(segmentText(segments[3]), actorUserId, number);
   }
   if (segments[0] === "cls" && segments[2] === "transition" && segments.length === 3) {
     const state = z.object({ state: clStateSchema }).parse(body).state;
-    return cls.transitionCLState(segmentNumber(segments[1]), state, actorUserId);
-  }
-  if (only(segments, ["cls"])) {
-    return cls.createCL(
-      z
-        .object({
-          title: z.string().trim().min(1),
-          packageId: z.string().trim().min(1),
-          branch: z.string().trim().min(1),
-        })
-        .parse(body),
-      actorUserId,
-    );
+    return cls.transitionCLState(number, state, actorUserId);
   }
   if (segments[0] === "cls" && segments[2] === "subscribe" && segments.length === 3) {
-    return cls.toggleCLSubscription(segmentNumber(segments[1]), actorUserId);
+    return cls.toggleCLSubscription(number, actorUserId);
   }
   if (segments[0] === "cls" && segments[2] === "comments" && segments.length === 3) {
-    const clNumber = segmentNumber(segments[1]);
     const commentBody = z.object({ body: z.string().trim().min(1) }).parse(body).body;
-    return cls.addCLComment(clNumber, commentBody, actorUserId);
+    return cls.addCLComment(number, commentBody, actorUserId);
   }
 
   return invalidRoute(segments);

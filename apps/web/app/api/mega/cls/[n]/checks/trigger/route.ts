@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@megaui/database";
-import { fetchMega2ClDetail } from "@megaui/engine";
+import { isCLReference } from "@megaui/core";
+import { fetchMega2ClDetail, resolveCLNumber } from "@megaui/engine";
 import {
   OrionClientError,
   OrionConfigError,
@@ -58,12 +59,6 @@ function failureJson(
   );
   res.headers.set("cache-control", "no-store");
   return res;
-}
-
-function parseClNumber(raw: string | undefined): number | null {
-  if (!raw || !/^[1-9]\d*$/.test(raw)) return null;
-  const parsed = Number(raw);
-  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
 function parseMandatoryIdempotencyKey(headers: Headers): string | null {
@@ -161,7 +156,7 @@ async function parseOptionalTargets(request: Request): Promise<
  * `POST /api/mega/cls/[n]/checks/trigger` (`CLB-25`):
  * 1. Canonical-origin CSRF guard (`403 CSRF_ORIGIN_REJECTED`)
  * 2. Authenticated Web actor (`401`)
- * 3. Valid CL number & mandatory client `Idempotency-Key` (`400 IDEMPOTENCY_KEY_REQUIRED`)
+ * 3. Valid CL reference & mandatory client `Idempotency-Key` (`400 IDEMPOTENCY_KEY_REQUIRED`)
  * 4. Configured Orion2 integration (`503 ORION2_UNCONFIGURED`)
  * 5. Enforced Cedar write authorization (`authorizeClWrite`, `403`/`503`)
  * 6. Live `mega2` `Open` CL `(link, path, to_hash, head_revision)` check (`409 CL_NOT_OPEN`)
@@ -186,13 +181,12 @@ export async function POST(
   }
 
   const { n } = await context.params;
-  const clNumber = parseClNumber(n);
-  if (clNumber === null) {
+  if (!isCLReference(n)) {
     return failureJson(
       400,
       "BAD_REQUEST",
       "errors.mega.badRequest",
-      "Invalid Change List number",
+      "Invalid Change List identifier",
     );
   }
 
@@ -242,6 +236,7 @@ export async function POST(
 
   try {
     const db = getDb();
+    const clNumber = await resolveCLNumber(db, n);
     const link = await resolveMegaClLinkByNumber(db, clNumber);
 
     // Enforced Cedar `editMergeRequest` authorization BEFORE touching Orion2.

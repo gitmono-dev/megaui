@@ -23,6 +23,15 @@ describe('parseRefs', () => {
     expect(tokens.some((t) => t.kind === 'issue' && t.number === 7)).toBe(true)
   })
 
+  it.each(['9ab_CD-345xy', '000123456789'])('preserves the public CL reference %s in prose', publicId => {
+    const tokens = parseRefs(`见!${publicId}，!42`)
+    expect(tokens.filter(token => token.kind === 'cl')).toEqual([
+      { kind: 'cl', publicId, raw: `!${publicId}`, start: 1, end: 14 },
+      { kind: 'cl', number: 42, raw: '!42', start: 15, end: 18 },
+    ])
+    expect(parseRefs(`!${publicId}x`).some(token => token.kind === 'cl')).toBe(false)
+  })
+
   it('parses a user reference', () => {
     const tokens = parseRefs('cc @octocat')
     expect(tokens.some((t) => t.kind === 'user' && t.username === 'octocat')).toBe(true)

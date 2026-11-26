@@ -78,6 +78,26 @@ describe(
     });
 
     describe("chat domain", () => {
+      it("round-trips public and legacy CL references in message segments", async () => {
+        const segments = [
+          { type: "cl-ref", publicId: "9ab_CD-345xy" },
+          { type: "cl-ref", number: 42 },
+        ];
+        const path = ["channels", SAMPLE_CHANNEL.id, "messages"];
+        const response = await POST(
+          authedRequest(`/${path.join("/")}`, sessionCookieHeader, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ segments }),
+          }),
+          { params: Promise.resolve({ segments: path }) },
+        );
+        expect(response.status).toBe(200);
+        const body: unknown = await response.json();
+        assertMegaSuccessEnvelope(body);
+        expect(body.data).toMatchObject({ segments });
+      });
+
       it("lists channels for the authenticated actor", async () => {
         const response = await GET(
           authedRequest("/channels", sessionCookieHeader),

@@ -23,6 +23,7 @@ const ALL_MERGE_STATES: readonly CLMergeState[] = [
 function makeCl(overrides: Partial<CL> = {}): CL {
   return {
     id: "cl_1",
+    publicId: "mergeBoxDemo",
     number: 1,
     title: "Test CL",
     state: "ready",

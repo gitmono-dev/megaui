@@ -1,3 +1,4 @@
+import { isBlockId } from "@megaui/core";
 import type {
   CIStatus,
   CL,
@@ -9,7 +10,7 @@ import type {
   Revision,
   User,
 } from "@megaui/core";
-import { megaClLinks, megaCls, user, type Database } from "@megaui/database";
+import { megaClLinks, megaClPublicIds, megaCls, user, type Database } from "@megaui/database";
 import {
   MAX_MEGA2_CL_PER_PAGE,
   MegaBadRequestError,
@@ -18,6 +19,9 @@ import {
   MegaNotFoundError,
   addMega2ClComment,
   closeMega2Cl,
+  ensureCLPublicId,
+  lockCLNumberAllocation,
+  nextCLNumber,
   fetchClCommits,
   fetchMega2ClDetail,
   fetchMega2ClFilesChanged,
@@ -34,7 +38,7 @@ import {
   type Mega2Condition,
   type Mega2MergeBoxRes,
 } from "@megaui/engine";
-import { asc, eq, sql } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 
 type Mega2MergeStatus = Mega2ClDetailRes["status"];
 
@@ -47,12 +51,6 @@ export interface Mega2ClListFilter {
   readonly sort?: Filter["sort"];
 }
 
-/**
- * Shared advisory lock namespace matching `packages/engine/src/services/cls/cls.ts`
- * (`CL_NUMBER_LOCK_NS`) so local CL creation and live mega2 `(link <-> number)`
- * allocation can never collide on `!{number}`.
- */
-export const CL_NUMBER_LOCK_NS = 1_396_386_881;
 const MAX_MEGA2_LIST_PAGES_PER_STATUS = 200;
 const MAX_MEGA2_DIFF_PAGES = 200;
 const MERGE_BOX_CONCURRENCY = 8;
@@ -269,18 +267,18 @@ function buildCurrentRevision(
 }
 
 /**
- * Pure projection from a `mega2` `ItemRes`, immutable `!{number}`, and live
+ * Pure projection from a `mega2` `ItemRes`, its persisted identity, and live
  * `MergeBoxRes` to `@megaui/core` `CL` DTO. Never writes back to Postgres.
  */
 export function projectMega2ClListItem(
   item: Mega2ClItemRes,
-  number: number,
+  identity: { number: number; publicId: string },
   mergeBox?: Mega2MergeBoxRes,
 ): ProjectedMega2CL {
   const state = mapMega2StatusToCLState(item.status, mergeBox);
   return {
     id: `cl_m2_${item.link}`,
-    number,
+    ...identity,
     title: item.title,
     state,
     packageId: packageIdFromRepoPath(item.path),
@@ -288,6 +286,7 @@ export function projectMega2ClListItem(
     reviewers: [],
     additions: 0,
     deletions: 0,
+    diffStatsAvailable: false,
     files: [],
     revisions: [],
     ci: deriveCiStatusFromMergeBox(item.status, mergeBox),
@@ -316,10 +315,11 @@ export function projectMega2ClListItem(
  */
 export function projectMega2ClDetailDto(params: {
   number: number;
+  publicId: string;
   detail: Mega2ClDetailRes;
   mergeBox: Mega2MergeBoxRes;
   filesList: readonly Mega2ClFileRes[];
-  diffItems: readonly Mega2ClFilesChangedItem[];
+  diffItems: readonly Mega2ClFilesChangedItem[] | null;
   commits: readonly ClCommit[];
 }): ProjectedMega2CL {
   const { number, detail, mergeBox, filesList, diffItems, commits } = params;
@@ -328,7 +328,7 @@ export function projectMega2ClDetailDto(params: {
   const merge = deriveMergeStateFromMergeBox(detail.status, mergeBox);
   const { files, additions, deletions } = buildProjectedFiles(
     filesList,
-    diffItems,
+    diffItems ?? [],
   );
   const revision = buildCurrentRevision(
     detail,
@@ -343,11 +343,13 @@ export function projectMega2ClDetailDto(params: {
   return {
     id: `cl_m2_${detail.link}`,
     number,
+    publicId: params.publicId,
     title: detail.title,
     state,
     packageId: packageIdFromRepoPath(detail.path),
     author: syntheticUser(detail.author),
     reviewers: [],
+    diffStatsAvailable: diffItems !== null,
     additions,
     deletions,
     files,
@@ -373,26 +375,23 @@ export function projectMega2ClDetailDto(params: {
 }
 
 /**
- * Persists ONLY the immutable `(link <-> number)` identity mapping in
- * `mega_cl_links` under the shared `CL_NUMBER_LOCK_NS` advisory lock.
- * Holds zero user FKs and zero mutable columns, and never inserts or updates
- * rows in `mega_cls`.
+ * The number and public ID stay stable as upstream state and viewer change.
+ * Reserve both in one transaction under the lock shared with local CL creation.
  */
-export async function ensureMegaClNumberMapping(
+export async function ensureMegaClIdentity(
   db: Database,
   link: string,
-): Promise<number> {
-  const existing = await db
-    .select({ number: megaClLinks.number })
+): Promise<{ number: number; publicId: string }> {
+  const [existing] = await db
+    .select({ number: megaClLinks.number, publicId: megaClPublicIds.publicId })
     .from(megaClLinks)
+    .innerJoin(megaClPublicIds, eq(megaClPublicIds.number, megaClLinks.number))
     .where(eq(megaClLinks.link, link))
     .limit(1);
-  if (existing[0]?.number !== undefined) {
-    return existing[0].number;
-  }
+  if (existing) return existing;
 
   return db.transaction(async (tx) => {
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(${CL_NUMBER_LOCK_NS})`);
+    await lockCLNumberAllocation(tx);
 
     const afterLock = await tx
       .select({ number: megaClLinks.number })
@@ -400,7 +399,8 @@ export async function ensureMegaClNumberMapping(
       .where(eq(megaClLinks.link, link))
       .limit(1);
     if (afterLock[0]?.number !== undefined) {
-      return afterLock[0].number;
+      const number = afterLock[0].number;
+      return { number, publicId: await ensureCLPublicId(tx, number) };
     }
 
     // Preserve the earliest pre-seeded number already associated with this link in mega_cls,
@@ -426,21 +426,7 @@ export async function ensureMegaClNumberMapping(
     }
 
     if (assignedNumber === undefined) {
-      const [maxLinks] = await tx
-        .select({
-          maxNumber: sql<number>`COALESCE(MAX(${megaClLinks.number}), 0)`,
-        })
-        .from(megaClLinks);
-      const [maxLocal] = await tx
-        .select({
-          maxNumber: sql<number>`COALESCE(MAX(${megaCls.number}), 0)`,
-        })
-        .from(megaCls);
-      assignedNumber =
-        Math.max(
-          Number(maxLinks?.maxNumber ?? 0),
-          Number(maxLocal?.maxNumber ?? 0),
-        ) + 1;
+      assignedNumber = await nextCLNumber(tx);
     }
 
     await tx
@@ -456,7 +442,8 @@ export async function ensureMegaClNumberMapping(
     if (resolved[0]?.number === undefined) {
       throw new MegaNotFoundError("CL link mapping", link);
     }
-    return resolved[0].number;
+    const number = resolved[0].number;
+    return { number, publicId: await ensureCLPublicId(tx, number) };
   });
 }
 
@@ -716,7 +703,20 @@ export async function listLiveMega2Cls(
     }
   }
 
-  const searchLower = filter.text?.trim().toLowerCase();
+  const search = filter.text?.trim();
+  const searchLower = search?.toLowerCase();
+  const publicId = search?.replace(/^!/, "");
+  let matchingLink: string | undefined;
+  if (isBlockId(publicId)) {
+    const [mapping] = await db
+      .select({ liveLink: megaClLinks.link, legacyLink: megaCls.link })
+      .from(megaClPublicIds)
+      .leftJoin(megaClLinks, eq(megaClPublicIds.number, megaClLinks.number))
+      .leftJoin(megaCls, eq(megaClPublicIds.number, megaCls.number))
+      .where(eq(megaClPublicIds.publicId, publicId))
+      .limit(1);
+    matchingLink = mapping?.liveLink ?? mapping?.legacyLink ?? undefined;
+  }
   const stateSet =
     filter.states && filter.states.length > 0 ? new Set(filter.states) : undefined;
   const packageIdSet =
@@ -749,6 +749,7 @@ export async function listLiveMega2Cls(
       }
       if (
         searchLower &&
+        item.link !== matchingLink &&
         !item.title.toLowerCase().includes(searchLower) &&
         !item.link.toLowerCase().includes(searchLower) &&
         !item.path.toLowerCase().includes(searchLower)
@@ -785,8 +786,8 @@ export async function listLiveMega2Cls(
     if (stateSet && !stateSet.has(clState)) {
       continue;
     }
-    const number = await ensureMegaClNumberMapping(db, item.link);
-    projected.push(projectMega2ClListItem(item, number, settled.value));
+    const identity = await ensureMegaClIdentity(db, item.link);
+    projected.push(projectMega2ClListItem(item, identity, settled.value));
   }
 
   return sortProjectedCls(projected, filter.sort);
@@ -795,7 +796,7 @@ export async function listLiveMega2Cls(
 export async function getLiveMega2ClDetail(
   db: Database,
   number: number,
-  options: Mega2ProjectionOptions = {},
+  options: Mega2ProjectionOptions & { view?: "overview" | "full" } = {},
 ): Promise<ProjectedMega2CL> {
   const env = (options.env ?? process.env) as NodeJS.ProcessEnv;
   const link = await resolveMegaClLinkByNumber(db, number);
@@ -805,12 +806,12 @@ export async function getLiveMega2ClDetail(
     fetchMega2ClDetail(link, reqOpts, env),
     fetchMega2ClMergeBox(link, reqOpts, env),
     fetchMega2ClFilesList(link, reqOpts, env),
-    fetchAllMega2ClFilesChanged(link, options.headers, env),
+    options.view === "overview" ? null : fetchAllMega2ClFilesChanged(link, options.headers, env),
     fetchClCommits(link, reqOpts, env),
   ]);
 
   return projectMega2ClDetailDto({
-    number,
+    ...await ensureMegaClIdentity(db, link),
     detail,
     mergeBox,
     filesList,

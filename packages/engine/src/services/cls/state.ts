@@ -99,7 +99,7 @@ export function decideCLTransition(
 /** Throws the matching fail-closed `Mega*Error` for a denied decision; no-op otherwise. */
 export function assertCLTransitionAllowed(
   decision: CLTransitionDecision,
-  number: number,
+  _number: number,
   target: CLState,
 ): void {
   if (decision.allow) return;
@@ -109,8 +109,8 @@ export function assertCLTransitionAllowed(
     case "forbidden":
       throw new MegaForbiddenError("Only the CL author can transition its state");
     case "queue-not-ready":
-      throw new MegaConflictError(`Cannot queue CL !${number} while review is still required`);
+      throw new MegaConflictError("Cannot queue this CL while review is still required");
     default:
-      throw new MegaConflictError(`Cannot transition CL !${number} from ${decision.fromState} to ${target}`);
+      throw new MegaConflictError(`Cannot transition this CL from ${decision.fromState} to ${target}`);
   }
 }

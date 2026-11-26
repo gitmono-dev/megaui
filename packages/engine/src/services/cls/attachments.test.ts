@@ -223,10 +223,13 @@ describe.skipIf(!adminDatabaseUrl)("CL attachments: checks/deps/revisions/inline
               { id: "self", label: "self", kind: "this" },
             ],
             edges: [{ id: "e1", from: "self", to: "common", heat: "medium" }],
+            relatedCLs: [{ id: "related", number: created.number, relation: "follows" }],
           },
           USERS.tianjing.id,
         );
         expect(acyclic.cycles).toEqual([]);
+        expect(acyclic.relatedCLs[0]?.publicId).toBe(created.publicId);
+        expect((await cls.getCLDependencyGraph(created.number)).relatedCLs[0]?.publicId).toBe(created.publicId);
 
         const cyclic = await cls.setCLDependencyGraph(
           created.number,
@@ -391,7 +394,9 @@ describe.skipIf(!adminDatabaseUrl)("CL attachments: checks/deps/revisions/inline
         );
 
         const rev2 = await cls.createCLRevision(created.number, { sha: "def456" }, USERS.tianjing.id);
-        const reply = await cls.replyInlineComment(comment.id, "Fixed in latest revision.", USERS.eleanor.id);
+        await expect(cls.replyInlineComment(comment.id, "ack", USERS.eleanor.id, created.number + 1))
+          .rejects.toBeInstanceOf(MegaNotFoundError);
+        const reply = await cls.replyInlineComment(comment.id, "Fixed in latest revision.", USERS.eleanor.id, created.number);
         expect(reply.revision).toBe(rev2.number);
         expect(reply.author.id).toBe(USERS.eleanor.id);
 
@@ -402,7 +407,9 @@ describe.skipIf(!adminDatabaseUrl)("CL attachments: checks/deps/revisions/inline
           MegaNotFoundError,
         );
         await expect(cls.resolveInlineComment(comment.id, null)).rejects.toBeInstanceOf(MegaUnauthorizedError);
-        const resolved = await cls.resolveInlineComment(comment.id, USERS.tianjing.id);
+        await expect(cls.resolveInlineComment(comment.id, USERS.tianjing.id, created.number + 1))
+          .rejects.toBeInstanceOf(MegaNotFoundError);
+        const resolved = await cls.resolveInlineComment(comment.id, USERS.tianjing.id, created.number);
         expect(resolved.resolvedAt).toBeDefined();
         const unresolved = await cls.resolveInlineComment(comment.id, USERS.tianjing.id);
         expect(unresolved.resolvedAt).toBeUndefined();

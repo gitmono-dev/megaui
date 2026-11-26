@@ -2,7 +2,7 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import type { SQL } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
-import { megaClLinks, megaCls, user, type Database } from "@megaui/database";
+import { megaClLinks, megaClPublicIds, megaCls, user, type Database } from "@megaui/database";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CSRF_ORIGIN_REJECTED_CODE } from "@/lib/adapter/csrf";
@@ -27,6 +27,7 @@ vi.mock("@/lib/enterprise-session", () => ({
 const { POST } = await import("./route");
 
 const TEST_SECRET = "0123456789abcdef0123456789abcdef0123456789abcdef";
+const PUBLIC_CL_REF = "Abc0_1xyz-23";
 const SHA_A = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const SHA_B = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const pgDialect = new PgDialect();
@@ -90,6 +91,9 @@ function createFakeDb(params: {
               const bound = extractBoundValue(expr);
               return {
                 limit() {
+                  if (table === megaClPublicIds) {
+                    return Promise.resolve(bound === PUBLIC_CL_REF ? [{ number: 1 }] : []);
+                  }
                   if (table === megaClLinks && typeof bound === "number") {
                     const link = params.links.get(bound);
                     return Promise.resolve(link ? [{ link }] : []);
@@ -317,7 +321,7 @@ describe("POST /api/mega/cls/[n]/checks/trigger (CLB-25)", () => {
     };
 
     activeActor = makeActor("u_reader", "reader@example.com");
-    const req = new Request("https://mega.example.com/api/mega/cls/1/checks/trigger", {
+    const req = new Request(`https://mega.example.com/api/mega/cls/${PUBLIC_CL_REF}/checks/trigger`, {
       method: "POST",
       headers: {
         Origin: "https://mega.example.com",
@@ -325,7 +329,7 @@ describe("POST /api/mega/cls/[n]/checks/trigger (CLB-25)", () => {
         "Idempotency-Key": "idem_ro",
       },
     });
-    const res403 = await POST(req, { params: Promise.resolve({ n: "1" }) });
+    const res403 = await POST(req, { params: Promise.resolve({ n: PUBLIC_CL_REF }) });
     expect(res403.status).toBe(403);
     const body403: unknown = await res403.json();
     assertMegaFailureEnvelope(body403);
@@ -342,7 +346,7 @@ describe("POST /api/mega/cls/[n]/checks/trigger (CLB-25)", () => {
         }),
       );
     };
-    const resShadow = await POST(req.clone(), { params: Promise.resolve({ n: "1" }) });
+    const resShadow = await POST(req.clone(), { params: Promise.resolve({ n: PUBLIC_CL_REF }) });
     expect(resShadow.status).toBe(403);
     const bodyShadow: unknown = await resShadow.json();
     assertMegaFailureEnvelope(bodyShadow);
@@ -353,7 +357,7 @@ describe("POST /api/mega/cls/[n]/checks/trigger (CLB-25)", () => {
       res.setHeader("Content-Type", "application/json");
       res.end(JSON.stringify({ code: "ci_authz_unavailable", message: "Store down" }));
     };
-    const res503 = await POST(req.clone(), { params: Promise.resolve({ n: "1" }) });
+    const res503 = await POST(req.clone(), { params: Promise.resolve({ n: PUBLIC_CL_REF }) });
     expect(res503.status).toBe(503);
     expect(orionCallSpy).not.toHaveBeenCalled();
   });
@@ -526,7 +530,7 @@ describe("POST /api/mega/cls/[n]/checks/trigger (CLB-25)", () => {
     };
 
     const okRes = await POST(
-      new Request("https://mega.example.com/api/mega/cls/1/checks/trigger", {
+      new Request(`https://mega.example.com/api/mega/cls/${PUBLIC_CL_REF}/checks/trigger`, {
         method: "POST",
         headers: {
           Origin: "https://mega.example.com",
@@ -534,7 +538,7 @@ describe("POST /api/mega/cls/[n]/checks/trigger (CLB-25)", () => {
           "Idempotency-Key": "idem_open_5",
         },
       }),
-      { params: Promise.resolve({ n: "1" }) },
+      { params: Promise.resolve({ n: PUBLIC_CL_REF }) },
     );
     expect(okRes.status).toBe(202);
     expect(okRes.headers.get("cache-control")).toBe("no-store");

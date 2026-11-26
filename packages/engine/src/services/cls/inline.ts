@@ -255,7 +255,7 @@ export async function addInlineComment(
     // validated but not persisted, purely to satisfy AC2 "invalid revision
     // ... reject".
     if (input.revision !== undefined && !cl.revisionNumbers.includes(input.revision)) {
-      throw new MegaBadRequestError(`CL !${clNumber} has no revision ${input.revision}`);
+      throw new MegaBadRequestError(`This CL has no revision ${input.revision}`);
     }
 
     const nextRawFiles = cl.rawFiles.map((raw) => {
@@ -295,6 +295,7 @@ export async function replyInlineComment(
   commentId: string,
   body: string,
   actorUserId: string | null | undefined,
+  expectedClNumber?: number,
 ): Promise<InlineCommentReply> {
   const authorId = await assertWorkspaceMember(database, actorUserId);
   const lexical = normalizeCommentBodyJson(body);
@@ -308,7 +309,9 @@ export async function replyInlineComment(
 
   await database.transaction(async (tx) => {
     const [row] = await tx.select().from(megaInlineComments).where(eq(megaInlineComments.id, commentId)).for("update").limit(1);
-    if (!row) throw new MegaNotFoundError("Inline comment", commentId);
+    if (!row || (expectedClNumber !== undefined && row.clNumber !== expectedClNumber)) {
+      throw new MegaNotFoundError("Inline comment", commentId);
+    }
     const cl = await loadClAnchorState(tx, row.clNumber);
     revision = cl.revisionNumbers[0];
     const nextReplies = [...row.replies, { id: replyId, authorId, body: lexical, createdAt, revision }];
@@ -338,16 +341,19 @@ export async function resolveInlineComment(
   database: Database,
   commentId: string,
   actorUserId: string | null | undefined,
+  expectedClNumber?: number,
 ): Promise<InlineComment> {
   await assertWorkspaceMember(database, actorUserId);
   await database.transaction(async (tx) => {
     const [row] = await tx
-      .select({ resolvedAt: megaInlineComments.resolvedAt })
+      .select({ clNumber: megaInlineComments.clNumber, resolvedAt: megaInlineComments.resolvedAt })
       .from(megaInlineComments)
       .where(eq(megaInlineComments.id, commentId))
       .for("update")
       .limit(1);
-    if (!row) throw new MegaNotFoundError("Inline comment", commentId);
+    if (!row || (expectedClNumber !== undefined && row.clNumber !== expectedClNumber)) {
+      throw new MegaNotFoundError("Inline comment", commentId);
+    }
     await tx
       .update(megaInlineComments)
       .set({ resolvedAt: row.resolvedAt ? null : new Date() })

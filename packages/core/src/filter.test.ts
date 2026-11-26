@@ -29,6 +29,7 @@ const baseIssue: Issue = {
 
 const baseCL: CL = {
   id: 'cl-1',
+  publicId: 'Q7rE8kzpY-1A',
   number: 10,
   title: 'Add feature',
   state: 'ready',
@@ -128,6 +129,7 @@ describe('matchesIssueFilter', () => {
 describe('matchesCLFilter', () => {
   it('matches a CL with no filter', () => {
     expect(matchesCLFilter(baseCL, {}, 'u1')).toBe(true)
+    expect(matchesCLFilter(baseCL, { text: `!${baseCL.publicId}` }, 'u1')).toBe(true)
   })
 
   it('matches cross-package ids via crossPackage', () => {

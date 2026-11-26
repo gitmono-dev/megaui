@@ -25,7 +25,7 @@ export type TitleIndexEntry = {
 export interface TitleIndexSource {
   docs?: readonly Pick<Doc, 'id' | 'title'>[]
   issues?: readonly Pick<Issue, 'number' | 'title'>[]
-  cls?: readonly Pick<CL, 'number' | 'title'>[]
+  cls?: readonly Pick<CL, 'publicId' | 'title'>[]
   users?: readonly Pick<User, 'username' | 'displayName'>[]
 }
 
@@ -46,8 +46,8 @@ export function buildTitleIndex(source: TitleIndexSource): TitleIndexEntry[] {
   const cls = (source.cls ?? []).map((cl) => ({
     kind: 'cl' as const,
     targetTitle: cl.title,
-    targetId: String(cl.number),
-    detail: `!${cl.number}`,
+    targetId: cl.publicId,
+    detail: cl.publicId,
   }))
   const users = (source.users ?? []).map((user) => ({
     kind: 'user' as const,

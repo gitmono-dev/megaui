@@ -3,6 +3,7 @@ import { createClsService, type ClsService } from "./cls";
 
 export { assertWorkspaceMember } from "./authz";
 export { createClsService, type ClsService } from "./cls";
+export { ensureCLPublicId, lockCLNumberAllocation, nextCLNumber, resolveCLNumber } from "./public-id";
 export { aggregateCheckStatus, deleteCLCheckRun, getCLChecks, upsertCLCheckRun, type CLCheckRunInput, type CLChecksView } from "./checks";
 export {
   importPlainText,

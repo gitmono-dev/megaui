@@ -31,6 +31,7 @@ export interface HomeDashboard {
   kpis: HomeKpis;
   cards: {
     reviewRequests: readonly {
+      publicId: string;
       number: number;
       title: string;
       state: CL["state"];
@@ -146,6 +147,7 @@ export async function getHomeDashboard(actorUserId: string | null): Promise<Home
     },
     cards: {
       reviewRequests: reviewRequests.slice(0, 3).map((cl) => ({
+        publicId: cl.publicId,
         number: cl.number,
         title: cl.title,
         state: cl.state,
@@ -159,7 +161,7 @@ export async function getHomeDashboard(actorUserId: string | null): Promise<Home
       activity: orderedCLs.slice(0, 5).map((cl) => ({
         id: `cl_${cl.number}`,
         actorName: cl.author.displayName,
-        entityRef: `!${cl.number}`,
+        entityRef: cl.publicId,
         kind: "updated" as const,
         createdAt: cl.updatedAt,
       })),
@@ -205,7 +207,7 @@ export async function getHomeDashboard(actorUserId: string | null): Promise<Home
         firstReview && {
           id: `cl_${firstReview.number}`,
           kind: "cl" as const,
-          href: `/workspace/cls/${firstReview.number}`,
+          href: `/workspace/cls/${firstReview.publicId}`,
         },
         firstRelease && {
           id: `release_${firstRelease.id}`,

@@ -169,6 +169,13 @@
       "when": 1795679970280,
       "tag": "0023_mega_site_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1795682965900,
+      "tag": "0024_mega_cl_public_ids",
+      "breakpoints": true
     }
   ]
 }

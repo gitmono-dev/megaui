@@ -47,6 +47,7 @@ export function searchTextScore(query: string, text: string): SearchTitleScore |
 export interface TitleSearchCandidate {
   id: string;
   title: string;
+  publicId?: string;
 }
 
 export interface TitleSearchHit<T extends TitleSearchCandidate = TitleSearchCandidate> {
@@ -64,7 +65,9 @@ export function rankByTitleScore<T extends TitleSearchCandidate>(
 ): TitleSearchHit<T>[] {
   const scored: Array<{ hit: TitleSearchHit<T>; index: number }> = [];
   items.forEach((item, index) => {
-    const score = searchTextScore(query, item.title);
+    const titleScore = searchTextScore(query, item.title);
+    const refScore = item.publicId ? searchTextScore(query, item.publicId) : null;
+    const score = titleScore === null || (refScore !== null && refScore < titleScore) ? refScore : titleScore;
     if (score !== null) scored.push({ hit: { item, score }, index });
   });
   scored.sort((a, b) => a.hit.score - b.hit.score || a.index - b.index);

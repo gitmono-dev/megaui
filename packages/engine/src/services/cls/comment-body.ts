@@ -43,7 +43,7 @@ function tokenToInline(token: RefToken): SerializedInline {
     return {
       type: "mega-ref",
       version: 1,
-      ref: { kind: token.kind, targetId: String(token.number), targetTitle: token.raw },
+      ref: { kind: token.kind, targetId: token.raw.slice(1), targetTitle: token.raw },
     };
   }
   if (token.kind === "user") {
@@ -58,7 +58,7 @@ function tokenToInline(token: RefToken): SerializedInline {
 }
 
 /**
- * Plain-text → mega block tree. Lines become text blocks; `#N`/`!N`/`@user`
+ * Plain-text → mega block tree. Lines become text blocks; `#N`/`!publicId`/`!N`/`@user`
  * become `mega-ref` nodes.
  */
 export function importPlainText(text: string): string {

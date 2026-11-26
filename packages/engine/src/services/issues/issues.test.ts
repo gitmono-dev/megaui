@@ -1,12 +1,13 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createDatabaseClient } from "@megaui/database";
+import { createDatabaseClient, megaIssues } from "@megaui/database";
+import { eq } from "drizzle-orm";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MegaBadRequestError, MegaConflictError, MegaForbiddenError, MegaNotFoundError, MegaUnauthorizedError } from "../../errors";
 import { seedMegaDatabase } from "../../seed";
-import { USERS } from "../../testing/fixtures";
+import { SAMPLE_CL, USERS } from "../../testing/fixtures";
 import { createIssuesService, type IssueTransitionAction } from "./index";
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -79,6 +80,8 @@ describe.skipIf(!adminDatabaseUrl)("createIssuesService list/state/comments/watc
 
       const fetched = await issues.getIssue(created.number);
       expect(fetched).toEqual(created);
+      await client.db.update(megaIssues).set({ linkedCLs: [SAMPLE_CL.number, 99999] }).where(eq(megaIssues.id, created.id));
+      expect((await issues.getIssue(created.number)).linkedClPublicIds).toEqual([SAMPLE_CL.publicId]);
     } finally {
       await client.close();
     }
