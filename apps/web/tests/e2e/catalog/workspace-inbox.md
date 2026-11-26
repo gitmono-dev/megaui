@@ -14,7 +14,7 @@ Coverage for `/[lang]/workspace/inbox` (filter, mark-all, unread badge, quick re
 | S-01 | Filter unread + mark all + badge | AC-1 |
 | S-02 | Quick reply → issue comment | AC-2 |
 | S-02b | Quick reply → CL comment | AC-2 |
-| S-03 | Publish draft then 409 conflict | AC-3 |
+| S-03 | Publish draft, hide the action on refresh, and show a 409 in a stale tab | AC-3 |
 
 ## Notes
 

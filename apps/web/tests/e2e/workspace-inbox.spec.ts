@@ -198,7 +198,7 @@ async function stubTags(page: Page): Promise<void> {
     },
   ];
 
-  await page.route("**/api/mega/releases**", async (route) => {
+  await page.context().route("**/api/mega/releases**", async (route) => {
     const method = route.request().method();
     const path = new URL(route.request().url()).pathname.replace(/^\/api\/mega\/?/, "");
 
@@ -347,7 +347,7 @@ test.describe("workspace inbox + tags (WA-16)", () => {
     await context.close();
   });
 
-  test("publish draft then conflict on second publish", async ({ browser }) => {
+  test("publishing a draft updates the card and a stale tab receives a conflict", async ({ browser }) => {
     const { cookies } = mintSessionCookies();
     const context = await browser.newContext({ baseURL: e2eBaseURL() });
     await context.addCookies(cookies);
@@ -356,11 +356,19 @@ test.describe("workspace inbox + tags (WA-16)", () => {
 
     await page.goto("/en/workspace/tags");
     await expect(page.locator('[data-mega-tags="card"]')).toHaveCount(1);
+    const stalePage = await context.newPage();
+    await stubRailExtras(stalePage);
+    await stalePage.goto("/en/workspace/tags");
+    const stalePublish = stalePage.locator('[data-mega-tags="publish"]');
+    await expect(stalePublish).toBeVisible();
+
     await page.locator('[data-mega-tags="publish"]').click();
     await expect(page.locator('[data-mega-tags="toast"]')).toHaveAttribute("data-mega-toast", "success");
-    await page.locator('[data-mega-tags="publish"]').click();
-    await expect(page.locator('[data-mega-tags="toast"]')).toHaveAttribute("data-mega-toast", "error");
-    await expect(page.locator('[data-mega-tags="toast"]')).toContainText("already published");
+    await expect(page.locator('[data-mega-tags="published-badge"]')).toBeVisible();
+    await expect(page.locator('[data-mega-tags="publish"]')).toHaveCount(0);
+    await stalePublish.click();
+    await expect(stalePage.locator('[data-mega-tags="toast"]')).toHaveAttribute("data-mega-toast", "error");
+    await expect(stalePage.locator('[data-mega-tags="toast"]')).toContainText("already published");
 
     await context.close();
   });
