@@ -357,7 +357,8 @@ describe("$setSelectedMegaBlockVariant / $insertNestedMegaListItem / sibling ins
       const types = $getRoot()
         .getChildren()
         .map((n) => n.getType());
-      expect(types).toContain("mega-outline-table");
+      expect(types).not.toContain("mega-outline-table");
+      expect($getRoot().getChildren().some((node) => $isMegaBlockNode(node) && node.getTableSource())).toBe(true);
       expect(types).toContain("mega-block");
     });
 

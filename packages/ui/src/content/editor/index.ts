@@ -31,7 +31,7 @@ export { BlockStructurePlugin } from "./plugins/block-structure";
 export { BlockCollapsePlugin, type BlockCollapseLabels } from "./plugins/block-collapse";
 export { TodoCheckboxPlugin, type TodoCheckboxLabels } from "./plugins/todo-checkbox";
 export { BlockContextMenuPlugin, type BlockContextMenuLabels, type BlockContextMenuPluginProps } from "./plugins/block-context-menu";
-export { BlockEmbedPastePlugin } from "./plugins/block-embed-paste";
+export { BlockEmbedPastePlugin, type RoamEmbedTarget } from "./plugins/block-embed-paste";
 export { BlockReferenceSyntaxPlugin } from "./plugins/block-reference-syntax";
 export type { BlockRefValue } from "@megaui/content";
 export { BlockFocusPlugin, type BlockFocusPluginProps } from "./plugins/block-focus";

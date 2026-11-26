@@ -7,7 +7,7 @@ import userEvent from '@testing-library/user-event'
 import { $getRoot, type LexicalEditor } from 'lexical'
 import { LexicalComposer } from '@lexical/react/LexicalComposer'
 import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext'
-import { $createMegaTableBlockWithEmptyGrid, MEGA_CONTENT_BLOCK_NODES } from '@megaui/content'
+import { $createMegaTableBlockWithEmptyGrid, $createRoamTable, MEGA_CONTENT_BLOCK_NODES } from '@megaui/content'
 import { MegaContentReader } from './reader'
 import { ReaderRefNode } from './nodes'
 
@@ -71,6 +71,16 @@ function buildStateJSON(build: (editor: LexicalEditor) => void): string {
 }
 
 describe('MegaContentReader block types (AC1)', () => {
+  it('renders a table directly from its macro and nested cells', async () => {
+    const stateJSON = buildStateJSON(() => {
+      const { source } = $createRoamTable(2, 2)
+      $getRoot().clear().append(source)
+    })
+    expect(stateJSON).toContain('{{[[table]]}}')
+    expect(stateJSON).not.toContain('"type":"mega-outline-table"')
+    const { container } = render(<MegaContentReader stateJSON={stateJSON} />)
+    await waitFor(() => expect(container.querySelectorAll('[data-mega-outline-table] td')).toHaveLength(4))
+  })
   it('renders heading, quote, and text variants with data-mega-block', () => {
     const stateJSON = rootState([
       megaBlock({ blockId: 'h1', variant: 'h1', children: [textChild('Title')] }),

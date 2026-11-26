@@ -9,6 +9,7 @@
 // `mega_content` / the blocks-and-links rebuild pipeline.
 import { MegaBadRequestError } from "../../errors";
 import { isBlockId } from "@megaui/core";
+import { parseRoamEmbed, parseRoamImageSource } from "@megaui/content";
 import { isRootBlockType } from "./body-format";
 
 /** Serialized EditorState JSON byte ceiling for one document body (GC-11). */
@@ -37,6 +38,9 @@ type WalkNode = {
   embed?: unknown;
   blockRef?: unknown;
   image?: unknown;
+  text?: unknown;
+  targetDocId?: unknown;
+  label?: unknown;
   url?: unknown;
   children?: unknown;
 };
@@ -201,13 +205,21 @@ function walk(node: unknown, depth: number, seenBlockIds: Set<string>, parentTyp
       validateRef(record.ref);
       break;
     case "mega-embed":
-      validateEmbed(record.embed);
+      if (typeof record.text === "string") {
+        if (typeof record.targetDocId !== "string" || (record.label !== undefined && typeof record.label !== "string")) fail("mega-embed has invalid source metadata");
+        validateEmbed(parseRoamEmbed(record.text, record.targetDocId, record.label as string | undefined));
+      } else validateEmbed(record.embed);
       break;
     case "mega-block-ref":
       validateBlockRef(record.blockRef);
       break;
     case "mega-image":
-      validateImage(record.image);
+      validateImage(typeof record.text === "string" ? parseRoamImageSource(record.text) : record.image);
+      break;
+    case "mega-roam-macro":
+      if (parentType !== "mega-block" || !["{{[[TODO]]}}", "{{[[DONE]]}}", "{{[[table]]}}"].includes(String(record.text))) {
+        fail("mega-roam-macro must be a supported block macro");
+      }
       break;
     case "link":
     case "autolink":

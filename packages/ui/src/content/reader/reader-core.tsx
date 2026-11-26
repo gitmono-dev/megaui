@@ -53,6 +53,7 @@ import { AutoLinkNode, LinkNode } from '@lexical/link'
 import { ReaderImageNode } from './image-node'
 import { TagReferencesPlugin } from '../tag-references'
 import { EditorOutlineTableNode } from '../editor/outline-table-node'
+import { RoamTableRenderer } from '../editor/plugins/roam-table-renderer'
 import { MEGA_CONTENT_BLOCK_NODES, MegaCodeBlockNode } from '@megaui/content'
 import { en, zhCN } from '@megaui/i18n'
 import {
@@ -100,7 +101,7 @@ const READER_BLOCK_STYLES = `
 [data-mega-content="reader"] [data-list-kind="bullet"]::before { content: '• '; color: var(--mega-muted); }
 [data-mega-content="reader"] [data-list-kind="ordered"]::before { content: attr(data-list-index) '. '; color: var(--mega-muted); }
 [data-mega-content="reader"] [data-collapsed="true"] > [data-mega-block] { display: none; }
-[data-mega-content="reader"] [data-mega-table-source="true"][data-collapsed="true"] { display: none; }
+[data-mega-content="reader"] [data-mega-table-source="true"][data-collapsed="true"] > [data-mega-block] { display: none; }
 [data-mega-content="reader-overlay"] [data-mega-content="collapse-toggle"] {
   background: transparent; border: none; color: var(--mega-muted); cursor: pointer; font: inherit; padding: 0;
 }
@@ -442,6 +443,7 @@ export function MegaContentReaderCore({
                   style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}
                 />
                 <CodeShikiPlugin />
+                <RoamTableRenderer />
                 <TagReferencesPlugin nodeClass={ReaderRefNode} />
                 <ReaderBlockInteractionPlugin
                   onCollapsedChange={onCollapsedChange}

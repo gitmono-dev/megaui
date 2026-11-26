@@ -19,13 +19,12 @@ import {
   $createMegaBlock,
   $createMegaCodeBlock,
   $createMegaHrBlock,
-  $createOutlineTable,
+  $createRoamTable,
   $isMegaBlockNode,
   generateBlockId,
   type MegaBlockNode,
   type MegaBlockVariant,
 } from "@megaui/content";
-import { EditorOutlineTableNode } from "./outline-table-node";
 
 /** Returns the nearest MegaBlockNode owned by the outliner tree (root or nested). */
 export function $getSelectedMegaBlock(): MegaBlockNode | null {
@@ -238,9 +237,8 @@ export function $insertMegaTableBlockSibling(): boolean {
   if (!block) {
     return false;
   }
-  const { table, source, firstCell } = $createOutlineTable(2, 2, (id, sourceId) => new EditorOutlineTableNode(id, sourceId));
+  const { source, firstCell } = $createRoamTable(2, 2);
   block.insertAfter(source);
-  block.insertAfter(table);
   firstCell.selectStart();
   return true;
 }

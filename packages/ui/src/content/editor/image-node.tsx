@@ -3,7 +3,7 @@
 import * as React from "react";
 import { $getNodeByKey } from "lexical";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { $isMegaBlockNode, $isMegaImageNode, MegaImageNode, type MegaImageValue, type SerializedMegaImageNode } from "@megaui/content";
+import { $isMegaBlockNode, $isMegaImageNode, imageFromSerialized, MegaImageNode, type MegaImageValue, type SerializedMegaImageNode } from "@megaui/content";
 import { $selectFollowingMegaBlock } from "./commands";
 
 function EditableImage({ image, nodeKey }: { image: MegaImageValue; nodeKey: string }) {
@@ -53,7 +53,7 @@ function EditableImage({ image, nodeKey }: { image: MegaImageValue; nodeKey: str
 export class EditorImageNode extends MegaImageNode {
   static getType(): string { return super.getType() }
   static clone(node: EditorImageNode): EditorImageNode { return new EditorImageNode(node.getImage(), node.getKey()) }
-  static importJSON(serialized: SerializedMegaImageNode): EditorImageNode { return new EditorImageNode(serialized.image) }
+  static importJSON(serialized: SerializedMegaImageNode): EditorImageNode { return new EditorImageNode(imageFromSerialized(serialized)) }
   createDOM(): HTMLElement { return document.createElement("span") }
   updateDOM(): false { return false }
   decorate(): React.JSX.Element { return <EditableImage image={this.getImage()} nodeKey={this.getKey()} /> }

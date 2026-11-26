@@ -21,7 +21,7 @@ import {
   KEY_TAB_COMMAND,
 } from "lexical";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { registerMegaContentInvariants } from "@megaui/content";
+import { $isRoamMacroNode, registerMegaContentInvariants } from "@megaui/content";
 import {
   $applyMegaBlockMarkdownPrefix,
   $getSelectedMegaBlock,
@@ -43,7 +43,9 @@ function isAtBlockStart(): boolean {
   // Offset zero in a text node after a chip is still the middle of the row.
   let node: LexicalNode | null = selection.anchor.getNode();
   while (node && !node.is(block)) {
-    if (node.getPreviousSibling()) return false;
+    let previous = node.getPreviousSibling();
+    while ($isRoamMacroNode(previous)) previous = previous.getPreviousSibling();
+    if (previous) return false;
     node = node.getParent();
   }
   return node !== null;

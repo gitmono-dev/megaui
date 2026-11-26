@@ -126,7 +126,7 @@ describe("parseBlockEmbedClipboard", () => {
     const children = editor.getEditorState().toJSON().root.children;
     expect(children.map((node) => node.type)).toEqual(["mega-block", "mega-block"]);
     expect(children[1]).toMatchObject({
-      children: [{ type: "mega-embed", embed: { targetDocId: "doc_source", targetBlockId: "source-block" } }],
+      children: [{ type: "mega-embed", targetDocId: "doc_source", text: "{{[[embed]]: ((source-block))}}" }],
     });
   });
 });

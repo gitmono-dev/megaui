@@ -56,7 +56,7 @@ describe('EmbedNode (headless editor)', () => {
       serialized = node.exportJSON()
     }, { discrete: true })
 
-    expect(serialized).toEqual({ type: 'mega-embed', version: 1, embed })
+    expect(serialized).toMatchObject({ type: 'mega-embed', version: 1, text: '{{[[embed]]: ((block-1))}}', targetDocId: 'doc-1' })
 
     const state = editor.getEditorState().toJSON()
     const restored = editor.parseEditorState(JSON.stringify(state))

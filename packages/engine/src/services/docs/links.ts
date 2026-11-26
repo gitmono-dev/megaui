@@ -27,6 +27,7 @@ import {
   type Database,
 } from "@megaui/database";
 import { buildTitleIndex, searchTitleIndex, type TitleIndexEntry } from "@megaui/core";
+import { parseRoamEmbed } from "@megaui/content";
 import { MegaBadRequestError, MegaConflictError, MegaNotFoundError, MegaTitleConflictError } from "../../errors";
 import type { AclService } from "../acl";
 import { listBlocksForDoc, type BlocksRepo } from "./blocks";
@@ -49,6 +50,8 @@ export type ExtractedContentLink = {
 type LexicalWalkNode = {
   type?: string;
   text?: string;
+  targetDocId?: string;
+  label?: string;
   blockId?: string;
   ref?: {
     kind?: string;
@@ -157,11 +160,13 @@ export function extractRefsFromEditorState(editorStateJSON: string): ExtractedCo
       });
     }
 
-    if (node.type === "mega-embed" && node.embed?.targetDocId && node.embed.targetBlockId) {
+    const embed = node.type === "mega-embed" && node.text && node.targetDocId
+      ? parseRoamEmbed(node.text, node.targetDocId, node.label) : node.embed;
+    if (node.type === "mega-embed" && embed?.targetDocId && embed.targetBlockId) {
       out.push({
         targetKind: megaContentLinkTargetKinds.BLOCK,
-        targetId: encodeBlockTargetId(node.embed.targetDocId, node.embed.targetBlockId),
-        contextSummary: blockSummary ?? node.embed.targetBlockId,
+        targetId: encodeBlockTargetId(embed.targetDocId, embed.targetBlockId),
+        contextSummary: blockSummary ?? embed.targetBlockId,
       });
     }
 

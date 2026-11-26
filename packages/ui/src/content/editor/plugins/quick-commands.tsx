@@ -18,9 +18,8 @@ import {
 } from "lexical";
 import { LexicalTypeaheadMenuPlugin, MenuOption } from "@lexical/react/LexicalTypeaheadMenuPlugin";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { $createMegaBlock, $createOutlineTable, $isMegaBlockNode, generateBlockId, type MegaBlockNode } from "@megaui/content";
+import { $createMegaBlock, $createRoamTable, $isMegaBlockNode, generateBlockId, type MegaBlockNode } from "@megaui/content";
 import { OPEN_IMAGE_DIALOG_COMMAND } from "./image-command";
-import { EditorOutlineTableNode } from "../outline-table-node";
 import { requestNewTableFocus } from "./outline-table";
 
 export interface QuickCommandsPluginLabels {
@@ -198,10 +197,9 @@ export function QuickCommandsPlugin({ labels }: { labels: QuickCommandsPluginLab
     if (action === "table") {
       const block = owningMegaBlock(node);
       if (!block) return false;
-      const { table, source, firstCell } = $createOutlineTable(2, 2, (id, sourceId) => new EditorOutlineTableNode(id, sourceId));
+      const { source, firstCell } = $createRoamTable(2, 2);
       node.remove();
       block.insertAfter(source);
-      block.insertAfter(table);
       if (block.getChildrenSize() === 0) block.remove();
       requestNewTableFocus(editor, source.getBlockId(), firstCell.getBlockId());
       firstCell.selectStart();
@@ -213,7 +211,7 @@ export function QuickCommandsPlugin({ labels }: { labels: QuickCommandsPluginLab
       block.setVariant("todo");
       block.setTodoChecked(false);
       node.remove();
-      if (block.getChildrenSize() === 0) {
+      if (block.getChildrenSize() === 1) {
         const text = $createTextNode("");
         block.append(text);
         text.select(0, 0);

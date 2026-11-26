@@ -41,9 +41,9 @@ Keep a writable empty document discoverable as a block outliner while preserving
 - Choosing TODO changes the active block to todo and hides the empty-document writing hint, even before the TODO has text; choosing a reference action keeps the intended trigger in the block for the next query.
 - A standalone completed `[[Title]]` renders as an accent-colored unresolved page reference. Activating it resolves-or-creates exactly once, records the returned ID, and routes to that localized workspace document.
 - The first visible `[[` candidate and the first `/` action are selected by default and activate with Enter; Arrow keys change that same keyboard selection, including the `((` action.
-- Resolved wikilinks retain their literal `[[Title]]` text: the surrounding `[[` and `]]` use the document text color, while only the title is an accent-colored link; `#tag` keeps its distinct prefix.
+- Resolved wikilinks retain their literal `[[Title]]` text: the surrounding `[[` and `]]` are muted blue-gray, while the title is a blue link; `#tag` keeps its distinct prefix.
 - The `/` portal inherits the document typography rather than falling back to a browser or component-library font.
-- A TODO retains the block bullet and renders a separate 12px control centered against its own first line outside `contentEditable`; Space toggles its persisted `todoChecked` state without adding a writing-surface frame.
+- A TODO retains the block bullet and renders a separate 12px control centered against its own first line outside `contentEditable`; Space toggles its persisted `{{[[TODO]]}}` / `{{[[DONE]]}}` source without adding a writing-surface frame.
 - Backspace at the start of an empty or populated TODO converts it to a plain text block, removes the checkbox, and keeps existing text; a following Backspace can merge the plain block as usual.
 - Document blocks use a compact 14px / 22px body style; child bullets advance about 27px, and the parent guide continues to the last child row's bottom.
 - A parent bullet reveals a separate arrow to its left on hover; clicking the arrow changes the block's persisted collapsed state, hides its descendants, and leaves siblings visible. A collapsed parent bullet gains a light gray outer ring, which disappears when reopened.

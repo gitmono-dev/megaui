@@ -41,7 +41,7 @@ export type SerializedMegaBlockNode = Spread<
     blockId: string
     variant: MegaBlockVariant
     collapsed: boolean
-    todoChecked: boolean
+    todoChecked?: boolean
     listKind?: MegaListKind | null
     tableSource?: boolean
   },
@@ -75,6 +75,53 @@ export type SerializedMegaHrBlockNode = Spread<
   SerializedElementNode
 >
 
+export type RoamMacro = '{{[[TODO]]}}' | '{{[[DONE]]}}' | '{{[[table]]}}'
+export type SerializedRoamMacroNode = Spread<{ text: RoamMacro }, SerializedLexicalNode>
+
+/** The TODO source is a real child of the block and syncs as part of its content. */
+export class RoamMacroNode extends DecoratorNode<null> {
+  __text: RoamMacro
+
+  static getType(): string { return 'mega-roam-macro' }
+  static clone(node: RoamMacroNode): RoamMacroNode { return new RoamMacroNode(node.__text, node.__key) }
+  constructor(text: RoamMacro = '{{[[TODO]]}}', key?: NodeKey) {
+    super(key)
+    this.__text = text
+  }
+  static importJSON(serialized: SerializedRoamMacroNode): RoamMacroNode { return $createRoamMacro(serialized.text) }
+  exportJSON(): SerializedRoamMacroNode { return { ...super.exportJSON(), text: this.__text, type: 'mega-roam-macro', version: 1 } }
+  getMacro(): RoamMacro { return this.getLatest().__text }
+  setMacro(text: RoamMacro): this { this.getWritable().__text = text; return this }
+  createDOM(): HTMLElement {
+    if (this.getMacro() === '{{[[table]]}}') {
+      const element = document.createElement('div')
+      const parent = this.getParent()
+      element.dataset.megaOutlineTable = 'true'
+      if ($isMegaBlockNode(parent)) element.dataset.sourceBlockId = parent.getBlockId()
+      return element
+    }
+    const span = document.createElement('span')
+    span.hidden = true
+    return span
+  }
+  updateDOM(previous: RoamMacroNode): boolean {
+    return (previous.__text === '{{[[table]]}}') !== (this.__text === '{{[[table]]}}')
+  }
+  decorate(): null { return null }
+  getTextContent(): string { return '' }
+  isInline(): boolean { return this.getMacro() !== '{{[[table]]}}' }
+}
+
+export function $createRoamMacro(text: RoamMacro): RoamMacroNode {
+  return $applyNodeReplacement(new RoamMacroNode(text))
+}
+export function $isRoamMacroNode(node: LexicalNode | null | undefined): node is RoamMacroNode {
+  return node instanceof RoamMacroNode
+}
+function $isTodoMacro(node: LexicalNode | null | undefined): node is RoamMacroNode {
+  return $isRoamMacroNode(node) && (node.getMacro() === '{{[[TODO]]}}' || node.getMacro() === '{{[[DONE]]}}')
+}
+
 function filterNestedBlockChildren(nodesToAppend: LexicalNode[]): LexicalNode[] {
   return nodesToAppend.filter((node) => !$isMegaBlockNode(node))
 }
@@ -102,7 +149,6 @@ export function createEmptyMegaDocumentEditorStateJSON(): string {
           blockId,
           variant: 'text',
           collapsed: false,
-          todoChecked: false,
         },
       ],
       direction: null,
@@ -123,9 +169,7 @@ export class MegaBlockNode extends ElementNode {
   __blockId: string
   __variant: MegaBlockVariant
   __collapsed: boolean
-  __todoChecked: boolean
   __listKind: MegaListKind | null
-  __tableSource: boolean
 
   static getType(): string {
     return 'mega-block'
@@ -136,9 +180,9 @@ export class MegaBlockNode extends ElementNode {
       node.__blockId,
       node.__variant,
       node.__collapsed,
-      node.__todoChecked,
+      false,
       node.__listKind,
-      node.__tableSource,
+      false,
       node.__key,
     )
   }
@@ -147,18 +191,16 @@ export class MegaBlockNode extends ElementNode {
     blockId = '',
     variant: MegaBlockVariant = 'text',
     collapsed = false,
-    todoChecked = false,
+    _todoChecked = false,
     listKind: MegaListKind | null = null,
-    tableSource = false,
+    _tableSource = false,
     key?: NodeKey,
   ) {
     super(key)
     this.__blockId = blockId
-    this.__variant = variant
+    this.__variant = variant === 'todo' ? 'text' : variant
     this.__collapsed = collapsed
-    this.__todoChecked = todoChecked
     this.__listKind = listKind
-    this.__tableSource = tableSource
   }
 
   static importJSON(serialized: SerializedMegaBlockNode): MegaBlockNode {
@@ -178,9 +220,7 @@ export class MegaBlockNode extends ElementNode {
       blockId: this.__blockId,
       variant: this.__variant,
       collapsed: this.__collapsed,
-      todoChecked: this.__todoChecked,
       ...(this.__listKind ? { listKind: this.__listKind } : {}),
-      ...(this.__tableSource ? { tableSource: true } : {}),
       type: 'mega-block',
       version: 1,
     }
@@ -188,7 +228,8 @@ export class MegaBlockNode extends ElementNode {
 
   createDOM(): HTMLElement {
     const element = document.createElement('div')
-    element.dataset.megaBlock = this.__variant
+    const variant = this.getVariant()
+    element.dataset.megaBlock = variant
     element.dataset.blockId = this.__blockId
     if (this.__blockId) {
       element.id = `block-${this.__blockId}`
@@ -196,26 +237,20 @@ export class MegaBlockNode extends ElementNode {
     if (this.__collapsed) {
       element.dataset.collapsed = 'true'
     }
-    if (this.__variant === 'todo') {
-      element.dataset.todoChecked = String(this.__todoChecked)
+    if (variant === 'todo') {
+      element.dataset.todoChecked = String(this.getTodoChecked())
     }
     if (this.__listKind) {
       element.dataset.listKind = this.__listKind
     }
-    if (this.__tableSource) element.dataset.megaTableSource = 'true'
+    if (this.getTableSource()) element.dataset.megaTableSource = 'true'
     return element
   }
 
   updateDOM(prevNode: MegaBlockNode, dom: HTMLElement): boolean {
-    if (
-      prevNode.__blockId !== this.__blockId
-      || prevNode.__variant !== this.__variant
-      || prevNode.__collapsed !== this.__collapsed
-      || prevNode.__todoChecked !== this.__todoChecked
-      || prevNode.__listKind !== this.__listKind
-      || prevNode.__tableSource !== this.__tableSource
-    ) {
-      dom.dataset.megaBlock = this.__variant
+    {
+      const variant = this.getVariant()
+      dom.dataset.megaBlock = variant
       dom.dataset.blockId = this.__blockId
       if (this.__blockId) {
         dom.id = `block-${this.__blockId}`
@@ -225,8 +260,8 @@ export class MegaBlockNode extends ElementNode {
       } else {
         dom.removeAttribute('data-collapsed')
       }
-      if (this.__variant === 'todo') {
-        dom.dataset.todoChecked = String(this.__todoChecked)
+      if (variant === 'todo') {
+        dom.dataset.todoChecked = String(this.getTodoChecked())
       } else {
         dom.removeAttribute('data-todo-checked')
       }
@@ -235,7 +270,7 @@ export class MegaBlockNode extends ElementNode {
       } else {
         dom.removeAttribute('data-list-kind')
       }
-      if (this.__tableSource) dom.dataset.megaTableSource = 'true'
+      if (this.getTableSource()) dom.dataset.megaTableSource = 'true'
       else dom.removeAttribute('data-mega-table-source')
     }
     return false
@@ -252,12 +287,20 @@ export class MegaBlockNode extends ElementNode {
   }
 
   getVariant(): MegaBlockVariant {
+    if (this.getChildren().some($isTodoMacro)) return 'todo'
     return this.getLatest().__variant
   }
 
   setVariant(variant: MegaBlockVariant): this {
     const writable = this.getWritable()
-    writable.__variant = variant
+    const todo = writable.getChildren().find($isTodoMacro)
+    if (variant === 'todo') {
+      writable.__variant = 'text'
+      if (!todo) writable.splice(0, 0, [$createRoamMacro('{{[[TODO]]}}')])
+    } else {
+      writable.__variant = variant
+      todo?.remove()
+    }
     return writable
   }
 
@@ -272,12 +315,13 @@ export class MegaBlockNode extends ElementNode {
   }
 
   getTodoChecked(): boolean {
-    return this.getLatest().__todoChecked
+    return this.getChildren().find($isTodoMacro)?.getMacro() === '{{[[DONE]]}}'
   }
 
   setTodoChecked(todoChecked: boolean): this {
     const writable = this.getWritable()
-    writable.__todoChecked = todoChecked
+    const todo = writable.getChildren().find($isTodoMacro)
+    if (todo) todo.setMacro(todoChecked ? '{{[[DONE]]}}' : '{{[[TODO]]}}')
     return writable
   }
 
@@ -292,12 +336,15 @@ export class MegaBlockNode extends ElementNode {
   }
 
   getTableSource(): boolean {
-    return this.getLatest().__tableSource
+    return this.getChildren().some(node => $isRoamMacroNode(node) && node.getMacro() === '{{[[table]]}}')
   }
 
   setTableSource(tableSource: boolean): this {
-    this.getWritable().__tableSource = tableSource
-    return this
+    const writable = this.getWritable()
+    const table = writable.getChildren().find(node => $isRoamMacroNode(node) && node.getMacro() === '{{[[table]]}}')
+    if (tableSource && !writable.getTableSource()) writable.splice(0, 0, [$createRoamMacro('{{[[table]]}}')])
+    if (!tableSource) table?.remove()
+    return writable
   }
 
   canBeEmpty(): boolean {
@@ -572,7 +619,10 @@ export function $createMegaBlock(
   listKind: MegaListKind | null = null,
   tableSource = false,
 ): MegaBlockNode {
-  return $applyNodeReplacement(new MegaBlockNode(blockId, variant, collapsed, todoChecked, listKind, tableSource))
+  const node = $applyNodeReplacement(new MegaBlockNode(blockId, variant, collapsed, todoChecked, listKind, tableSource))
+  if (variant === 'todo') node.setVariant('todo').setTodoChecked(todoChecked)
+  if (tableSource) node.setTableSource(true)
+  return node
 }
 
 export function $isMegaBlockNode(node: LexicalNode | null | undefined): node is MegaBlockNode {
@@ -628,6 +678,7 @@ export function $createMegaTableBlockWithEmptyGrid(blockId = ''): MegaTableBlock
  */
 export const MEGA_CONTENT_BLOCK_NODES: Klass<LexicalNode>[] = [
   MegaBlockNode,
+  RoamMacroNode,
   MegaCodeBlockNode,
   MegaTableBlockNode,
   MegaOutlineTableNode,

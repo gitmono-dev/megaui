@@ -36,6 +36,8 @@ import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
 import { RichTextPlugin } from "@lexical/react/LexicalRichTextPlugin";
 import { getContentPresetConfig, type ContentPreset } from "./preset";
 import { BlockStructurePlugin } from "./plugins/block-structure";
+import { RoamSyntaxPlugin } from "./plugins/roam-syntax";
+import { RoamTableRenderer } from "./plugins/roam-table-renderer";
 import { TagReferencesPlugin } from "../tag-references";
 import { EditorRefNode } from "./nodes";
 import { WikilinksPlugin, type WikilinkCandidate, type WikilinksPluginLabels } from "./plugins/wikilinks";
@@ -278,6 +280,8 @@ export function MegaContentEditor({
         {preset === "document" ? <AutoLinkPlugin matchers={DOCUMENT_AUTO_LINK_MATCHERS} /> : null}
         {config.features.tableBlocks ? <TablePlugin hasCellMerge={false} /> : null}
         {config.features.blockStructure && !readOnly ? <BlockStructurePlugin allowNesting={config.features.nestedBlocks} registerInvariants={preset === "document"} /> : null}
+        {preset === "document" && !readOnly ? <RoamSyntaxPlugin /> : null}
+        {preset === "document" ? <RoamTableRenderer /> : null}
         {wikilinks && !readOnly ? <WikilinksPlugin allowCreate={wikilinks.allowCreate} labels={wikilinks.labels} search={wikilinks.search} /> : null}
         {blockRefs && !readOnly ? <BlockRefsPlugin labels={blockRefs.labels} search={blockRefs.search} /> : null}
         {embeds && !readOnly ? <EmbedsPlugin labels={embeds.labels} search={embeds.search} /> : null}

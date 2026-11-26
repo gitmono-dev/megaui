@@ -6,7 +6,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import "@testing-library/jest-dom/vitest";
 import { $createTextNode, $getRoot, type LexicalEditor } from "lexical";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { $createMegaBlock, $isMegaBlockNode, createEmptyMegaDocumentEditorStateJSON } from "@megaui/content";
+import { $createMegaBlock, $isMegaBlockNode, $isRoamMacroNode, createEmptyMegaDocumentEditorStateJSON } from "@megaui/content";
 import { MegaContentEditor } from "../editor";
 import { TodoCheckboxPlugin } from "./todo-checkbox";
 
@@ -21,6 +21,25 @@ function EditorCapture({ onReady }: { readonly onReady: (editor: LexicalEditor) 
 }
 
 describe("TodoCheckboxPlugin", () => {
+  it("reflects a remote macro update even when the block itself did not change", async () => {
+    let editor!: LexicalEditor;
+    render(<MegaContentEditor initialStateJSON={createEmptyMegaDocumentEditorStateJSON()} placeholder="Write" preset="document">
+      <TodoCheckboxPlugin labels={LABELS} />
+      <EditorCapture onReady={(ready) => { editor = ready; }} />
+    </MegaContentEditor>);
+    act(() => editor.update(() => {
+      const block = $getRoot().getFirstChild();
+      if ($isMegaBlockNode(block)) block.setVariant('todo');
+    }, { discrete: true }));
+    await screen.findByRole('button', { name: LABELS.markComplete });
+    act(() => editor.update(() => {
+      const block = $getRoot().getFirstChild();
+      const macro = $isMegaBlockNode(block) ? block.getFirstChild() : null;
+      if (!$isRoamMacroNode(macro)) throw new Error('expected TODO macro');
+      macro.setMacro('{{[[DONE]]}}');
+    }, { discrete: true, skipTransforms: true, tag: 'collaboration' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: LABELS.markIncomplete })).toHaveAttribute('aria-pressed', 'true'));
+  });
   it("renders an accessible checkbox and persists a click to the todo block", async () => {
     let editor: LexicalEditor | undefined;
     render(

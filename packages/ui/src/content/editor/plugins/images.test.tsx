@@ -10,7 +10,7 @@ import { $isMegaBlockNode, createEmptyMegaDocumentEditorStateJSON } from "@megau
 import { MegaContentReader } from "../../reader/reader";
 import { MegaContentEditor } from "../editor";
 import { OPEN_IMAGE_DIALOG_COMMAND } from "./image-command";
-import { ImagePlugin } from "./images";
+import { ImagePlugin, parseRoamImage } from "./images";
 
 afterEach(cleanup);
 
@@ -23,6 +23,11 @@ function Capture({ onReady }: { onReady: (editor: LexicalEditor) => void }) {
 }
 
 describe("ImagePlugin", () => {
+  it("does not interpret unsafe or malformed image syntax as an image", () => {
+    expect(parseRoamImage("![x](javascript:alert(1))")).toBeNull();
+    expect(parseRoamImage("![x](https://user:pass@example.com/a.png)")).toBeNull();
+    expect(parseRoamImage("prefix ![x](https://example.com/a.png)")).toBeNull();
+  });
   it("inserts a URL image, round-trips JSON into the reader, and allows removal", async () => {
     let editor!: LexicalEditor;
     render(
@@ -44,6 +49,8 @@ describe("ImagePlugin", () => {
     await waitFor(() => expect(screen.getByAltText("Chart")).toHaveAttribute("src", "https://example.com/chart.png"));
     const json = JSON.stringify(editor.getEditorState().toJSON());
     expect(json).toContain('"type":"mega-image"');
+    expect(json).toContain('"text":"![Chart](https://example.com/chart.png)"');
+    expect(json).not.toContain('"image":{"src"');
     const reader = render(<MegaContentReader stateJSON={json} />);
     expect(within(reader.container).getByAltText("Chart")).toHaveAttribute("src", "https://example.com/chart.png");
     act(() => editor.update(() => {
@@ -98,6 +105,27 @@ describe("ImagePlugin", () => {
     act(() => { expect(editor.dispatchCommand(PASTE_COMMAND, event)).toBe(true); });
     await waitFor(() => expect(upload).toHaveBeenCalledWith(file));
     await waitFor(() => expect(screen.getByAltText("chart.png")).toHaveAttribute("src", "https://example.com/upload.png"));
+    expect(event.preventDefault).toHaveBeenCalled();
+  });
+
+  it("renders a pasted Roam markdown image", async () => {
+    let editor!: LexicalEditor;
+    render(
+      <MegaContentEditor initialStateJSON={createEmptyMegaDocumentEditorStateJSON()} placeholder="Write" preset="document">
+        <ImagePlugin labels={labels} onError={vi.fn()} upload={vi.fn()} />
+        <Capture onReady={(value) => { editor = value; }} />
+      </MegaContentEditor>,
+    );
+    act(() => editor.update(() => {
+      const block = $getRoot().getFirstChild();
+      if ($isMegaBlockNode(block)) block.selectEnd();
+    }, { discrete: true }));
+    const event = {
+      clipboardData: { files: [], getData: (type: string) => type === "text/plain" ? "![Chart](https://example.com/chart.png)" : "" },
+      preventDefault: vi.fn(),
+    } as unknown as ClipboardEvent;
+    act(() => { expect(editor.dispatchCommand(PASTE_COMMAND, event)).toBe(true); });
+    await waitFor(() => expect(screen.getByAltText("Chart")).toHaveAttribute("src", "https://example.com/chart.png"));
     expect(event.preventDefault).toHaveBeenCalled();
   });
 });

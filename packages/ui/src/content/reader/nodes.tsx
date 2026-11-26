@@ -32,6 +32,7 @@ import {
   blockRefExportContract,
   BlockRefNode,
   EmbedNode,
+  embedFromSerialized,
   refExportContract,
   RefNode,
   type BlockRefValue,
@@ -162,7 +163,7 @@ export class ReaderEmbedNode extends EmbedNode {
   }
 
   static importJSON(serialized: SerializedEmbedNode): ReaderEmbedNode {
-    return new ReaderEmbedNode(serialized.embed)
+    return new ReaderEmbedNode(embedFromSerialized(serialized))
   }
 
   createDOM(): HTMLElement {

@@ -522,7 +522,7 @@ function ReadyDocDetailContent({ params, searchParams, pathname }: {
           </div>
         ) : null}
 
-        <div ref={scrollRef} style={{ background: MEGA_TOKENS.subtle, flex: 1, minHeight: 0, overflow: "auto" }}>
+        <div ref={scrollRef} style={{ background: MEGA_TOKENS.bg, flex: 1, minHeight: 0, overflow: "auto" }}>
           {canWritePage ? (
             <DocArticle
               articleRef={articleRef}

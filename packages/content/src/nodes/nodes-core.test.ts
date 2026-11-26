@@ -61,9 +61,8 @@ describe('MegaBlockNode (headless editor round-trip)', () => {
       type: 'mega-block',
       version: 1,
       blockId,
-      variant: 'todo',
+      variant: 'text',
       collapsed: true,
-      todoChecked: true,
       listKind: 'bullet',
     })
 

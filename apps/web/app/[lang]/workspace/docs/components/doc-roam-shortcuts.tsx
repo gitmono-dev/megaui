@@ -24,6 +24,7 @@ import {
   type BlockRefValue,
   type CompletedPageReference,
   type EmbedCandidate,
+  type RoamEmbedTarget,
   type WikilinkCandidate,
 } from "@megaui/ui/content/editor";
 import { megaGet, megaPost } from "@megaui/ui/query";
@@ -136,6 +137,19 @@ function ReadyDocRoamShortcuts({ onReferenceCreateError, onOpenBlock, focusOverr
   const resolveBlockReference = useCallback((blockId: string, docHint: string, exactDoc: boolean) =>
     megaGet<BlockRefValue>(["blocks", "resolve"], { block: blockId, doc: docHint, exact: String(exactDoc) }), []);
 
+  const resolveEmbedSource = useCallback(async (target: RoamEmbedTarget) => {
+    if (target.kind === "block") {
+      const result = await resolveBlockReference(target.blockId, currentDocId, false);
+      return result.status === "ok"
+        ? { targetDocId: result.targetDocId, targetBlockId: target.blockId, label: result.label }
+        : null;
+    }
+    const pages = await searchTitleIndex(target.title);
+    const page = pages.find(candidate => candidate.kind === "doc" && candidate.targetId
+      && candidate.targetTitle.toLocaleLowerCase() === target.title.toLocaleLowerCase());
+    return page?.targetId ? { targetDocId: page.targetId, label: page.targetTitle } : null;
+  }, [currentDocId, resolveBlockReference, searchTitleIndex]);
+
   const searchEmbeds = useCallback(async (query: string): Promise<readonly EmbedCandidate[]> => {
     const [pages, blocks] = await Promise.all([searchTitleIndex(query), searchBlocks(query)]);
     return [
@@ -195,7 +209,7 @@ function ReadyDocRoamShortcuts({ onReferenceCreateError, onOpenBlock, focusOverr
       <BlockCollapsePlugin labels={t.workspace.docEdit.blockCollapse} />
       <TodoCheckboxPlugin labels={t.workspace.docEdit.todoCheckbox} />
       <BlockContextMenuPlugin labels={t.workspace.docEdit.blockContextMenu} onFocusBlock={focusBlock} onOpenInSidebar={onOpenBlock} sourceDocId={currentDocId} />
-      <BlockEmbedPastePlugin currentDocId={currentDocId} />
+      <BlockEmbedPastePlugin currentDocId={currentDocId} resolve={resolveEmbedSource} />
       <BlockReferenceSyntaxPlugin currentDocId={currentDocId} resolve={resolveBlockReference} />
       <QuickCommandsPlugin labels={t.workspace.docEdit.quickCommands} />
       <ImagePlugin labels={t.workspace.docEdit.images} onError={onReferenceCreateError} upload={uploadImage} />

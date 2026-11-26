@@ -33,6 +33,7 @@ import {
   $isRefNode as $isBaseRefNode,
   BlockRefNode,
   EmbedNode,
+  embedFromSerialized,
   RefNode,
   refExportContract,
   $createMegaBlock,
@@ -244,11 +245,11 @@ export class EditorEmbedNode extends EmbedNode {
   }
 
   static clone(node: EditorEmbedNode): EditorEmbedNode {
-    return new EditorEmbedNode(node.__embed, node.__key);
+    return new EditorEmbedNode(node.getEmbed(), node.__key);
   }
 
   static importJSON(serialized: SerializedEmbedNode): EditorEmbedNode {
-    return $createEditorEmbedNode(serialized.embed);
+    return $createEditorEmbedNode(embedFromSerialized(serialized));
   }
 
   createDOM(): HTMLElement {
@@ -260,7 +261,7 @@ export class EditorEmbedNode extends EmbedNode {
   }
 
   decorate(): React.JSX.Element {
-    return <EditorEmbedPreview nodeKey={this.getKey()} value={this.__embed} />;
+    return <EditorEmbedPreview nodeKey={this.getKey()} value={this.getEmbed()} />;
   }
 }
 

@@ -127,7 +127,7 @@ describe("BlockStructurePlugin", () => {
         const block = $getRoot().getFirstChild();
         if (!$isMegaBlockNode(block)) throw new Error("Expected a mega block");
         block.setVariant("todo").setTodoChecked(true);
-        const textNode = block.getFirstChild();
+        const textNode = block.getChildren().find($isTextNode);
         if (!$isTextNode(textNode)) throw new Error("Expected task text");
         textNode.select(0, 0);
       }, { discrete: true });

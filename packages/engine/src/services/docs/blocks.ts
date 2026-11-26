@@ -50,6 +50,7 @@ function truncateSummary(text: string): string {
 
 function mapVariant(node: LexicalWalkNode): MegaContentBlockVariant {
   if (node.type === "mega-code-block") return megaContentBlockVariants.CODE;
+  if (node.children?.some(child => child.type === "mega-roam-macro" && /^\{\{\[\[(?:TODO|DONE)\]\]\}\}$/.test(child.text ?? ""))) return megaContentBlockVariants.TODO;
   if (node.listKind === "bullet") return megaContentBlockVariants.BULLET;
   if (node.listKind === "ordered") return megaContentBlockVariants.NUMBERED;
   switch (node.variant) {

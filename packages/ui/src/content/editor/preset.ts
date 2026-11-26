@@ -17,6 +17,7 @@ import {
   MEGA_CONTENT_BLOCK_NODES,
   MegaBlockNode,
   MegaCodeBlockNode,
+  RoamMacroNode,
   createEmptyMegaDocumentEditorStateJSON,
 } from "@megaui/content";
 import { EditorBlockRefNode, EditorEmbedNode, EditorRefNode } from "./nodes";
@@ -61,6 +62,7 @@ const DOCUMENT_NODES: Klass<LexicalNode>[] = [
 const COMMENT_CHAT_NODES: Klass<LexicalNode>[] = [
   MegaBlockNode,
   MegaCodeBlockNode,
+  RoamMacroNode,
   EditorRefNode,
   EditorBlockRefNode,
   LinkNode,

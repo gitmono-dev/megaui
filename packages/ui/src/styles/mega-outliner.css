@@ -162,7 +162,7 @@
 }
 
 /* The table stays visible; only its backing outline folds away. */
-[data-mega-table-source="true"][data-collapsed="true"] {
+[data-mega-table-source="true"][data-collapsed="true"] > [data-mega-block] {
   display: none;
 }
 
@@ -616,6 +616,42 @@
   background: color-mix(in srgb, var(--mega-text) 12%, var(--mega-bg));
 }
 
+/* Page references use the same compact surface and selection as slash commands. */
+[data-mega-content="wikilink-menu"] {
+  border-radius: var(--mega-radius-md);
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--mega-text) 12%, transparent);
+  box-sizing: border-box;
+  color: var(--mega-text);
+  font-size: var(--mega-density-font-size);
+  line-height: 1.45;
+  max-height: min(18rem, 50vh);
+  min-width: 0;
+  overflow-y: auto;
+  padding: var(--mega-space-3) 0;
+  width: min(18rem, calc(100vw - 16px));
+}
+
+[data-mega-content="wikilink-option"],
+[data-mega-content="wikilink-create"],
+[data-mega-content="wikilink-empty"] {
+  box-sizing: border-box;
+  display: block;
+  font: inherit;
+  min-height: var(--mega-density-row-height);
+  overflow: hidden;
+  padding: var(--mega-space-3) var(--mega-space-8);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+[data-mega-content="wikilink-option"][aria-selected="true"],
+[data-mega-content="wikilink-create"][aria-selected="true"] {
+  background: var(--mega-accent-tint-5);
+}
+
+[data-mega-content="wikilink-create"] { color: var(--mega-accent); }
+[data-mega-content="wikilink-empty"] { color: var(--mega-muted); }
+
 [data-mega-content="embed-empty"] {
   color: var(--mega-muted);
   padding: var(--mega-space-3) var(--mega-space-6);
@@ -641,8 +677,17 @@
   text-decoration: underline;
 }
 
+/* Match Roam's blue page titles and muted brackets in both document surfaces. */
+:where([data-mega-content="outliner"], [data-mega-content="reader"]) :where([data-mega-content="ref"], [data-mega-content="ref-unresolved"])[data-ref-kind="doc"]:not([data-ref-notation="tag"]) {
+  color: #106ba3;
+}
+
 [data-mega-content="ref-bracket"] {
-  color: inherit;
+  color: #a7b6c2;
+}
+
+.dark :where([data-mega-content="outliner"], [data-mega-content="reader"]) :where([data-mega-content="ref"], [data-mega-content="ref-unresolved"])[data-ref-kind="doc"]:not([data-ref-notation="tag"]) {
+  color: #75bce8;
 }
 
 :where([data-mega-content="ref"], [data-mega-content="ref-unresolved"])[data-ref-notation="tag"] {

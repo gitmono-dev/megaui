@@ -14,6 +14,7 @@
 import { and, eq, isNull } from "drizzle-orm";
 import { megaContent, megaContentContainerTypes, megaDocs, type Database } from "@megaui/database";
 import { EMBED_MAX_DEPTH, extractBlockSubtreeJSON } from "@megaui/core";
+import { parseRoamEmbed } from "@megaui/content";
 import { MegaNotFoundError } from "../../errors";
 import type { AclService } from "../acl";
 
@@ -48,6 +49,9 @@ type LexicalWalkNode = {
   type?: string;
   blockId?: string;
   children?: LexicalWalkNode[];
+  text?: string;
+  targetDocId?: string;
+  label?: string;
   embed?: {
     targetDocId?: string;
     targetBlockId?: string;
@@ -67,10 +71,12 @@ export function extractEmbedsFromEditorState(
 
   const out: Array<{ targetDocId: string; targetBlockId: string | null }> = [];
   const walk = (node: LexicalWalkNode): void => {
-    if (node.type === "mega-embed" && node.embed?.targetDocId) {
+    const embed = node.type === "mega-embed" && node.text && node.targetDocId
+      ? parseRoamEmbed(node.text, node.targetDocId, node.label) : node.embed;
+    if (node.type === "mega-embed" && embed?.targetDocId) {
       out.push({
-        targetDocId: node.embed.targetDocId,
-        targetBlockId: node.embed.targetBlockId ?? null,
+        targetDocId: embed.targetDocId,
+        targetBlockId: embed.targetBlockId ?? null,
       });
     }
     for (const child of node.children ?? []) walk(child);

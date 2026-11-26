@@ -89,6 +89,36 @@ describe.skipIf(!adminDatabaseUrl)("createDocsService CRUD/rename/version/star (
     }
   });
 
+  it("persists Roam macro and image source through document creation, save and reload", async () => {
+    const client = createDatabaseClient({ connectionString });
+    try {
+      const docs = createDocsService(client.db, createAclService(client.db), createBlocksRepo(client.db), createLinksRepo(client.db));
+      const macroBlock = (blockId: string, children: unknown[]) => ({
+        type: 'mega-block', version: 1, blockId, variant: 'text', collapsed: false,
+        direction: null, format: '', indent: 0, children,
+      });
+      const source = JSON.stringify({ root: { type: 'root', version: 1, children: [
+        macroBlock('abcdefghijkl', [{ type: 'mega-roam-macro', version: 1, text: '{{[[TODO]]}}' }]),
+        macroBlock('mnopqrstuvwx', [
+          { type: 'mega-roam-macro', version: 1, text: '{{[[table]]}}' },
+          macroBlock('ABCDEFGHIJKL', [{ type: 'paragraph', version: 1, children: [{ type: 'text', version: 1, text: 'cell' }] }, macroBlock('ABCDEFGHIJ03', [])]),
+          macroBlock('ABCDEFGHIJ01', [{ type: 'mega-image', version: 1, text: '![图标](http://127.0.0.1:3000/favicon.ico)' }]),
+        ]),
+        macroBlock('ABCDEFGHIJ02', [{ type: 'mega-embed', version: 1, text: '{{[[embed]]: [[协作保存验证]]}}', targetDocId: 'doc_target', label: '协作保存验证' }]),
+      ] } });
+      const created = await docs.createDoc({ title: 'Roam source persistence', body: source }, USERS.tianjing.id);
+      const done = source.replace('{{[[TODO]]}}', '{{[[DONE]]}}');
+      await docs.saveDoc(created.id, { body: done, summary: 'Completed task' }, USERS.tianjing.id);
+      const fetched = await docs.getDoc(created.id, USERS.tianjing.id);
+      expect(JSON.parse(fetched.body)).toEqual(JSON.parse(done));
+      expect(JSON.parse(fetched.versions[0]!.body!)).toEqual(JSON.parse(done));
+      const indexed = await listBlocksForDoc(createBlocksRepo(client.db), created.id);
+      expect(indexed.find(item => item.blockId === 'abcdefghijkl')?.variant).toBe('todo');
+    } finally {
+      await client.close();
+    }
+  });
+
   it("rejects createDoc for an unauthenticated actor", async () => {
     const client = createDatabaseClient({ connectionString });
     try {

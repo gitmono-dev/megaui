@@ -16,6 +16,7 @@ describe("document preset", () => {
         "mega-image",
         "mega-outline-table",
         "mega-ref",
+        "mega-roam-macro",
         "mega-table-block",
         "link",
         "autolink",
@@ -43,7 +44,7 @@ describe("document preset", () => {
 describe("comment preset", () => {
   it("registers MegaBlockNode + MegaCodeBlockNode + both ref chip kinds + LinkNode only (no embed, no CodeNode)", () => {
     const types = getContentPresetNodeTypes("comment");
-    expect(types).toEqual(["link", "mega-block", "mega-block-ref", "mega-code-block", "mega-ref"].sort());
+    expect(types).toEqual(["link", "mega-block", "mega-block-ref", "mega-code-block", "mega-ref", "mega-roam-macro"].sort());
     expect(contentPresetIncludesNode("comment", "mega-embed")).toBe(false);
     expect(contentPresetIncludesNode("comment", "code")).toBe(false);
   });

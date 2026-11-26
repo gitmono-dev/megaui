@@ -9,17 +9,14 @@ import {
 } from './nodes-core'
 
 /** A table view points at ordinary nested outliner blocks; no cell text is copied. */
-export function $createOutlineTable(
+export function $createRoamTable(
   rows = 2,
   columns = 2,
-  createTable: (blockId: string, sourceBlockId: string) => MegaOutlineTableNode = $createMegaOutlineTable,
 ): {
-  table: MegaOutlineTableNode
   source: MegaBlockNode
   firstCell: MegaBlockNode
 } {
   const source = $createMegaBlock('text', generateBlockId(), false, false, null, true)
-  const table = createTable(generateBlockId(), source.getBlockId())
   let firstCell: MegaBlockNode | null = null
   for (let rowIndex = 0; rowIndex < rows; rowIndex++) {
     const row = $createMegaBlock('text', generateBlockId())
@@ -36,7 +33,17 @@ export function $createOutlineTable(
     firstCell = $createMegaBlock('text', generateBlockId())
     source.append(firstCell)
   }
-  return { table, source, firstCell }
+  return { source, firstCell }
+}
+
+/** Legacy projection factory retained for reading existing serialized tables. */
+export function $createOutlineTable(
+  rows = 2,
+  columns = 2,
+  createTable: (blockId: string, sourceBlockId: string) => MegaOutlineTableNode = $createMegaOutlineTable,
+): { table: MegaOutlineTableNode; source: MegaBlockNode; firstCell: MegaBlockNode } {
+  const { source, firstCell } = $createRoamTable(rows, columns)
+  return { table: createTable(generateBlockId(), source.getBlockId()), source, firstCell }
 }
 
 export function $findMegaBlockById(blockId: string, nodes: readonly LexicalNode[] = $getRoot().getChildren()): MegaBlockNode | null {

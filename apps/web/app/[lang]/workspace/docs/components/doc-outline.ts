@@ -13,6 +13,7 @@ type SerializedNode = {
 };
 
 function nodeText(node: SerializedNode): string {
+  if (node.type === "mega-roam-macro") return "";
   if (typeof node.text === "string") return node.text;
   return (node.children ?? []).map(nodeText).join("");
 }

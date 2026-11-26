@@ -79,6 +79,11 @@ describe("QuickCommandsPlugin (/ typeahead)", () => {
     await waitFor(() => expect(readFirstBlock(editor).text).toBe("Existing "));
     if (action === "TODO") expect(readFirstBlock(editor).variant).toBe("todo");
     if (action === "Table") await waitFor(() => expect(editor.getRootElement()?.querySelectorAll("[data-mega-outline-table] td")).toHaveLength(4));
+    if (action === "Table") {
+      const json = JSON.stringify(editor.getEditorState().toJSON());
+      expect(json).toContain('{{[[table]]}}');
+      expect(json).not.toContain('"type":"mega-outline-table"');
+    }
     if (action === "Image") await screen.findByRole("dialog", { name: "Insert image" });
   });
   it.each(["TODO", "Table", "Image"] as const)("activates %s with a pointer", async (action) => {

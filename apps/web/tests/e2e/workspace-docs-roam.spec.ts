@@ -163,8 +163,8 @@ test.describe("workspace docs writable outliner (FIX-RO-02 through FIX-RO-07)", 
         ),
       };
     });
-    expect(todoVisuals).toMatchObject({ checkboxHeight: "12px", checkboxWidth: "12px", bulletDisplay: "block" });
-    expect(todoVisuals.checkboxOffset).toBeGreaterThan(todoVisuals.bulletLeft + todoVisuals.bulletWidth);
+    expect(todoVisuals).toMatchObject({ checkboxHeight: "14px", checkboxWidth: "14px", bulletDisplay: "block" });
+    expect(Math.abs(todoVisuals.checkboxOffset - todoVisuals.bulletLeft)).toBeLessThanOrEqual(1);
     expect(todoVisuals.centerDelta).toBeLessThanOrEqual(1);
     await checkbox.focus();
     await page.keyboard.press("Space");
@@ -383,7 +383,7 @@ test.describe("workspace docs writable outliner (FIX-RO-02 through FIX-RO-07)", 
     expect(arrowRect!.y).toBeGreaterThanOrEqual(tableRect!.y);
     await arrow.click();
     await expect(arrow).toHaveAttribute('aria-expanded', 'false');
-    await expect(source).toBeHidden();
+    await expect(source.locator('[data-mega-block]').first()).toBeHidden();
     await expect(table).toBeVisible();
     const firstCell = page.getByRole('textbox', { name: 'Row 1, column 1' });
     await firstCell.fill('Shared cell');
@@ -421,7 +421,7 @@ test.describe("workspace docs writable outliner (FIX-RO-02 through FIX-RO-07)", 
       await expect(second).toHaveValue(`Second ${row}`);
       await expect(page.locator('[data-mega-content="outline-table-actions"]')).toHaveCount(0);
       const gap = await page.locator('[data-mega-table-source]').evaluate((element) =>
-        element.getBoundingClientRect().top - element.previousElementSibling!.getBoundingClientRect().bottom);
+        element.querySelector('[data-mega-block]')!.getBoundingClientRect().top - element.querySelector('[data-mega-outline-table]')!.getBoundingClientRect().bottom);
       expect(gap).toBeLessThanOrEqual(12);
       await first.fill('');
       await outline.click({ position: { x: 75, y: 12 } });
@@ -440,30 +440,31 @@ test.describe("workspace docs writable outliner (FIX-RO-02 through FIX-RO-07)", 
     const docId = "doc_roam_table_snapshot";
     const state = JSON.parse(lexicalDocumentWithBlockTree());
     const source = state.root.children[0];
-    source.tableSource = true;
     source.collapsed = true;
-    source.children = source.children.filter((node: { type: string }) => node.type === "mega-block");
-    state.root.children.unshift({ type: "mega-outline-table", version: 1, blockId: "table-view", sourceBlockId: source.blockId });
+    source.children = [
+      { type: "mega-roam-macro", version: 1, text: "{{[[table]]}}" },
+      ...source.children.filter((node: { type: string }) => node.type === "mega-block"),
+    ];
     await stubWorkspace(page, docId, JSON.stringify(state));
     await page.goto(`/en/workspace/docs/${docId}?v=1`);
     const table = page.locator('[data-mega-outline-table]');
     const outline = page.locator('[data-mega-table-source]');
     const arrow = page.locator('[data-mega-content="collapse-toggle"][data-table-outline="true"]');
     await expect(table).toBeVisible();
-    await expect(outline).toBeHidden();
+    await expect(outline.locator('[data-mega-block]').first()).toBeHidden();
     await expect(arrow).toHaveAttribute('aria-expanded', 'false');
     const tableRect = await table.boundingBox();
     const arrowRect = await arrow.boundingBox();
     expect(arrowRect!.x + arrowRect!.width).toBeLessThanOrEqual(tableRect!.x);
     expect(arrowRect!.y).toBeLessThan(tableRect!.y + 30);
     await arrow.click();
-    await expect(outline).toBeVisible();
+    await expect(outline.locator('[data-mega-block]').first()).toBeVisible();
     await expect(arrow).toHaveAttribute('aria-expanded', 'true');
     await expect(table.getByRole('textbox')).toHaveValue('Focused child');
     await expect(table.getByRole('textbox')).toHaveAttribute('readonly', '');
     await arrow.focus();
     await page.keyboard.press('Enter');
-    await expect(outline).toBeHidden();
+    await expect(outline.locator('[data-mega-block]').first()).toBeHidden();
     await expect(table).toBeVisible();
     await expect(page.locator('[data-mega-content="reader"] [data-block-id="roam-hidden-sibling"]')).toBeVisible();
   });
@@ -544,7 +545,8 @@ test.describe("workspace docs writable outliner (FIX-RO-02 through FIX-RO-07)", 
       brackets: [...document.querySelectorAll<HTMLElement>('[data-mega-content="ref-bracket"]')].map((bracket) => getComputedStyle(bracket).color),
     }));
     expect(colors.title).not.toBe(colors.editor);
-    expect(colors.brackets).toEqual([colors.editor, colors.editor]);
+    expect(colors.brackets).toEqual(["rgb(167, 182, 194)", "rgb(167, 182, 194)"]);
+    expect(colors.title).toBe("rgb(16, 107, 163)");
 
     await unresolvedPage.click();
     await expect.poll(requests.resolveOrCreateCalls).toBe(1);

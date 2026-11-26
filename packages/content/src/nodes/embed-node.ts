@@ -31,7 +31,28 @@ export interface EmbedValue {
   label?: string
 }
 
-export type SerializedEmbedNode = Spread<{ embed: EmbedValue }, SerializedLexicalNode>
+export type SerializedEmbedNode = Spread<{ text?: string; targetDocId?: string; label?: string; embed?: EmbedValue }, SerializedLexicalNode>
+
+export function formatRoamEmbed(value: EmbedValue): string {
+  const target = value.targetBlockId ? `((${value.targetBlockId}))` : `[[${value.label ?? value.targetDocId}]]`
+  return `{{[[embed]]: ${target}}}`
+}
+
+export function parseRoamEmbed(text: string, targetDocId: string, label?: string): EmbedValue | null {
+  const block = /^\{\{\[\[embed\]\]:\s*\(\(([^()]+)\)\)\}\}$/.exec(text)
+  if (block) return { targetDocId, targetBlockId: block[1]!, ...(label !== undefined ? { label } : {}) }
+  const page = /^\{\{\[\[embed\]\]:\s*\[\[(.*)\]\]\}\}$/.exec(text)
+  if (page) return { targetDocId, ...(label !== undefined ? { label } : {}) }
+  return null
+}
+
+export function embedFromSerialized(serialized: SerializedEmbedNode): EmbedValue {
+  const value = typeof serialized.text === 'string' && typeof serialized.targetDocId === 'string'
+    ? parseRoamEmbed(serialized.text, serialized.targetDocId, serialized.label)
+    : serialized.embed
+  if (!value) throw new Error('Invalid embed source')
+  return value
+}
 
 export function embedHref(value: EmbedValue, workspaceBase: string): string {
   const base = trimTrailingSlashes(workspaceBase) || '/workspace'
@@ -65,46 +86,58 @@ export function embedExportContract(
 
 /** CE-52/53: `{{` embed DecoratorNode — nested snapshot via a UI-package renderer. */
 export class EmbedNode extends DecoratorNode<unknown> {
-  __embed: EmbedValue
+  __source: string
+  __targetDocId: string
+  __label: string | null
 
   static getType(): string {
     return 'mega-embed'
   }
 
   static clone(node: EmbedNode): EmbedNode {
-    return new EmbedNode(node.__embed, node.__key)
+    return new EmbedNode(node.getEmbed(), node.__key)
   }
 
-  constructor(embed: EmbedValue, key?: NodeKey) {
+  constructor(embed: EmbedValue = { targetDocId: '' }, key?: NodeKey) {
     super(key)
-    this.__embed = embed
+    this.__source = formatRoamEmbed(embed)
+    this.__targetDocId = embed.targetDocId
+    this.__label = embed.label ?? null
   }
 
   static importJSON(serialized: SerializedEmbedNode): EmbedNode {
-    return $createEmbedNode(serialized.embed)
+    return $createEmbedNode(embedFromSerialized(serialized))
   }
 
   exportJSON(): SerializedEmbedNode {
     return {
       ...super.exportJSON(),
-      embed: this.__embed,
+      text: this.__source,
+      targetDocId: this.__targetDocId,
+      ...(this.__label !== null ? { label: this.__label } : {}),
       type: 'mega-embed',
       version: 1,
     }
   }
 
   getEmbed(): EmbedValue {
-    return this.__embed
+    const latest = this.getLatest()
+    const embed = parseRoamEmbed(latest.__source, latest.__targetDocId, latest.__label ?? undefined)
+    if (!embed) throw new Error('Invalid embed source')
+    return embed
   }
 
   setEmbed(embed: EmbedValue): this {
     const writable = this.getWritable()
-    writable.__embed = embed
+    writable.__source = formatRoamEmbed(embed)
+    writable.__targetDocId = embed.targetDocId
+    writable.__label = embed.label ?? null
     return writable
   }
 
   getTextContent(): string {
-    return this.__embed.label ?? this.__embed.targetDocId
+    const embed = this.getEmbed()
+    return embed.label ?? embed.targetDocId
   }
 
   isInline(): boolean {

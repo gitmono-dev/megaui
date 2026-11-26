@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { $getRoot, COMMAND_PRIORITY_HIGH, COMMAND_PRIORITY_LOW, PASTE_COMMAND, type LexicalNode } from "lexical";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { $isMegaBlockNode, type MegaBlockNode } from "@megaui/content";
+import { $isMegaBlockNode, parseRoamImageSource, type MegaBlockNode } from "@megaui/content";
 import { $getSelectedMegaBlock, $selectFollowingMegaBlock } from "../commands";
 import { $createEditorImageNode } from "../image-node";
 import { OPEN_IMAGE_DIALOG_COMMAND } from "./image-command";
@@ -29,6 +29,19 @@ function findBlock(blockId: string, nodes: readonly LexicalNode[]): MegaBlockNod
     if (child) return child;
   }
   return null;
+}
+
+/** A pasted Roam image uses the standard Markdown image form. */
+export function parseRoamImage(text: string): { src: string; alt: string } | null {
+  const image = parseRoamImageSource(text.trim());
+  if (!image) return null;
+  try {
+    const url = new URL(image.src);
+    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) return null;
+    return { src: url.toString(), alt: image.alt };
+  } catch {
+    return null;
+  }
 }
 
 export function ImagePlugin({ labels, upload, onError }: {
@@ -81,13 +94,19 @@ export function ImagePlugin({ labels, upload, onError }: {
   useEffect(() => editor.registerCommand(PASTE_COMMAND, (event) => {
     if (!("clipboardData" in event)) return false;
     const file = [...(event.clipboardData?.files ?? [])].find((candidate) => candidate.type.startsWith("image/"));
-    if (!file) return false;
     const targetId = $getSelectedMegaBlock()?.getBlockId();
     if (!targetId) return false;
+    if (!file) {
+      const image = parseRoamImage(event.clipboardData?.getData("text/plain") ?? "");
+      if (!image) return false;
+      event.preventDefault();
+      insert(targetId, image.src, image.alt);
+      return true;
+    }
     event.preventDefault();
     void insertFile(targetId, file);
     return true;
-  }, COMMAND_PRIORITY_HIGH), [editor, insertFile]);
+  }, COMMAND_PRIORITY_HIGH), [editor, insert, insertFile]);
 
   if (!blockId || typeof document === "undefined") return null;
   return createPortal(
