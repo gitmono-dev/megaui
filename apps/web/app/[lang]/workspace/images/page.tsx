@@ -19,7 +19,7 @@ export default function ImagesPage() {
     getNextPageParam: page => page.next ?? undefined,
   });
   const items = useMemo(() => (catalog.data?.pages.flatMap(page => page.items) ?? []).filter(name => !repository || name.toLocaleLowerCase().includes(search.toLocaleLowerCase())), [catalog.data, repository, search]);
-  return <main data-mega-images="page" style={{ maxWidth: 1100, margin: "0 auto", padding: "32px 24px" }}>
+  return <main data-mega-images="page" style={{ padding: "var(--mega-page-gutter)" }}>
     {repository ? <button type="button" onClick={() => { setRepository(null); setSearch(""); }}>{text.back}</button> : null}
     <h1>{repository ?? text.title}</h1><p style={{ color: "var(--mega-muted)" }}>{repository ? text.tags : text.description}</p>
     <input aria-label={repository ? text.searchTags : text.search} placeholder={repository ? text.searchTags : text.search} value={search} onChange={event => setSearch(event.target.value)} style={{ width: "100%", margin: "20px 0", padding: 10, border: "1px solid var(--mega-border)", borderRadius: 6, background: "var(--mega-bg)" }} />

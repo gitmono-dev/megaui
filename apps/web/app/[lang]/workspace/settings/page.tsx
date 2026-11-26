@@ -32,7 +32,7 @@ function SettingsContent() {
     "code-readme": <CodeReadmeSection />,
   }[section];
   return <main data-mega-settings="page" style={{ display: "flex", gap: `calc(${MEGA_SPACING_TOKENS[8]} * 3)`, minHeight: 480, padding: `calc(${MEGA_SPACING_TOKENS[8]} * 3)` }}>
-    <SettingsNav /><div style={{ flex: 1, maxWidth: 760 }}>{content}</div>
+    <SettingsNav /><div style={{ flex: 1 }}>{content}</div>
   </main>;
 }
 

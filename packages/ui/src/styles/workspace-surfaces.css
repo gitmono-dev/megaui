@@ -12,6 +12,12 @@
   min-width: 0;
 }
 
+/* Every workspace route fills the content column beside the navigation rail. */
+[data-mega-shell="workspace-content"] > :is(main, [data-mega-docs="page"]) {
+  box-sizing: border-box;
+  width: 100%;
+}
+
 /* Page titles share the document title's hierarchy; content headings do not. */
 :where([data-mega-shell="workspace-content"], [data-mega-surface]) h1:not([data-mega-content] h1, [data-mega-code="readme"] h1) {
   color: var(--mega-text);
@@ -367,9 +373,8 @@
   color: var(--mega-text);
   font-size: var(--mega-density-font-size) !important;
   font-weight: 400;
-  margin-inline: auto;
   padding-inline: 16px;
-  width: min(768px, 100%);
+  width: 100%;
 }
 
 [data-mega-agent="conversation"] [data-message-role="user"] > div {
@@ -390,8 +395,7 @@
 }
 
 [data-mega-agent="composer-dock"] {
-  margin: 0 auto 16px;
-  width: min(768px, calc(100% - 32px));
+  margin: 0 16px 16px;
 }
 
 [data-mega-agent="composer"] {
@@ -450,14 +454,6 @@
 [data-mega-settings="card"] :is(input[type="checkbox"], input[type="radio"]) { margin: 0; }
 [data-mega-settings="card"] label { font-size: var(--mega-density-font-size); }
 
-/* Reading-oriented lists use a bounded measure; code and multi-pane editors
- * retain their full working width. */
-:is([data-mega-issues="page"] > div:first-child, [data-mega-cls="page"] > div:first-child, [data-mega-tags="page"], [data-mega-session="page"], [data-mega-home="page"] > div) {
-  max-width: 1200px;
-  width: 100%;
-  margin-inline: auto;
-}
-[data-mega-settings="page"] { max-width: 1080px; width: 100%; margin-inline: auto; }
 [data-mega-issues="page"] > div:first-child > div:first-child,
 [data-mega-cls="page"] > div:first-child > div:first-child,
 [data-mega-tags="page"] > header { flex-wrap: wrap; }

@@ -54,8 +54,7 @@ export function DocComments({
         background: MEGA_TOKENS.bg,
         border: `1px solid ${MEGA_TOKENS.border}`,
         borderRadius: MEGA_SURFACE_TOKENS.panelRadius,
-        margin: `0 auto calc(${MEGA_SPACING_TOKENS[8]} * 6)`,
-        maxWidth: 760,
+        marginBottom: `calc(${MEGA_SPACING_TOKENS[8]} * 6)`,
         padding: `calc(${MEGA_SPACING_TOKENS[8]} * 2) calc(${MEGA_SPACING_TOKENS[8]} * 2.5)`,
       }}
     >

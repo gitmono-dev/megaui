@@ -88,8 +88,6 @@ export function DocArticle({
       data-mega-docs="article"
       ref={articleRef}
       style={{
-        margin: "0 auto",
-        maxWidth: 760,
         position: "relative",
         padding: `calc(${MEGA_SPACING_TOKENS[8]} * 4) calc(${MEGA_SPACING_TOKENS[8]} * 4) calc(${MEGA_SPACING_TOKENS[8]} * 3)`,
       }}

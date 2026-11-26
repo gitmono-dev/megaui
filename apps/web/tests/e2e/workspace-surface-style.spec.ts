@@ -41,7 +41,7 @@ for (const mode of ['light', 'dark'] as const) {
   });
 }
 
-for (const width of [320, 768, 1024, 1440]) {
+for (const width of [320, 768, 1024, 1440, 1920]) {
   test(`page controls fit the available width (${width}px)`, async ({ page, context }, testInfo) => {
     test.setTimeout(90_000);
     await context.addCookies(mintSessionCookies().cookies);
@@ -51,6 +51,12 @@ for (const width of [320, 768, 1024, 1440]) {
       await page.goto(`/en/workspace${path}`);
       const surface = page.locator('[data-mega-shell="workspace-content"]');
       await expect(surface.locator('h1').first()).toBeVisible();
+      const content = surface.locator(path === '/issues' || path === '/cls' ? 'main > div:first-child' : 'main');
+      await expect.poll(async () => {
+        const workspace = await surface.boundingBox();
+        const pageContent = await content.boundingBox();
+        return workspace && pageContent ? Math.abs(workspace.width - pageContent.width) : Infinity;
+      }, { message: `Content width on ${path} at ${width}px` }).toBeLessThanOrEqual(1);
       await expect.poll(() => surface.evaluate(el => el.scrollWidth - el.clientWidth), { message: `Overflow on ${path} at ${width}px` }).toBeLessThanOrEqual(1);
     }
     await page.screenshot({ path: testInfo.outputPath(`workspace-${width}.png`) });

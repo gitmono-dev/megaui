@@ -47,7 +47,7 @@ export default function CreateChannelPage() {
   });
 
   return (
-    <main data-mega-chat="create" style={{ maxWidth: 480, padding: `calc(${MEGA_SPACING_TOKENS[8]} * 3)` }}>
+    <main data-mega-chat="create" style={{ padding: `calc(${MEGA_SPACING_TOKENS[8]} * 3)` }}>
       <Link href={`${workspaceBase}`}>{t.workspace.nav.channels}</Link>
       <h1 style={{ fontSize: "1.4rem", fontWeight: 700 }}>{createText.title}</h1>
 

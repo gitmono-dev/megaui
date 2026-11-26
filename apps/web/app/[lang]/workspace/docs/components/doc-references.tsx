@@ -86,8 +86,7 @@ function unlinkedTypeLabel(kind: DocUnlinkedRefItem["kind"], labels: DocReferenc
 }
 
 const sectionStyle = {
-  margin: `0 auto ${MEGA_SPACING_TOKENS[8]}`,
-  maxWidth: 760,
+  marginBottom: MEGA_SPACING_TOKENS[8],
   padding: `0 calc(${MEGA_SPACING_TOKENS[8]} * 4)`,
 } as const;
 
