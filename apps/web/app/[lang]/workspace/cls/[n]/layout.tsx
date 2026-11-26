@@ -15,6 +15,7 @@ import type { CL } from "@megaui/core";
 import { MegaApiError, megaPost, megaQueryKeys } from "@megaui/ui/query";
 import { ShellAvatar } from "@megaui/ui/shell";
 
+import { WorkspaceLoading } from "@/app/[lang]/workspace/components/workspace-loading";
 import { useTranslation } from "@/hooks/use-translation";
 import { authClient } from "@/lib/auth-client";
 
@@ -56,7 +57,7 @@ export default function CLDetailLayout({ children }: { children: ReactNode }) {
   }
 
   if (clQuery.isPending) {
-    return <main aria-busy="true" className={styles.notice} data-mega-cls="detail"><p role="status">{detail.loading}</p></main>;
+    return <main aria-busy="true" data-mega-cls="detail"><WorkspaceLoading label={detail.loading} variant="detail" /></main>;
   }
 
   const retryNotice = (

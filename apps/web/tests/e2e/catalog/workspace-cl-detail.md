@@ -23,6 +23,7 @@ End-to-end coverage of `/[lang]/workspace/cls` list and `/[lang]/workspace/cls/[
 | S-10 | Long title, branch and author in Chinese detail fit a 320px viewport | AC-1, AC-4 |
 | S-11 | Legacy conversation link opens the canonical overview; pending upstream merge requirements expand with Enter; patch payload is fetched on the Files tab | AC-1, AC-2 |
 | S-12 | A legacy comment bookmark expands and scrolls to a resolved reply outside the initial five entries; changing the filter then hides it | AC-1, AC-2 |
+| S-13 | Mobile and desktop show session and CL skeletons while requests are pending, honor reduced motion and replace them with the requested CL | AC-1, AC-4 |
 
 ## Notes
 

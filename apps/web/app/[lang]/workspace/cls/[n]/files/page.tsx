@@ -8,6 +8,7 @@ import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { clFileForRange, isCLReference, parseRevRange, type CL, type CLFile } from "@megaui/core";
 import { MegaApiError, megaGet, megaPost, megaQueryKeys } from "@megaui/ui/query";
 
+import { WorkspaceLoading } from "@/app/[lang]/workspace/components/workspace-loading";
 import { useTranslation } from "@/hooks/use-translation";
 import { authClient } from "@/lib/auth-client";
 import { ReviewDiffs } from "./review-diffs";
@@ -23,7 +24,7 @@ export default function CLFilesPage() {
   const searchParams = useSearchParams();
   const { t } = useTranslation();
   if (!params || !searchParams) {
-    return <section aria-busy="true" data-mega-cls="files"><p>{t.workspace.clDetail.files.loading}</p></section>;
+    return <section aria-busy="true" data-mega-cls="files"><WorkspaceLoading label={t.workspace.clDetail.files.loading} variant="files" /></section>;
   }
   return <ReadyCLFilesPage key={params.n} routeId={params.n} searchParams={searchParams} />;
 }
@@ -130,7 +131,7 @@ function ReadyCLFilesPage({ routeId, searchParams }: {
     if (path !== fileParam) updateReviewQuery("file", path);
   }
 
-  if (clQuery.isPending) return <section aria-busy="true" data-mega-cls="files"><p>{text.loading}</p></section>;
+  if (clQuery.isPending) return <section aria-busy="true" data-mega-cls="files"><WorkspaceLoading label={text.loading} variant="files" /></section>;
   if (clQuery.isError && !cl) {
     return <section data-mega-cls="files"><div className={styles.notice} role="alert">
       <p>{text.error}</p><button type="button" data-mega-cls="retry" onClick={() => void clQuery.refetch()}>{text.retry}</button>

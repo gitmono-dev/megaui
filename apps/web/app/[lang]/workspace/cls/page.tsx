@@ -8,6 +8,7 @@ import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 
 import { isOpenCLState, MEGA_OPEN_CL_STATES, parseQuery, serializeQuery, type CL, type Filter } from "@megaui/core";
 import { megaGet, megaQueryKeys } from "@megaui/ui/query";
+import { WorkspaceLoading } from "@/app/[lang]/workspace/components/workspace-loading";
 import { useTranslation } from "@/hooks/use-translation";
 import { CLListRow } from "./components/cl-list-row";
 import styles from "./cl-list.module.css";
@@ -136,7 +137,7 @@ function CLListContent() {
               <button data-mega-cls="retry" onClick={() => void listQuery.refetch()} type="button">{text.retry}</button>
             </div>
           )}
-          {listQuery.isPending && <p className={styles.notice} role="status">{text.loading}</p>}
+          {listQuery.isPending && <WorkspaceLoading label={text.loading} />}
           {listQuery.isSuccess && !rows.length && <p className={styles.notice} data-mega-cls="empty">{text.empty}</p>}
           {rows.length > 0 && (
             <ul className={styles.list} data-mega-cls="table">
@@ -163,5 +164,10 @@ function CLListContent() {
 }
 
 export default function CLListPage() {
-  return <Suspense fallback={<main data-mega-cls="page" aria-busy="true" />}><CLListContent /></Suspense>;
+  const { t } = useTranslation();
+  return (
+    <Suspense fallback={<main aria-busy="true"><WorkspaceLoading label={t.workspace.clsList.loading} variant="page" /></main>}>
+      <CLListContent />
+    </Suspense>
+  );
 }

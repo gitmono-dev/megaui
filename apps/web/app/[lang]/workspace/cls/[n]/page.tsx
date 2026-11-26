@@ -11,6 +11,7 @@ import type { ClCommit } from "@megaui/engine";
 import { MegaApiError, megaGet, megaPost, megaQueryKeys } from "@megaui/ui/query";
 import { ShellAvatar } from "@megaui/ui/shell";
 
+import { WorkspaceLoading } from "@/app/[lang]/workspace/components/workspace-loading";
 import { useTranslation } from "@/hooks/use-translation";
 import { authClient } from "@/lib/auth-client";
 import { plainTextFromCommentBody } from "@/lib/comment-plain-text";
@@ -58,7 +59,7 @@ function CommitActivity({ number }: { number: number }) {
           <button data-mega-cls="commits-retry" onClick={() => void commits.refetch()} type="button">{labels.retry}</button>
         </div>
       ) : commits.isPending ? (
-        <p className={styles.empty} aria-busy="true">{labels.loading}</p>
+        <WorkspaceLoading label={labels.loading} />
       ) : items.length === 0 ? (
         <p className={styles.empty} data-mega-cls="commits-empty">{labels.empty}</p>
       ) : (
@@ -221,7 +222,7 @@ function Discussion({ cl, dateFormat, viewer }: { cl: CL; dateFormat: Intl.DateT
             if (inline.isError) void inline.refetch();
           }} type="button">{labels.retry}</button>
         </div>}
-        {loading && <p className={styles.empty} aria-busy="true">{labels.loading}</p>}
+        {loading && <WorkspaceLoading label={labels.loading} />}
         {!loading && !failed && entries.length === 0 && <p className={styles.empty} data-mega-cls="inline-empty">
           {scope === "all" ? activity.empty : activity.emptyFilter}
         </p>}

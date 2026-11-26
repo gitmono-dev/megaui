@@ -207,6 +207,46 @@ async function stubClsApis(
 }
 
 test.describe("WA-09 workspace CL list/detail", () => {
+  for (const width of [390, 1280]) {
+    test(`workspace loading resolves to the CL at ${width}px`, async ({ page, context }) => {
+      await context.addCookies(mintSessionCookies().cookies);
+      await page.setViewportSize({ width, height: 800 });
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      await stubClsApis(page);
+
+      const session = Promise.withResolvers<void>();
+      const detail = Promise.withResolvers<void>();
+      await page.route("**/api/auth/get-session**", async route => {
+        await session.promise;
+        await route.continue();
+      });
+      await page.route(`**/api/mega/cls/${SAMPLE_CL.publicId}?view=overview`, async route => {
+        await detail.promise;
+        await route.fallback();
+      });
+
+      try {
+        await page.goto(`/zh-CN/workspace/cls/${SAMPLE_CL.publicId}`, { waitUntil: "domcontentloaded" });
+        const shell = page.getByRole("status", { name: "正在加载工作台导航" });
+        await expect(shell).toBeVisible();
+        await expect(shell.locator('[data-slot="skeleton"]').first()).toHaveCSS("animation-name", "none");
+        await expect(page.locator('[data-mega-cls="detail-title"]')).toHaveCount(0);
+        session.resolve();
+        const pending = page.getByRole("status", { name: "正在加载变更", exact: true });
+        await expect(pending).toBeVisible();
+        await expect(shell).toHaveCount(0);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+
+        detail.resolve();
+        await expect(page.getByRole("heading", { name: new RegExp(SAMPLE_CL.title) })).toBeVisible();
+        await expect(pending).toHaveCount(0);
+      } finally {
+        session.resolve();
+        detail.resolve();
+      }
+    });
+  }
+
   test("list renders rows", async ({ browser }) => {
     const { cookies } = await mintSessionCookies();
     const context = await browser.newContext({ baseURL: e2eBaseURL() });

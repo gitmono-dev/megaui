@@ -9,6 +9,7 @@ import type { ApiChange, DepEdge, DepNode, RelatedCL, SymbolUsage } from "@megau
 import { MegaApiError, megaGet, megaQueryKeys } from "@megaui/ui/query";
 import { MEGA_RADIUS_TOKENS, MEGA_SPACING_TOKENS, MEGA_TOKENS } from "@megaui/ui/tokens";
 
+import { WorkspaceLoading } from "@/app/[lang]/workspace/components/workspace-loading";
 import { useTranslation } from "@/hooks/use-translation";
 import { useCurrentCL } from "../cl-route";
 
@@ -38,7 +39,7 @@ export default function CLDepsPage() {
   if (depsQuery.isPending) {
     return (
       <section aria-busy="true" data-mega-cls="deps">
-        <p>{depsText.loading}</p>
+        <WorkspaceLoading label={depsText.loading} />
       </section>
     );
   }

@@ -1,0 +1,75 @@
+.loading {
+  min-width: 0;
+  container-type: inline-size;
+}
+.loading:is([data-loading-view="page"], [data-loading-view="detail"], [data-loading-view="files"]) {
+  padding: var(--mega-page-gutter);
+}
+
+.loading [data-slot="skeleton"], .rail [data-slot="skeleton"] {
+  background: var(--mega-border);
+  border-radius: var(--mega-radius-sm);
+  animation: breathe 1.4s ease-in-out infinite;
+}
+@keyframes breathe {
+  0%, 100% { opacity: .45; }
+  50% { opacity: .9; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .loading [data-slot="skeleton"], .rail [data-slot="skeleton"] { animation: none; }
+}
+
+.header, .lines { display: grid; gap: 8px; }
+.header { gap: 14px; margin-bottom: 20px; }
+.title { width: min(72%, 32rem); height: var(--mega-page-title-size); }
+.meta { width: min(80%, 22rem); height: 18px; }
+.tabs {
+  display: flex;
+  gap: 16px;
+  overflow: hidden;
+  padding: 10px 0 14px;
+  border-bottom: 1px solid var(--mega-border);
+  margin-bottom: 20px;
+}
+.tab { width: 4rem; height: 14px; }
+.panel, .tree {
+  overflow: hidden;
+  background: var(--mega-bg);
+  border: 1px solid var(--mega-border);
+  border-radius: var(--mega-panel-radius);
+}
+[data-loading-view="rows"] .panel { border: 0; background: transparent; }
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+}
+.row + .row { border-top: 1px solid var(--mega-border); }
+.lines { flex: 1; min-width: 0; }
+.line { height: 12px; width: min(68%, 25rem); }
+.row:nth-child(2n) .line { width: min(52%, 21rem); }
+.caption { height: 8px; width: min(38%, 10rem); }
+.dot { width: 16px; height: 16px; flex: none; }
+[data-loading-view="files"] .panels {
+  display: grid;
+  grid-template-columns: minmax(12rem, 20%) minmax(0, 1fr);
+  gap: var(--mega-page-gutter);
+}
+.rail {
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  width: 220px;
+  padding: 10px;
+  overflow: hidden;
+  border-inline-end: 1px solid var(--mega-border);
+  background: var(--mega-bg);
+}
+.search { height: 26px; margin-bottom: 12px; }
+.rail .row { padding: 0 8px; height: var(--mega-density-row-height); border: 0; }
+.rail .caption { display: none; }
+
+@container (max-width: 600px) {
+  [data-loading-view="files"] .panels { grid-template-columns: minmax(0, 1fr); }
+  .tree { display: none; }
+}

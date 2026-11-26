@@ -29,6 +29,7 @@ import {
   type WorkspaceRailLinkProps,
 } from "@megaui/ui/shell";
 
+import { WorkspaceSessionLoading } from "./components/workspace-loading";
 import { accountAvatarName } from "@/app/[lang]/workspace/account-avatar-name";
 import { AccountMenu } from "@/app/[lang]/workspace/account-menu";
 import { useTranslation } from "@/hooks/use-translation";
@@ -353,11 +354,7 @@ export function WorkspaceShellClient({ children }: { children: ReactNode }) {
   // otherwise `isAuthenticated=false` during the initial pending state
   // redirects signed-in users to signin (Codex R51 P1).
   if (!sessionReady) {
-    return (
-      <p aria-busy="true" aria-live="polite" data-mega-shell="session-loading" role="status">
-        {nav.loading}
-      </p>
-    );
+    return <WorkspaceSessionLoading label={nav.loading} />;
   }
 
   return (

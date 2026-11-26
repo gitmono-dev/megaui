@@ -9,6 +9,7 @@ import type { CIStatus } from "@megaui/core";
 import { MegaApiError, megaFetch, megaGet, megaQueryKeys } from "@megaui/ui/query";
 import { MEGA_RADIUS_TOKENS, MEGA_SPACING_TOKENS, MEGA_TOKENS } from "@megaui/ui/tokens";
 
+import { WorkspaceLoading } from "@/app/[lang]/workspace/components/workspace-loading";
 import { useTranslation } from "@/hooks/use-translation";
 import { useCurrentCL } from "../cl-route";
 import { BuildLogViewer } from "./components/build-log-viewer";
@@ -271,7 +272,7 @@ export default function CLChecksPage() {
   if (checksQuery.isPending) {
     return (
       <section aria-busy="true" data-mega-cls="checks">
-        <p>{checksText.loading}</p>
+        <WorkspaceLoading label={checksText.loading} />
       </section>
     );
   }

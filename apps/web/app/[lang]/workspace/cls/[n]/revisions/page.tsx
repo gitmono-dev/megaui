@@ -8,6 +8,7 @@ import { useState } from "react";
 import { MegaApiError, megaGet, megaQueryKeys } from "@megaui/ui/query";
 import { MEGA_RADIUS_TOKENS, MEGA_SPACING_TOKENS, MEGA_TOKENS } from "@megaui/ui/tokens";
 
+import { WorkspaceLoading } from "@/app/[lang]/workspace/components/workspace-loading";
 import { useTranslation } from "@/hooks/use-translation";
 import { useCurrentCL } from "../cl-route";
 
@@ -132,7 +133,7 @@ export default function CLRevisionsPage() {
 
       <section data-mega-cls="cl-commits">
         <h2 style={{ fontSize: "1rem", fontWeight: 700, margin: 0 }}>{revisionsText.clCommits.title}</h2>
-        {commitsQuery.isPending ? <p>{revisionsText.clCommits.loading}</p> : null}
+        {commitsQuery.isPending ? <WorkspaceLoading label={revisionsText.clCommits.loading} /> : null}
         {commitsQuery.isError ? (
           <div role="alert" style={{ display: "flex", gap: MEGA_SPACING_TOKENS[8] }}>
             <p style={{ margin: 0 }}>{revisionsText.clCommits.error}</p>

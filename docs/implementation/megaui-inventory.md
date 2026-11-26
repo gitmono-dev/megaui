@@ -62,6 +62,8 @@
 
 变更单概览沿用工作台的字号、间距和主题色。标题下方显示来源分支和已知的目标分支，合并摘要紧接标签导航，文件差异按需加载。布局参考 [GitHub PR Overview 公开预览](https://github.blog/changelog/2026-11-05-new-pull-request-overview-page-in-public-preview/) 和 [11 月 19 日的预览更新](https://github.blog/changelog/2026-11-19-improvements-on-the-pull-request-overview-in-public-preview/)。
 
+首次打开工作区时，侧栏和内容区先显示骨架屏。变更单列表、详情和各标签页在数据返回后替换对应区域，后台刷新时保留已有内容。骨架屏沿用当前主题，并尊重系统的减少动态效果设置。
+
 使用 Mega2 数据源时，概览按 Mega2 的合并条件显示操作。独立部署可在 Mega2 配置中设置 `[ci_checks]` 下的 `enabled = false`，其它合并条件满足后即可合并。接入 Orion2 时可设为 `true` 并配置 CI 回调签名密钥，当前修订等待 CI 通过后才显示合并按钮。修改该设置后重启 Mega2。
 
 文件变更页参考 Libra PR 的 Files changed 布局。左侧目录树按路径筛选文件，右侧分组连续显示可折叠的文件差异卡片，每组最多五个文件。选择树中的文件可跨组定位并更新文件链接。工具栏显示查看进度，可在统一和并排视图间切换。有已保存的修订范围时可直接切换比较范围。真实 Mega2 变更单的查看进度保存在当前浏览器，按登录用户、变更单、修订和比较范围隔离。[Libra PR #1076 文件变更页](https://github.com/libra-tools/libra/pull/1076/changes)
