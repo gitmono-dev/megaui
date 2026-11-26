@@ -1,4 +1,3 @@
-// megaui-only (WA-10): lean files changed page — list + patch preview (no pierre SSR).
 "use client";
 
 import { useParams, useSearchParams } from "next/navigation";
@@ -6,10 +5,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { clFilePatchForRange, isCLReference, parseRevRange, type CL } from "@megaui/core";
+import { MegaPatchView } from "@megaui/ui/code-view";
 import { MegaApiError, megaGet, megaPost, megaQueryKeys } from "@megaui/ui/query";
-import { MEGA_RADIUS_TOKENS, MEGA_SPACING_TOKENS, MEGA_TOKENS } from "@megaui/ui/tokens";
 
 import { useTranslation } from "@/hooks/use-translation";
+import styles from "./files.module.css";
 
 // megaui-only (FS-92): wait for navigation before mounting actionable content.
 export default function CLFilesPage() {
@@ -73,7 +73,7 @@ function ReadyCLFilesPage({ routeId, searchParams }: {
   if (clQuery.isError && !clQuery.data) {
     return (
       <section data-mega-cls="files">
-        <div role="alert" style={{ display: "flex", gap: MEGA_SPACING_TOKENS[8] }}>
+        <div className={styles.notice} role="alert">
           <p style={{ margin: 0 }}>{filesText.error}</p>
           <button data-mega-cls="retry" onClick={() => void clQuery.refetch()} type="button">
             {filesText.retry}
@@ -83,7 +83,7 @@ function ReadyCLFilesPage({ routeId, searchParams }: {
     );
   }
 
-  if (files.length === 0) {
+  if (!activeFile) {
     return (
       <section data-mega-cls="files">
         <p data-mega-cls="files-empty">{filesText.empty}</p>
@@ -92,42 +92,38 @@ function ReadyCLFilesPage({ routeId, searchParams }: {
   }
 
   return (
-    <section data-mega-cls="files" style={{ display: "grid", gap: MEGA_SPACING_TOKENS[8], gridTemplateColumns: "240px 1fr" }}>
-      <aside data-mega-cls="files-list" style={{ borderRight: `1px solid ${MEGA_TOKENS.border}` }}>
-        <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+    <section className={styles.layout} data-mega-cls="files">
+      <aside aria-label={filesText.list.treeAriaLabel} className={styles.fileList} data-mega-cls="files-list">
+        <ul>
           {files.map((file) => (
             <li key={file.path}>
               <button
+                aria-pressed={file.path === activeFile.path}
+                className={styles.fileButton}
                 data-mega-cls="file-row"
-                data-active={file.path === activeFile?.path ? "true" : "false"}
+                data-active={file.path === activeFile.path ? "true" : "false"}
                 onClick={() => setSelectedPath(file.path)}
                 type="button"
-                style={{
-                  background: file.path === activeFile?.path ? MEGA_TOKENS.subtle : "transparent",
-                  border: "none",
-                  color: MEGA_TOKENS.text,
-                  cursor: "pointer",
-                  display: "block",
-                  padding: MEGA_SPACING_TOKENS[6],
-                  textAlign: "left",
-                  width: "100%",
-                }}
               >
-                {file.path}
-                <span style={{ color: MEGA_TOKENS.muted }}> +{file.additions}/−{file.deletions}</span>
+                <span className={styles.filePath}>{file.path}</span>
+                <span className={styles.stat}>
+                  <span className={styles.added}>+{file.additions}</span>{" "}
+                  <span className={styles.deleted}>−{file.deletions}</span>
+                </span>
               </button>
             </li>
           ))}
         </ul>
       </aside>
-      <div data-mega-cls="files-diff">
+      <div className={styles.diffPane} data-mega-cls="files-diff">
         {rangeParam && !range ? (
           <p role="status">{filesText.invalidRange.replace("{range}", rangeParam)}</p>
         ) : null}
-        <header style={{ alignItems: "center", display: "flex", gap: MEGA_SPACING_TOKENS[8], marginBottom: MEGA_SPACING_TOKENS[8] }}>
-          <strong>{activeFile?.path}</strong>
-          {activeFile ? (
+        <div className={styles.panel}>
+          <header className={styles.header}>
+            <strong className={styles.filePath}>{activeFile.path}</strong>
             <button
+              aria-pressed={Boolean(activeFile.viewed)}
               data-mega-cls="file-viewed"
               disabled={viewedMutation.isPending}
               onClick={() =>
@@ -137,24 +133,16 @@ function ReadyCLFilesPage({ routeId, searchParams }: {
             >
               {activeFile.viewed ? t.workspace.clDetail.conversation.viewed : filesText.toolbar.viewed}
             </button>
-          ) : null}
-        </header>
-        <pre
-          data-mega-cls="diff-patch"
-          style={{
-            background: MEGA_TOKENS.subtle,
-            border: `1px solid ${MEGA_TOKENS.border}`,
-            borderRadius: MEGA_RADIUS_TOKENS.md,
-            fontFamily: MEGA_TOKENS.fontMono,
-            fontSize: "calc(var(--mega-density-font-size) - 1px)",
-            margin: 0,
-            overflow: "auto",
-            padding: MEGA_SPACING_TOKENS[8],
-            whiteSpace: "pre-wrap",
-          }}
-        >
-          {patch || t.workspace.clDetail.conversation.emptyPatch}
-        </pre>
+          </header>
+          <div className={styles.patch} data-mega-cls="diff-patch">
+            <MegaPatchView
+              binaryLabel={filesText.binary}
+              emptyLabel={t.workspace.clDetail.conversation.emptyPatch}
+              patch={patch}
+              path={activeFile.path}
+            />
+          </div>
+        </div>
       </div>
     </section>
   );

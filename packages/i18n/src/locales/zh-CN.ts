@@ -1799,6 +1799,7 @@ export const zhCN = {
       },
       files: {
         loading: "正在加载变更文件",
+        binary: "二进制文件，无文本差异",
         error: "变更文件暂时不可用",
         retry: "重试",
         empty: "此 CL 没有变更文件",

@@ -25,7 +25,7 @@
 | `workspace-chat.spec.ts` | [workspace-chat.md](./catalog/workspace-chat.md) | WA-14 | stub | ran |
 | `workspace-chat-live.spec.ts` | [workspace-chat-live.md](./catalog/workspace-chat-live.md) | RT-09 | local collab + real BFF | ran (local `:3000` + spawned/killed collab; compose `:17001/:17002` preferred) |
 | `workspace-cl-detail.spec.ts` | [workspace-cl-detail.md](./catalog/workspace-cl-detail.md) | WA-09 public CL links, responsive overview and discussion filters | stub | ran |
-| `workspace-cl-files.spec.ts` | [workspace-cl-files.md](./catalog/workspace-cl-files.md) | WA-10 canonical tabs, numeric, hyphenated and underscored bookmarks, files and revisions | stub | catalog-ready |
+| `workspace-cl-files.spec.ts` | [workspace-cl-files.md](./catalog/workspace-cl-files.md) | WA-10 file syntax highlighting, large patches, theme and narrow layout, canonical tabs, legacy bookmarks and revisions | stub | catalog-ready |
 | `workspace-code.spec.ts` | [workspace-code.md](./catalog/workspace-code.md) | WA-08 | stub | ran (incl. S-05 live) |
 | `workspace-collab.spec.ts` | [workspace-collab.md](./catalog/workspace-collab.md) | CS-01 | local collab process | ran (`megaui-collab` `:17002`) |
 | `workspace-docs-edit.spec.ts` | [workspace-docs-edit.md](./catalog/workspace-docs-edit.md) | WA-13 | stub / local | ran (2 local-autosave skipped when collab URL baked) |

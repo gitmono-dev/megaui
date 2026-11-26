@@ -37,7 +37,7 @@ const SAMPLE_CL = {
       additions: 3,
       deletions: 1,
       status: "modified",
-      patch: "@@ -1,3 +1,5 @@\n+export const x = 1;\n",
+      patch: "@@ -1 +1 @@\n-export const x = 0;\n+export const x = 1;\n",
     },
   ],
   revisions: [],
@@ -403,7 +403,8 @@ test.describe("WA-09 workspace CL list/detail", () => {
     });
     await page.locator('[data-mega-cls="tabs"] [data-tab="files"]').press("Enter");
     await filesRequest;
-    await expect(page.locator('[data-mega-cls="diff-patch"]')).toContainText("export const x");
+    const addition = page.locator('[data-mega-cls="diff-patch"] [data-code] [data-line][data-line-type="change-addition"]');
+    await expect(addition).toHaveText("export const x = 1;");
   });
 
   test("old comment bookmark reveals a resolved reply beyond the first five entries", async ({ page, context }) => {

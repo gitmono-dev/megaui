@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Locator } from "@playwright/test";
 
 import { mintSessionCookies } from "./helpers/session";
 
@@ -56,18 +56,32 @@ const SAMPLE_CL = {
   packageId: "pkg_engine",
   author: AUTHOR,
   reviewers: [],
-  additions: 3,
-  deletions: 1,
+  additions: 503,
+  deletions: 2,
   files: [
     {
       path: "packages/engine/src/index.ts",
-      additions: 3,
+      additions: 1,
       deletions: 1,
       status: "modified",
-      patch: "@@ -1,3 +1,5 @@\n+export const x = 1;\n",
+      patch: "@@ -1 +1 @@\n-export const x = 0;\n+export const x = 1;\n",
       viewed: false,
       commentCount: 0,
-      rangePatches: { "1..2": "@@ range patch @@\n+export const ranged = true;\n" },
+      rangePatches: { "1..2": "@@ -1 +1 @@\n-export const ranged = false;\n+export const ranged = true;\n" },
+    },
+    {
+      path: "src/main.rs", status: "modified", additions: 1, deletions: 1,
+      patch: 'diff --git a/src/main.rs b/src/main.rs\n--- a/src/main.rs\n+++ b/src/main.rs\n@@ -1 +1 @@\n-fn answer() -> u32 { 0 }\n+fn answer() -> u32 { 42 }\n',
+    },
+    {
+      path: "notes.undetected", status: "added", additions: 1, deletions: 0,
+      patch: "@@ -0,0 +1 @@\n+Plain file contents <example>\n",
+    },
+    { path: "notes/empty.txt", status: "added", additions: 0, deletions: 0, patch: "" },
+    { path: "assets/logo.bin", status: "modified", additions: 0, deletions: 0, patch: "Binary files a/assets/logo.bin and b/assets/logo.bin differ\n" },
+    {
+      path: "src/generated.rs", status: "added", additions: 500, deletions: 0,
+      patch: ["@@ -0,0 +1,500 @@", ...Array.from({ length: 500 }, (_, i) => `+pub const V${i}: u32 = ${i};`), ""].join("\n"),
     },
   ],
   revisions: SAMPLE_REVISIONS,
@@ -85,6 +99,17 @@ const SAMPLE_CL = {
 const CL_PATH = `/en/workspace/cls/${SAMPLE_CL.publicId}`;
 const LEGACY_CODES = { hyphenated: "bQ_yC79Z-1tP", underscored: "Pc9Bk_sY4X7Z" } as const;
 const RELATED_PUBLIC_ID = "g2CA8bk5Y0xR";
+
+function patchLine(patch: Locator, kind: "addition" | "deletion") {
+  return patch.locator(`[data-code] [data-line][data-line-type="change-${kind}"]`);
+}
+
+async function tokenColors(line: Locator) {
+  return line.locator("span").evaluateAll(tokens => [
+    ...new Set(tokens.filter(token => token.childElementCount === 0 && token.textContent?.trim())
+      .map(token => getComputedStyle(token).color)),
+  ].sort());
+}
 
 const SAMPLE_CHECKS_PASSING = {
   pipeline: [{ id: "stage_build", name: "build", status: "passing" }],
@@ -257,13 +282,52 @@ test.describe("workspace CL attachment pages (WA-10)", () => {
     await context.addCookies(cookies);
   });
 
-  test("files page renders list + patch", async ({ page }) => {
+  test("files highlight TypeScript and Rust additions and deletions on selection", async ({ page }) => {
     await stubAttachmentApis(page);
     await page.goto(`${CL_PATH}/files`);
     await expect(page.locator('[data-mega-cls="files"]')).toBeVisible();
-    await expect(page.locator('[data-mega-cls="file-row"]')).toHaveCount(1);
-    await expect(page.locator('[data-mega-cls="diff-patch"]')).toContainText("export const x = 1");
+    await expect(page.locator('[data-mega-cls="file-row"]')).toHaveCount(SAMPLE_CL.files.length);
+    const patch = page.locator('[data-mega-cls="diff-patch"]');
+    const added = patchLine(patch, "addition");
+    const removed = patchLine(patch, "deletion");
+    await expect(added).toHaveText("export const x = 1;");
+    await expect(removed).toHaveText("export const x = 0;");
+    await expect.poll(async () => (await tokenColors(added)).length).toBeGreaterThan(1);
+    const rustFile = page.getByRole("button", { name: /src\/main\.rs/ });
+    await rustFile.press("Enter");
+    await expect(rustFile).toHaveAttribute("aria-pressed", "true");
+    await expect(added).toHaveText("fn answer() -> u32 { 42 }");
+    await expect(removed).toHaveText("fn answer() -> u32 { 0 }");
+    await expect.poll(async () => (await tokenColors(added)).length).toBeGreaterThan(1);
+    await expect(patch.locator("diffs-container")).toHaveCount(1);
     await expect(page.locator('[data-mega-cls="tabs"] [data-tab="files"][data-mega-cls="tab-active"]')).toBeVisible();
+  });
+
+  test("unknown file types keep their text and empty and binary patches are distinguished", async ({ page }) => {
+    await stubAttachmentApis(page);
+    await page.goto(`${CL_PATH}/files?file=notes.undetected`);
+    const patch = page.locator('[data-mega-cls="diff-patch"]');
+    await expect(patchLine(patch, "addition")).toHaveText("Plain file contents <example>");
+    await page.getByRole("button", { name: /empty[.]txt/ }).click();
+    await expect(patch).toHaveText("(empty patch)");
+    await page.getByRole("button", { name: /logo[.]bin/ }).click();
+    await expect(patch.getByRole("status")).toHaveText("Binary file · no text diff available");
+  });
+
+  test("a large Rust file highlights both ends as its diff scrolls", async ({ page }) => {
+    await stubAttachmentApis(page);
+    await page.goto(`${CL_PATH}/files?file=src%2Fgenerated.rs`);
+    const patch = page.locator('[data-mega-cls="diff-patch"]');
+    const lines = patchLine(patch, "addition");
+    const first = lines.filter({ hasText: "pub const V0: u32 = 0;" });
+    await expect(first).toBeVisible();
+    await expect.poll(async () => (await tokenColors(first)).length).toBeGreaterThan(1);
+    expect(await lines.count()).toBeLessThan(500);
+    await patch.hover();
+    await page.mouse.wheel(0, 20000);
+    const last = lines.filter({ hasText: "pub const V499: u32 = 499;" });
+    await expect(last).toBeInViewport();
+    await expect.poll(async () => (await tokenColors(last)).length).toBeGreaterThan(1);
   });
 
   test("files empty state", async ({ page }) => {
@@ -278,10 +342,10 @@ test.describe("workspace CL attachment pages (WA-10)", () => {
     await page.goto(`/en/workspace/cls/1${suffix}`);
     await expect(page).toHaveURL(`${CL_PATH}${suffix}`);
     const patch = page.locator('[data-mega-cls="diff-patch"]');
-    await expect(patch).toContainText("ranged = true");
+    await expect(patchLine(patch, "addition")).toHaveText("export const ranged = true;");
     await page.reload();
     await expect(page).toHaveURL(`${CL_PATH}${suffix}`);
-    await expect(patch).toContainText("ranged = true");
+    await expect(patchLine(patch, "addition")).toHaveText("export const ranged = true;");
 
     const revisions = page.locator('[data-mega-cls="tabs"] [data-tab="revisions"]');
     await expect(revisions).toHaveAttribute("href", `${CL_PATH}/revisions`);
@@ -299,7 +363,7 @@ test.describe("workspace CL attachment pages (WA-10)", () => {
       await page.goto(`/en/workspace/cls/${ref}${suffix}`);
       await expect(page).toHaveURL(`${CL_PATH}${suffix}`);
       await expect(page.locator('[data-mega-cls="detail-title"]')).toContainText(SAMPLE_CL.publicId);
-      await expect(page.locator('[data-mega-cls="diff-patch"]')).toContainText("ranged = true");
+      await expect(patchLine(page.locator('[data-mega-cls="diff-patch"]'), "addition")).toHaveText("export const ranged = true;");
     });
   }
 
@@ -372,10 +436,22 @@ test.describe("workspace CL attachment pages (WA-10)", () => {
     );
   });
 
-  test("zh-CN attachment chrome tabs", async ({ page }) => {
+  test("zh-CN file syntax follows the workspace theme at a narrow width", async ({ page }) => {
     await stubAttachmentApis(page);
+    await page.setViewportSize({ width: 390, height: 780 });
     await page.goto(`/zh-CN/workspace/cls/${SAMPLE_CL.publicId}/files`);
     await expect(page.locator('[data-mega-cls="tabs"]')).toContainText("文件");
-    await expect(page.locator('[data-mega-cls="files"]')).toBeVisible();
+    const added = patchLine(page.locator('[data-mega-cls="diff-patch"]'), "addition");
+    const modes = new Map<string, string[]>();
+    for (const mode of ["light", "dark"] as const) {
+      await page.evaluate(mode => localStorage.setItem("mega-settings", JSON.stringify({ mode, density: "comfortable", accent: "default" })), mode);
+      await page.reload();
+      await expect.poll(() => page.locator("html").evaluate(node => node.classList.contains("dark"))).toBe(mode === "dark");
+      await expect(added).toBeVisible();
+      await expect.poll(async () => (await tokenColors(added)).length).toBeGreaterThan(1);
+      modes.set(mode, await tokenColors(added));
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+    }
+    expect(modes.get("dark")).not.toEqual(modes.get("light"));
   });
 });

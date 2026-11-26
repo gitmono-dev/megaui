@@ -1799,6 +1799,7 @@ export const en = {
       },
       files: {
         loading: "Loading changed files",
+        binary: "Binary file · no text diff available",
         error: "Changed files are unavailable",
         retry: "Retry",
         empty: "This CL has no changed files",
