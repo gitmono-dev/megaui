@@ -4,6 +4,7 @@
 // (engine publishRelease via BFF); no asset upload (WA-19).
 "use client";
 
+import { WorkspaceLoading } from "../components/workspace-loading";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
@@ -79,7 +80,7 @@ export default function TagsPage() {
   if (listQuery.isPending) {
     return (
       <main aria-busy="true" data-mega-tags="page">
-        <p style={{ ...bodyFont, padding: `calc(${MEGA_SPACING_TOKENS[8]} * 3)` }}>{tags.loading}</p>
+        <WorkspaceLoading label={tags.loading} variant="page" />
       </main>
     );
   }

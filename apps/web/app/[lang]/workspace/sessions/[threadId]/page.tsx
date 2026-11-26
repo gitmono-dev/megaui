@@ -4,6 +4,7 @@
 // decisions, evidence, citation links); no libra object graph.
 "use client";
 
+import { WorkspaceLoading } from "../../components/workspace-loading";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
@@ -43,7 +44,7 @@ export default function SessionPage() {
   if (sessionQuery.isPending) {
     return (
       <main aria-busy="true" data-mega-session="page">
-        <p style={{ color: MEGA_TOKENS.muted, padding: `calc(${MEGA_SPACING_TOKENS[8]} * 3)` }}>{sessionText.loading}</p>
+        <WorkspaceLoading label={sessionText.loading} variant="page" />
       </main>
     );
   }

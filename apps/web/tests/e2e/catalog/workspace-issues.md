@@ -11,6 +11,7 @@ End-to-end coverage of `/[lang]/workspace/issues` list (filter/tabs/empty/error)
 
 | ID | Name | AC |
 |----|------|----|
+| Loading | Delayed issue list shows an accessible workspace skeleton until rows arrive | WA-11 |
 | S-01 | List rows | AC-1 |
 | S-02 | List empty | AC-1 |
 | S-03 | List error + retry | AC-1 |

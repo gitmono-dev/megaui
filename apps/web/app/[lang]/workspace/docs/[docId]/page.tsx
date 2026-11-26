@@ -10,6 +10,7 @@
 // - No CE-102 side panel / live embed catalog / fixture tags.
 "use client";
 
+import { WorkspaceLoading } from "../../components/workspace-loading";
 import Link from "next/link";
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -97,8 +98,9 @@ function DocDetailContent() {
 }
 
 function DocNavigationPending() {
+  const { t } = useTranslation();
   return <main aria-busy="true" data-mega-docs="detail" style={{ background: MEGA_TOKENS.bg, height: "100%" }}>
-    <p style={{ color: MEGA_TOKENS.muted, padding: `calc(${MEGA_SPACING_TOKENS[8]} * 3)` }}>…</p>
+    <WorkspaceLoading label={t.workspace.docDetail.loading} variant="page" />
   </main>;
 }
 
@@ -329,7 +331,7 @@ function ReadyDocDetailContent({ params, searchParams, pathname }: {
   if (docQuery.isPending) {
     return (
       <main aria-busy="true" data-mega-docs="detail" style={{ background: MEGA_TOKENS.bg, height: "100%" }}>
-        <p style={{ color: MEGA_TOKENS.muted, padding: `calc(${MEGA_SPACING_TOKENS[8]} * 3)` }}>{detail.loading}</p>
+        <WorkspaceLoading label={detail.loading} variant="page" />
       </main>
     );
   }

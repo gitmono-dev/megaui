@@ -3,6 +3,7 @@
 // Diff vs upstream (GC-03 / WA-11): issue list filtering and creation through the BFF.
 "use client";
 
+import { WorkspaceLoading } from "../components/workspace-loading";
 import { redirect, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Suspense, type CSSProperties, useMemo, useState } from "react";
@@ -110,8 +111,8 @@ function IssuesListContent() {
 
 function IssueListLoading({ label }: { readonly label: string }) {
   return (
-    <main aria-busy="true" data-mega-issues="page" style={sectionPad}>
-      <p style={{ color: MEGA_TOKENS.muted }}>{label}</p>
+    <main aria-busy="true" data-mega-issues="page">
+      <WorkspaceLoading label={label} variant="page" />
     </main>
   );
 }
@@ -141,8 +142,9 @@ function IssueListError({
 }
 
 export default function IssuesPage() {
+  const { t } = useTranslation();
   return (
-    <Suspense fallback={<main aria-busy="true" data-mega-issues="page" style={sectionPad} />}>
+    <Suspense fallback={<IssueListLoading label={t.workspace.issues.loading} />}>
       <IssuesListContent />
     </Suspense>
   );

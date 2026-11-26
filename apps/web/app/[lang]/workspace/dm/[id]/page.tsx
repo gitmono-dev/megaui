@@ -4,6 +4,7 @@
 // username; collection-room hints plus polling fallback.
 "use client";
 
+import { WorkspaceLoading } from "../../components/workspace-loading";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -98,7 +99,7 @@ export default function DmPage() {
   if (channelsQuery.isPending || (channelId && messagesQuery.isPending)) {
     return (
       <main aria-busy="true" data-mega-chat="dm">
-        <p style={{ color: MEGA_TOKENS.muted, padding: `calc(${MEGA_SPACING_TOKENS[8]} * 3)` }}>{chat.loading}</p>
+        <WorkspaceLoading label={chat.loading} variant="page" />
       </main>
     );
   }

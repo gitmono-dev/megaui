@@ -1,3 +1,4 @@
+import { WorkspaceLoading } from "../../../components/workspace-loading";
 import Link from "next/link";
 
 import { MEGA_SPACING_TOKENS, MEGA_TOKENS } from "@megaui/ui/tokens";
@@ -33,9 +34,7 @@ export function IssueDetailNotFound({
 export function IssueDetailLoading({ label }: { readonly label: string }) {
   return (
     <main aria-busy="true" data-mega-issues="detail">
-      <p style={{ color: MEGA_TOKENS.muted, padding: `calc(${MEGA_SPACING_TOKENS[8]} * 3)` }}>
-        {label}
-      </p>
+      <WorkspaceLoading label={label} variant="page" />
     </main>
   );
 }
@@ -58,7 +57,7 @@ export function IssueDetailError({ label, onRetry, retryLabel }: IssueDetailErro
           padding: `calc(${MEGA_SPACING_TOKENS[8]} * 3)`,
         }}
       >
-        <p style={{ margin: 0 }}>{label}</p>
+        <WorkspaceLoading label={label} variant="page" />
         <button data-mega-issues="retry" onClick={onRetry} type="button">
           {retryLabel}
         </button>

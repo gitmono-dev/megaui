@@ -7,6 +7,7 @@
 // - Tasks / Calendar / Imagine / Shared and Wall / List views stay deferred.
 "use client";
 
+import { WorkspaceLoading } from "../components/workspace-loading";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
@@ -209,9 +210,7 @@ function DocsLibraryContent() {
           }}
         >
           {listQuery.isPending ? (
-            <p aria-busy="true" style={{ color: MEGA_TOKENS.muted }}>
-              {docsText.loading}
-            </p>
+            <WorkspaceLoading label={docsText.loading} />
           ) : listQuery.isError ? (
             <div role="alert" style={{ alignItems: "center", display: "flex", gap: MEGA_SPACING_TOKENS[8] }}>
               <p style={{ color: MEGA_TOKENS.muted, margin: 0 }}>{docsText.error}</p>
@@ -253,8 +252,9 @@ function DocsLibraryContent() {
 }
 
 export default function DocsPage() {
+  const { t } = useTranslation();
   return (
-    <Suspense fallback={<main aria-busy="true" data-mega-docs="page" />}>
+    <Suspense fallback={<main aria-busy="true" data-mega-docs="page"><WorkspaceLoading label={t.workspace.docs.loading} variant="page" /></main>}>
       <DocsLibraryContent />
     </Suspense>
   );

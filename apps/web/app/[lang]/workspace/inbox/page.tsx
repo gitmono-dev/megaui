@@ -4,6 +4,7 @@
 // EngineNotification envelope (not core Notification); quick reply via issue/CL BFF.
 "use client";
 
+import { WorkspaceLoading } from "../components/workspace-loading";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 
@@ -118,7 +119,7 @@ export default function InboxPage() {
   if (listQuery.isPending) {
     return (
       <main aria-busy="true" data-mega-inbox="page">
-        <p style={{ color: MEGA_TOKENS.muted, padding: `calc(${MEGA_SPACING_TOKENS[8]} * 3)` }}>{inbox.loading}</p>
+        <WorkspaceLoading label={inbox.loading} variant="page" />
       </main>
     );
   }

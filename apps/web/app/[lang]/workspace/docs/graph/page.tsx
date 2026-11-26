@@ -4,6 +4,7 @@
 // dynamic xyflow view; hrefs prefixed with workspaceBase.
 "use client";
 
+import { WorkspaceLoading } from "../../components/workspace-loading";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -11,7 +12,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useCallback } from "react";
 
 import { MegaApiError, megaGet, megaQueryKeys } from "@megaui/ui/query";
-import { MEGA_SPACING_TOKENS, MEGA_TOKENS } from "@megaui/ui/tokens";
+import { MEGA_SPACING_TOKENS } from "@megaui/ui/tokens";
 
 import { useTranslation } from "@/hooks/use-translation";
 
@@ -41,8 +42,8 @@ export default function DocsGraphPage() {
 
   if (graphQuery.isPending) {
     return (
-      <main aria-busy="true" data-mega-docs="graph" style={{ padding: `calc(${MEGA_SPACING_TOKENS[8]} * 3)` }}>
-        <p style={{ color: MEGA_TOKENS.muted }}>{graphText.loading}</p>
+      <main aria-busy="true" data-mega-docs="graph">
+        <WorkspaceLoading label={graphText.loading} variant="page" />
       </main>
     );
   }

@@ -1,5 +1,7 @@
 "use client";
 
+import { WorkspaceLoading } from "../components/workspace-loading";
+import { useTranslation } from "@/hooks/use-translation";
 import { Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { MEGA_SPACING_TOKENS } from "@megaui/ui/tokens";
@@ -14,11 +16,20 @@ import { SshKeysSection } from "./components/ssh-keys-section";
 import { TokensSection } from "./components/tokens-section";
 import { parseSettingsSection } from "./settings-section";
 
+function SettingsLoading() {
+  const { t } = useTranslation();
+  return (
+    <main aria-busy="true" data-mega-settings="page">
+      <WorkspaceLoading label={t.workspace.nav.loading} variant="page" />
+    </main>
+  );
+}
+
 // megaui-only (FS-92): wait for navigation before mounting actionable content.
 function SettingsContent() {
   const searchParams = useSearchParams();
   if (searchParams === null) {
-    return <main aria-busy="true" data-mega-settings="page">Loading settings</main>;
+    return <SettingsLoading />;
   }
   const section = parseSettingsSection(searchParams.get("section"));
   const content = {
@@ -37,5 +48,5 @@ function SettingsContent() {
 }
 
 export default function SettingsPage() {
-  return <Suspense fallback={<main data-mega-settings="page">Loading settings</main>}><SettingsContent /></Suspense>;
+  return <Suspense fallback={<SettingsLoading />}><SettingsContent /></Suspense>;
 }

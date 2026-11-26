@@ -329,6 +329,26 @@ test.describe("workspace issues (WA-11)", () => {
     await expect(page.locator('[data-mega-issues="filter"]')).toHaveValue("is:closed");
   });
 
+  test("shows a workspace skeleton until the issue list arrives", async ({ page }) => {
+    await stubIssuesApis(page);
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    await page.route("**/api/mega/issues**", async (route) => {
+      await pending;
+      await route.fallback();
+    });
+    await page.goto("/en/workspace/issues", { waitUntil: "domcontentloaded" });
+    const loading = page.locator('[data-mega-issues="page"] [role="status"][data-loading-view="page"]');
+    try {
+      await expect(loading.locator('[data-slot="skeleton"]').first()).toBeVisible();
+      await expect(loading).toHaveAccessibleName(/loading/i);
+    } finally {
+      release();
+    }
+    await expect(page.locator('[data-mega-issues="row"]')).toHaveCount(1);
+    await expect(loading).toHaveCount(0);
+  });
+
   test("list rows render with open tab", async ({ page }) => {
     await stubIssuesApis(page);
     await page.goto("/en/workspace/issues?q=is:open");

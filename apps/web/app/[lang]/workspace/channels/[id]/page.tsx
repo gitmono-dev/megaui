@@ -5,6 +5,7 @@
 // virtualizes via UI-08 fixed-row virtualizer.
 "use client";
 
+import { WorkspaceLoading } from "../../components/workspace-loading";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -183,7 +184,7 @@ export default function ChannelPage() {
   if (channelsQuery.isPending || messagesQuery.isPending) {
     return (
       <main aria-busy="true" data-mega-chat="channel">
-        <p style={{ color: MEGA_TOKENS.muted, padding: `calc(${MEGA_SPACING_TOKENS[8]} * 3)` }}>{chat.loading}</p>
+        <WorkspaceLoading label={chat.loading} variant="page" />
       </main>
     );
   }
