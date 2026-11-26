@@ -80,6 +80,7 @@ describe(
     describe("chat domain", () => {
       it("round-trips public and legacy CL references in message segments", async () => {
         const segments = [
+          { type: "cl-ref", publicId: "9ab0CD0345xy" },
           { type: "cl-ref", publicId: "9ab_CD_345xy" },
           { type: "cl-ref", publicId: "9ab_CD-345xy" },
           { type: "cl-ref", number: 42 },

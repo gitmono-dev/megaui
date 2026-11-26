@@ -29,7 +29,7 @@ describe('megaQueryKeys domain coverage (UI-04 AC1)', () => {
   it('covers the cls domain', () => {
     expect(megaQueryKeys.cls()).toEqual(['mega', 'cls'])
     expect(megaQueryKeys.cl(4)).toEqual(['mega', 'cls', 4])
-    const publicId = 'AqNM_0-seQv1'
+    const publicId = 'AqNM10BseQv1'
     expect(megaQueryKeys.cl(publicId)).toEqual(['mega', 'cls', publicId])
     expect(megaQueryKeys.clOverview(publicId)).toEqual([...megaQueryKeys.cl(publicId), 'overview'])
     expect(megaQueryKeys.clDescription(4)).toEqual(['mega', 'cls', 4, 'description'])

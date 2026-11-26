@@ -49,6 +49,7 @@ describe('refExportContract', () => {
   it.each([
     ['issue', '7', '/workspace/issues/7'],
     ['cl', '12', '/workspace/cls/12'],
+    ['cl', 'CLtx0AbCd012', '/workspace/cls/CLtx0AbCd012'],
     ['cl', 'CLtx_AbCd_12', '/workspace/cls/CLtx_AbCd_12'],
     ['cl', 'CLtx_AbCd-12', '/workspace/cls/CLtx_AbCd-12'],
     ['user', 'octocat', '/workspace/dm/octocat'],

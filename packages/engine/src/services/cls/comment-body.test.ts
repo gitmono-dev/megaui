@@ -32,11 +32,12 @@ describe("importPlainText", () => {
   });
 
   it("promotes !N / #N / @user tokens to mega-ref nodes", () => {
-    const { root } = parse(importPlainText("See !42, !9ab_CD-345xy and !9ab_CD_345xy and #7, ping @octocat"));
+    const { root } = parse(importPlainText("See !42, !9ab0CD0345xy, !9ab_CD-345xy, !9ab_CD_345xy and #7, ping @octocat"));
     const inline = root.children[0]?.children ?? [];
     const refs = inline.filter((node) => node.type === "mega-ref");
     expect(refs).toEqual([
       { type: "mega-ref", version: 1, ref: { kind: "cl", targetId: "42", targetTitle: "!42" } },
+      { type: "mega-ref", version: 1, ref: { kind: "cl", targetId: "9ab0CD0345xy", targetTitle: "!9ab0CD0345xy" } },
       { type: "mega-ref", version: 1, ref: { kind: "cl", targetId: "9ab_CD-345xy", targetTitle: "!9ab_CD-345xy" } },
       { type: "mega-ref", version: 1, ref: { kind: "cl", targetId: "9ab_CD_345xy", targetTitle: "!9ab_CD_345xy" } },
       { type: "mega-ref", version: 1, ref: { kind: "issue", targetId: "7", targetTitle: "#7" } },

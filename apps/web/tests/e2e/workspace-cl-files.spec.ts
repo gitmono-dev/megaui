@@ -48,7 +48,7 @@ const SAMPLE_REVISIONS = [
 
 const SAMPLE_CL = {
   id: "cl_1",
-  publicId: "Pc9Bk_sY4X7Z",
+  publicId: "Pc9BkCsY4X7Z",
   number: 1,
   title: "Wire WA-10 attachments",
   description: "Files revisions checks deps.",
@@ -83,8 +83,8 @@ const SAMPLE_CL = {
 };
 
 const CL_PATH = `/en/workspace/cls/${SAMPLE_CL.publicId}`;
-const OLD_PUBLIC_ID = "bQ_yC79Z-1tP";
-const RELATED_PUBLIC_ID = "g2_A8bk_Y0xR";
+const LEGACY_CODES = { hyphenated: "bQ_yC79Z-1tP", underscored: "Pc9Bk_sY4X7Z" } as const;
+const RELATED_PUBLIC_ID = "g2CA8bk5Y0xR";
 
 const SAMPLE_CHECKS_PASSING = {
   pipeline: [{ id: "stage_build", name: "build", status: "passing" }],
@@ -233,7 +233,8 @@ async function stubAttachmentApis(
       return;
     }
 
-    if (method === "GET" && [numericPath, `/api/mega/cls/${OLD_PUBLIC_ID}`, `/api/mega/cls/${cl.publicId}`].includes(pathname)) {
+    const detailPaths = [numericPath, ...Object.values(LEGACY_CODES).map((ref) => `/api/mega/cls/${ref}`), `/api/mega/cls/${cl.publicId}`];
+    if (method === "GET" && detailPaths.includes(pathname)) {
       await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: cl }) });
       return;
     }
@@ -291,14 +292,16 @@ test.describe("workspace CL attachment pages (WA-10)", () => {
     await expect(page.locator('[data-mega-cls="revision-card"]')).toHaveCount(2);
   });
 
-  test("a bookmarked hyphenated code opens the same file range under its current code", async ({ page }) => {
-    await stubAttachmentApis(page);
-    const suffix = "/files?range=1..2#diff";
-    await page.goto(`/en/workspace/cls/${OLD_PUBLIC_ID}${suffix}`);
-    await expect(page).toHaveURL(`${CL_PATH}${suffix}`);
-    await expect(page.locator('[data-mega-cls="detail-title"]')).toContainText(SAMPLE_CL.publicId);
-    await expect(page.locator('[data-mega-cls="diff-patch"]')).toContainText("ranged = true");
-  });
+  for (const [kind, ref] of Object.entries(LEGACY_CODES)) {
+    test(`a bookmarked ${kind} code opens the same file range under its current code`, async ({ page }) => {
+      await stubAttachmentApis(page);
+      const suffix = "/files?range=1..2#diff";
+      await page.goto(`/en/workspace/cls/${ref}${suffix}`);
+      await expect(page).toHaveURL(`${CL_PATH}${suffix}`);
+      await expect(page.locator('[data-mega-cls="detail-title"]')).toContainText(SAMPLE_CL.publicId);
+      await expect(page.locator('[data-mega-cls="diff-patch"]')).toContainText("ranged = true");
+    });
+  }
 
   test("revisions page cards + compare + commits", async ({ page }) => {
     await stubAttachmentApis(page);

@@ -99,9 +99,10 @@ describe.skipIf(!adminDatabaseUrl)("getContentLinkGraph (EG-03, throwaway PG)", 
         merge: megaClMergeStates.NEEDS_REVIEW,
       });
 
-      const publicId = "GraphTX_02_a";
-      const oldCode = "GraphTX-02_a";
-      await client.db.insert(megaClPublicIds).values({ number: 202, publicId, legacyPublicId: oldCode });
+      const publicId = "GraphTXv02Qa";
+      const legacyPublicId = "GraphTX-02_a";
+      const underscorePublicId = "GraphTX_02_a";
+      await client.db.insert(megaClPublicIds).values({ number: 202, publicId, legacyPublicId, underscorePublicId });
       const wikilinker = await docs.createDoc(
         {
           title: "Wikilinker",
@@ -115,7 +116,7 @@ describe.skipIf(!adminDatabaseUrl)("getContentLinkGraph (EG-03, throwaway PG)", 
                   children: [
                     { type: "mega-ref", ref: { kind: "doc", targetTitle: SAMPLE_DOC.title, targetId: SAMPLE_DOC.id } },
                     { type: "mega-ref", ref: { kind: "issue", targetTitle: "Graph issue", targetId: "101" } },
-                    { type: "mega-ref", ref: { kind: "cl", targetTitle: "Graph CL", targetId: oldCode } },
+                    { type: "mega-ref", ref: { kind: "cl", targetTitle: "Graph CL", targetId: legacyPublicId } },
                   ],
                 },
               ],
@@ -137,7 +138,7 @@ describe.skipIf(!adminDatabaseUrl)("getContentLinkGraph (EG-03, throwaway PG)", 
                   variant: "text",
                   children: [
                     { type: "mega-embed", embed: { targetDocId: SAMPLE_DOC.id } },
-                    { type: "mega-ref", ref: { kind: "cl", targetTitle: "Graph CL", targetId: "202" } },
+                    { type: "mega-ref", ref: { kind: "cl", targetTitle: "Graph CL", targetId: underscorePublicId } },
                   ],
                 },
               ],
@@ -146,6 +147,15 @@ describe.skipIf(!adminDatabaseUrl)("getContentLinkGraph (EG-03, throwaway PG)", 
         },
         USERS.tianjing.id,
       );
+
+      const numericReference = await docs.createDoc({
+        title: "Numeric reference",
+        body: JSON.stringify({ root: { children: [{
+          type: "mega-block", blockId: "numericRef42", variant: "text", children: [
+            { type: "mega-ref", ref: { kind: "cl", targetTitle: "Graph CL", targetId: "202" } },
+          ],
+        }] } }),
+      }, USERS.tianjing.id);
 
       const graph = await getContentLinkGraph(client.db, acl, USERS.tianjing.id);
 
@@ -162,6 +172,9 @@ describe.skipIf(!adminDatabaseUrl)("getContentLinkGraph (EG-03, throwaway PG)", 
       )).toHaveLength(1);
       expect(graph.edges).toContainEqual(expect.objectContaining({
         sourceNodeId: `doc:${embedder.id}`, targetNodeId: `cl:${publicId}`,
+      }));
+      expect(graph.edges).toContainEqual(expect.objectContaining({
+        sourceNodeId: `doc:${numericReference.id}`, targetNodeId: `cl:${publicId}`,
       }));
 
       expect(graph.edges).toContainEqual(

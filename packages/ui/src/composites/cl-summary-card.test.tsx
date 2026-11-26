@@ -14,7 +14,7 @@ const CL: CLSummary = {
   author: { id: "u1", username: "tianjing", displayName: "Tianjing", avatarInitials: "TJ" },
   deletions: 4,
   description: "Fixes the flaky retry loop.",
-  publicId: "cl_42_testID",
+  publicId: "clA42BtestID",
   packageId: "apps/web",
   state: "ready",
   title: "Fix retry loop",
@@ -22,9 +22,9 @@ const CL: CLSummary = {
 
 describe("CLSummaryCard (UI-09, upstream:libs/react-shared/components/mega/composites/cl-summary-card.tsx)", () => {
   it("renders the row variant with public ID, title and state label (smoke)", () => {
-    render(<CLSummaryCard cl={CL} href="/workspace/cls/cl_42_testID" stateLabel="Ready" variant="row" />)
-    expect(screen.getByText("cl_42_testID")).toBeInTheDocument()
-    expect(screen.getByRole("link", { name: "Fix retry loop" })).toHaveAttribute("href", "/workspace/cls/cl_42_testID")
+    render(<CLSummaryCard cl={CL} href="/workspace/cls/clA42BtestID" stateLabel="Ready" variant="row" />)
+    expect(screen.getByText("clA42BtestID")).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: "Fix retry loop" })).toHaveAttribute("href", "/workspace/cls/clA42BtestID")
     expect(screen.getByText("Ready")).toBeInTheDocument()
   })
 
@@ -34,7 +34,7 @@ describe("CLSummaryCard (UI-09, upstream:libs/react-shared/components/mega/compo
         cl={CL}
         diffLabel="+12 -4"
         fileCountLabel="3 files"
-        href="/workspace/cls/cl_42_testID"
+        href="/workspace/cls/clA42BtestID"
         packageLabel="apps/web"
         stateLabel="Ready"
         variant="unfurl"
@@ -45,7 +45,7 @@ describe("CLSummaryCard (UI-09, upstream:libs/react-shared/components/mega/compo
   })
 
   it("renders the detail variant with the package label and author byline", () => {
-    render(<CLSummaryCard cl={CL} href="/workspace/cls/cl_42_testID" packageLabel="apps/web" stateLabel="Ready" variant="detail" />)
+    render(<CLSummaryCard cl={CL} href="/workspace/cls/clA42BtestID" packageLabel="apps/web" stateLabel="Ready" variant="detail" />)
     expect(screen.getByText("apps/web")).toBeInTheDocument()
     expect(screen.getByText("Tianjing")).toBeInTheDocument()
   })
@@ -53,13 +53,13 @@ describe("CLSummaryCard (UI-09, upstream:libs/react-shared/components/mega/compo
   it("fires onSelect when the title link is clicked (interaction)", async () => {
     const user = userEvent.setup()
     const onSelect = vi.fn()
-    render(<CLSummaryCard cl={CL} href="/workspace/cls/cl_42_testID" onSelect={onSelect} stateLabel="Ready" />)
+    render(<CLSummaryCard cl={CL} href="/workspace/cls/clA42BtestID" onSelect={onSelect} stateLabel="Ready" />)
     await user.click(screen.getByRole("link", { name: "Fix retry loop" }))
     expect(onSelect).toHaveBeenCalledTimes(1)
   })
 
   it("renders a skeleton placeholder instead of content when loading (loading state)", () => {
-    render(<CLSummaryCard cl={CL} href="/workspace/cls/cl_42_testID" loading stateLabel="Ready" />)
+    render(<CLSummaryCard cl={CL} href="/workspace/cls/clA42BtestID" loading stateLabel="Ready" />)
     expect(screen.queryByText("Fix retry loop")).not.toBeInTheDocument()
     expect(document.querySelector('[data-slot="cl-summary-card-skeleton"]')).toBeInTheDocument()
   })

@@ -5,7 +5,7 @@ import { e2eBaseURL } from "./helpers/base-url";
 
 const SAMPLE_CL = {
   id: "cl_1",
-  publicId: "aB19_pX_7ZrQ",
+  publicId: "aB195pXA7ZrQ",
   number: 1,
   title: "Wire WA-09 conversation",
   description: "Exercise list + detail.",
@@ -466,7 +466,7 @@ test.describe("WA-09 workspace CL list/detail", () => {
       ...SAMPLE_CL,
       id: `cl_${index + 1}`,
       number: index + 1,
-      publicId: `testCL_${String(index + 1).padStart(5, "0")}`,
+      publicId: `testCLx${String(index + 1).padStart(5, "0")}`,
       title: `CL ${index + 1}`,
     }));
     await page.route("**/api/mega/cls**", async (route) => {
@@ -547,7 +547,7 @@ test.describe("WA-09 workspace CL list/detail", () => {
     await context.close();
   });
 
-  for (const missing of ["999", "missing_CL01"]) {
+  for (const missing of ["999", "missingXCL01"]) {
     test(`unknown CL ${missing} shows not-found`, async ({ page, context }) => {
       await context.addCookies(mintSessionCookies().cookies);
       await stubClsApis(page);

@@ -26,6 +26,7 @@ interface FakeMappingStore {
   legacyLinks: Map<number, string>;
   publicIds: Map<number, string>;
   legacyPublicIds: Map<number, string>;
+  underscorePublicIds: Map<number, string>;
   localMegaClsMaxNumber: number;
   advisoryLocks: number;
   updateCalls: number;
@@ -64,6 +65,7 @@ function createFakeMappingDb(
     legacyLinks: new Map(),
     publicIds: new Map(),
     legacyPublicIds: new Map(),
+    underscorePublicIds: new Map(),
     localMegaClsMaxNumber,
     advisoryLocks: 0,
     updateCalls: 0,
@@ -116,9 +118,9 @@ function createFakeMappingDb(
                   }
                   if (table === megaClPublicIds && "liveLink" in fields) {
                     const chunks = (expr as { queryChunks: unknown[] }).queryChunks;
-                    const codes = chunks.includes(megaClPublicIds.legacyPublicId)
-                      ? store.legacyPublicIds
-                      : store.publicIds;
+                    let codes = store.publicIds;
+                    if (chunks.includes(megaClPublicIds.legacyPublicId)) codes = store.legacyPublicIds;
+                    if (chunks.includes(megaClPublicIds.underscorePublicId)) codes = store.underscorePublicIds;
                     const entry = [...codes].find(([, publicId]) => publicId === bound);
                     return Promise.resolve(entry ? [{
                       liveLink: store.byNumber.get(entry[0]),
@@ -264,7 +266,7 @@ describe("mega2 live non-mutating CL projection (CLB-22)", () => {
 
   it("reserves stable block-style public IDs and never reuses a deleted CL's number", async () => {
     const store = createFakeMappingDb(10);
-    store.publicIds.set(12, "oldClCode_01");
+    store.publicIds.set(12, "oldClCode901");
     const first = await ensureMegaClIdentity(store.db, "cl-alpha");
     const repeated = await ensureMegaClIdentity(store.db, "cl-alpha");
     const second = await ensureMegaClIdentity(store.db, "cl-beta");
@@ -418,9 +420,10 @@ describe("mega2 live non-mutating CL projection (CLB-22)", () => {
     const store = createFakeMappingDb();
     store.legacyLinks.set(7, "cl-live");
     store.legacyLinks.set(4, "cl-live");
-    store.publicIds.set(4, "ClPublic_001");
+    store.publicIds.set(4, "ClPublic0001");
+    store.underscorePublicIds.set(4, "ClPublic_001");
     store.legacyPublicIds.set(4, "ClPublic-001");
-    store.publicIds.set(7, "ClPublic_002");
+    store.publicIds.set(7, "ClPublic0002");
     let currentStatus: "Open" | "Closed" | "Merged" = "Open";
     const comments: Array<{
       id: number;
@@ -565,7 +568,7 @@ describe("mega2 live non-mutating CL projection (CLB-22)", () => {
 
     // Unfiltered list returns BOTH open and merged CLs with live mergeBox attached
     const legacyDetail = await getLiveMega2ClDetail(store.db, 7, { env: env() });
-    expect(legacyDetail).toMatchObject({ number: 4, publicId: "ClPublic_001" });
+    expect(legacyDetail).toMatchObject({ number: 4, publicId: "ClPublic0001" });
     const allList = await listLiveMega2Cls(store.db, {}, { env: env() });
     expect(allList).toHaveLength(2);
     expect(allList[0]?.link).toBe("cl-live");
@@ -575,10 +578,10 @@ describe("mega2 live non-mutating CL projection (CLB-22)", () => {
     expect(allList[1]?.link).toBe("cl-done");
     expect(allList[1]?.state).toBe("merged");
 
-    for (const query of ["ClPublic_001", "!ClPublic_001", "ClPublic-001", "!ClPublic-001"]) {
+    for (const query of ["ClPublic0001", "!ClPublic0001", "ClPublic_001", "!ClPublic_001", "ClPublic-001", "!ClPublic-001"]) {
       const result = await listLiveMega2Cls(store.db, { text: query }, { env: env() });
       expect(result.map(({ link, publicId }) => ({ link, publicId }))).toEqual([
-        { link: "cl-live", publicId: "ClPublic_001" },
+        { link: "cl-live", publicId: "ClPublic0001" },
       ]);
     }
     expect(await listLiveMega2Cls(store.db, { text: "!clpublic_001" }, { env: env() })).toEqual([]);
@@ -1060,8 +1063,10 @@ describe("mega2 live non-mutating CL projection (CLB-22)", () => {
     expect(store.byLink.has("cl-secret")).toBe(false);
     const secret = await ensureMegaClIdentity(store.db, "cl-secret");
     store.legacyPublicIds.set(secret.number, "ClSecret-001");
+    store.underscorePublicIds.set(secret.number, "ClSecret_001");
     expect(await listLiveMega2Cls(store.db, { text: secret.publicId }, { env: env() })).toEqual([]);
     expect(await listLiveMega2Cls(store.db, { text: "!ClSecret-001" }, { env: env() })).toEqual([]);
+    expect(await listLiveMega2Cls(store.db, { text: "!ClSecret_001" }, { env: env() })).toEqual([]);
 
     // Draft -> ready fails closed instead of silently calling reopen
     const { number: draftNumber } = await ensureMegaClIdentity(store.db, "cl-draft");

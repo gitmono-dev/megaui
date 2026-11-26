@@ -18,7 +18,7 @@ const SAMPLE_ISSUE = {
   priority: "P1",
   labels: [],
   linkedCLs: [42],
-  linkedClPublicIds: ["cl_42-testID"],
+  linkedClPublicIds: ["clA42TtestID"],
   reactions: [{ emoji: "👍", count: 2, reactedByMe: false }],
   author: AUTHOR,
   assignees: [],

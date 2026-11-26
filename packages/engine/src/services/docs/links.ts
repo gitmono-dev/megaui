@@ -303,16 +303,25 @@ export function selectDocumentCLs(database: Database) {
   return database
     .select({
       id: megaCls.id, number: megaCls.number, title: megaCls.title,
-      publicId: megaClPublicIds.publicId, legacyPublicId: megaClPublicIds.legacyPublicId,
+      publicId: megaClPublicIds.publicId,
+      legacyPublicId: megaClPublicIds.legacyPublicId,
+      underscorePublicId: megaClPublicIds.underscorePublicId,
     })
     .from(megaCls)
     .innerJoin(megaClPublicIds, eq(megaClPublicIds.number, megaCls.number));
 }
 
 /** All addresses that may be stored in a document or its derived link index. */
-export function documentCLReferences(cl: { id: string; number: number; publicId: string; legacyPublicId: string | null }): string[] {
+export function documentCLReferences(cl: {
+  id: string;
+  number: number;
+  publicId: string;
+  legacyPublicId: string | null;
+  underscorePublicId: string | null;
+}): string[] {
   const refs = [cl.publicId, String(cl.number), cl.id];
   if (cl.legacyPublicId) refs.push(cl.legacyPublicId);
+  if (cl.underscorePublicId) refs.push(cl.underscorePublicId);
   return [...new Set(refs)];
 }
 
