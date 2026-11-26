@@ -36,10 +36,15 @@ export interface MegaFileTreeProps {
   defaultExpanded?: ReadonlySet<string>
   /** Defaults to `'comfortable'`; out-of-scope density context wiring is left to the consumer. */
   density?: MegaFileTreeDensity
+  /** A review tree toggles directories in place. A repository tree can navigate into them. */
+  directoryAction?: "select" | "toggle"
   labels: MegaFileTreeLabels
   nodes: readonly FileTreeNode[]
   onSelect(node: FileTreeNode): void
   onDirectoryToggle?(path: string, expanded: boolean): void
+  renderRowEnd?(node: FileTreeNode): React.ReactNode
+  /** Reveal and focus the selected file in the tree without stealing DOM focus. */
+  revealActiveFile?: boolean
   /** Defaults to a fixed sidebar width. */
   width?: number | string
 }
@@ -53,10 +58,11 @@ interface TreeRowProps {
   onRowClick(row: FlatTreeRow, chevron: boolean): void
   row: FlatTreeRow
   rowHeight: number
+  end?: React.ReactNode
   treeState: TreeState
 }
 
-function TreeRow({ active, focused, id, onRowClick, row, rowHeight, treeState }: TreeRowProps) {
+function TreeRow({ active, focused, id, onRowClick, row, rowHeight, treeState, end }: TreeRowProps) {
   const expanded = row.isDirectory ? treeState.isExpanded(row.node.path) : undefined
   const DirectoryIcon = expanded ? FolderOpen : Folder
 
@@ -71,6 +77,7 @@ function TreeRow({ active, focused, id, onRowClick, row, rowHeight, treeState }:
       id={id}
       onClick={(event) => onRowClick(row, event.target instanceof Element && event.target.closest("[data-mega-tree='chevron']") != null)}
       role="treeitem"
+      title={row.node.path}
       style={{
         alignItems: "center",
         borderRadius: 4,
@@ -98,6 +105,7 @@ function TreeRow({ active, focused, id, onRowClick, row, rowHeight, treeState }:
         <FileGlyph aria-hidden="true" color={active ? MEGA_TOKENS.activeFg : MEGA_TOKENS.muted} size={14} />
       )}
       <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{row.node.name}</span>
+      {end}
     </div>
   )
 }
@@ -115,10 +123,13 @@ export function MegaFileTree({
   branchName,
   defaultExpanded,
   density = "comfortable",
+  directoryAction = "select",
   labels,
   nodes,
   onDirectoryToggle,
   onSelect,
+  renderRowEnd,
+  revealActiveFile = false,
   width,
 }: MegaFileTreeProps) {
   const rowHeight = ROW_HEIGHTS[density]
@@ -147,51 +158,66 @@ export function MegaFileTree({
   useEffect(() => {
     if (!activePath) return
     const segments = activePath.split("/").filter(Boolean)
-    for (let index = 1; index <= segments.length; index += 1) {
+    const depth = revealActiveFile ? segments.length - 1 : segments.length
+    for (let index = 1; index <= depth; index += 1) {
       treeState.expand(segments.slice(0, index).join("/"))
     }
-  }, [activePath])
+  }, [activePath, revealActiveFile])
 
-  // Focus identity is the row's path. The ref is written synchronously in
+  // Focus follows path and kind (a change can replace a file with a directory).
+  // The ref is written synchronously in
   // the interaction handlers (never from a rows-derived effect, which would
   // overwrite the previous path before reconciliation can use it); when
   // rows reshuffle, the same node keeps focus and only a vanished node
   // falls back to the clamped index.
-  const focusedPathRef = useRef<string | undefined>(undefined)
+  const focusedNodeRef = useRef<FileTreeNode | undefined>(undefined)
 
   const focusRow = useCallback(
     (index: number) => {
-      focusedPathRef.current = rows[index]?.node.path
+      focusedNodeRef.current = rows[index]?.node
       setFocusIndex(index)
     },
     [rows]
   )
 
   useEffect(() => {
-    const path = focusedPathRef.current
-    if (path !== undefined) {
-      const index = findRowIndex(rows, path)
+    const node = focusedNodeRef.current
+    if (node) {
+      const index = findRowIndex(rows, node.path, node.kind)
       if (index >= 0) {
         setFocusIndex((current) => (current === index ? current : index))
         return
       }
-      focusedPathRef.current = undefined
+      focusedNodeRef.current = undefined
     }
     setFocusIndex((current) => (current >= rows.length ? Math.max(rows.length - 1, 0) : current))
   }, [rows])
 
+  const revealedPath = useRef<string | undefined>(undefined)
+  useEffect(() => {
+    if (!revealActiveFile || !activePath) {
+      revealedPath.current = undefined
+      return
+    }
+    if (revealedPath.current === activePath) return
+    const index = findRowIndex(rows, activePath, "file")
+    if (index < 0) return // The ancestor-expansion effect may still be adding rows.
+    revealedPath.current = activePath
+    focusRow(index)
+    virtualizer.scrollToIndex(index, "nearest")
+  }, [activePath, revealActiveFile, rows, focusRow, virtualizer])
+
   const handleRowClick = useCallback(
     (row: FlatTreeRow, chevron: boolean) => {
-      const index = findRowIndex(rows, row.node.path)
+      const index = rows.indexOf(row)
       if (index >= 0) focusRow(index)
       if (!row.isDirectory) {
         onSelect(row.node)
         return
       }
       const expanded = treeState.isExpanded(row.node.path)
-      // The chevron only opens or closes the folder. The name navigates, like GitHub,
-      // and opens a collapsed folder so its entries appear in the tree.
-      if (chevron) {
+      // A review tree also lets the folder name act as the disclosure control.
+      if (chevron || directoryAction === "toggle") {
         if (expanded) treeState.collapse(row.node.path)
         else treeState.expand(row.node.path)
         onDirectoryToggle?.(row.node.path, !expanded)
@@ -203,7 +229,7 @@ export function MegaFileTree({
       }
       onSelect(row.node)
     },
-    [focusRow, onDirectoryToggle, onSelect, rows, treeState]
+    [directoryAction, focusRow, onDirectoryToggle, onSelect, rows, treeState]
   )
 
   const handleKeyDown = useCallback(
@@ -278,9 +304,10 @@ export function MegaFileTree({
             const row = rows[item.index]
             if (!row) return null
             return (
-              <div key={row.node.path} style={{ left: 0, position: "absolute", top: 0, transform: `translateY(${item.start}px)`, width: "100%" }}>
+              <div key={`${row.node.kind}:${row.node.path}`} style={{ left: 0, position: "absolute", top: 0, transform: `translateY(${item.start}px)`, width: "100%" }}>
                 <TreeRow
-                  active={row.node.path === activePath}
+                  active={row.node.path === activePath && (!revealActiveFile || !row.isDirectory)}
+                  end={renderRowEnd?.(row.node)}
                   focused={item.index === focusIndex}
                   id={rowDomId(item.index)}
                   onRowClick={handleRowClick}

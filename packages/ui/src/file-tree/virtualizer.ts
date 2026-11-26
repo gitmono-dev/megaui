@@ -31,7 +31,7 @@ export interface VirtualRow {
 export interface FixedRowVirtualizer {
   getVirtualItems(): VirtualRow[]
   getTotalSize(): number
-  scrollToIndex(index: number): void
+  scrollToIndex(index: number, align?: "start" | "nearest"): void
   measure(): void
 }
 
@@ -99,13 +99,21 @@ export function useFixedRowVirtualizer({
   }, [count, overscan, rowHeight, scrollTop, viewportHeight])
 
   const scrollToIndex = useCallback(
-    (index: number) => {
+    (index: number, align: "start" | "nearest" = "start") => {
       const element = getScrollElement()
       if (!element) return
-      element.scrollTop = index * rowHeight
+      let top = index * rowHeight
+      if (align === "nearest" && top >= element.scrollTop) {
+        const style = getComputedStyle(element)
+        const padding = (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0)
+        const height = (element.clientHeight || initialHeight) - padding
+        if (top + rowHeight <= element.scrollTop + height) return
+        top += rowHeight - height
+      }
+      element.scrollTop = top
       setScrollTop(element.scrollTop)
     },
-    [getScrollElement, rowHeight]
+    [getScrollElement, initialHeight, rowHeight]
   )
 
   return {

@@ -78,9 +78,9 @@ export function toggleExpanded(expandedPaths: ReadonlySet<string>, path: string)
   return next
 }
 
-export function findRowIndex(rows: readonly FlatTreeRow[], path: string | undefined): number {
+export function findRowIndex(rows: readonly FlatTreeRow[], path: string | undefined, kind?: FileTreeNode["kind"]): number {
   if (path === undefined) return -1
-  return rows.findIndex((row) => row.node.path === path)
+  return rows.findIndex((row) => row.node.path === path && (kind === undefined || row.node.kind === kind))
 }
 
 export type TreeKeyboardAction =
@@ -122,7 +122,7 @@ export function treeKeyboardAction(
     }
     case "ArrowLeft": {
       if (row.isDirectory && expandedPaths.has(row.node.path)) return { type: "collapse", path: row.node.path }
-      const parentIndex = findRowIndex(rows, row.parentPath)
+      const parentIndex = findRowIndex(rows, row.parentPath, "directory")
       return parentIndex >= 0 ? { type: "move", index: parentIndex } : { type: "none" }
     }
     case "Enter":

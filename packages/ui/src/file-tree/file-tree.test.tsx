@@ -120,8 +120,44 @@ describe("MegaFileTree", () => {
     expect(screen.getByText("main")).toBeInTheDocument()
   })
 
+  it("toggles review folders by mouse and keyboard, keeping a same-path file selectable", () => {
+    const nodes: FileTreeNode[] = [
+      { name: "entry", path: "entry", kind: "directory", children: [{ name: "child", path: "entry/child", kind: "file" }] },
+      { name: "entry", path: "entry", kind: "file" },
+    ]
+    const onSelect = vi.fn()
+    render(<MegaFileTree nodes={nodes} activePath="entry" labels={LABELS} revealActiveFile
+      directoryAction="toggle" onSelect={onSelect} renderRowEnd={(node) => node.kind === "file" ? <span>+3</span> : undefined} />)
+    const tree = screen.getByRole("tree")
+    const directory = screen.getByRole("treeitem", { name: "entry", expanded: false })
+    const file = screen.getByRole("treeitem", { selected: true })
+    expect(file).toHaveTextContent("entry+3")
+    expect(tree).toHaveAttribute("aria-activedescendant", file.id)
+    fireEvent.click(directory)
+    expect(screen.getByRole("treeitem", { name: /child/ })).toBeVisible()
+    fireEvent.keyDown(tree, { key: "Enter" })
+    expect(directory).toHaveAttribute("aria-expanded", "false")
+    expect(onSelect).not.toHaveBeenCalled()
+    fireEvent.click(file)
+    expect(onSelect).toHaveBeenCalledWith(nodes[1])
+  })
+
   describe("at 1e4-node scale", () => {
     const LARGE_TREE = buildLargeTree()
+
+    it("reveals a deep-linked file outside the first virtual window and allows collapsing it afterwards", () => {
+      const path = "package-7/file-910.ts"
+      render(<MegaFileTree activePath={path} directoryAction="toggle" labels={LABELS} nodes={LARGE_TREE} onSelect={vi.fn()} revealActiveFile />)
+      const tree = screen.getByRole("tree")
+      const file = screen.getByRole("treeitem", { selected: true })
+      expect(file).toHaveTextContent("file-910.ts")
+      expect(tree).toHaveAttribute("aria-activedescendant", file.id)
+      expect(tree.scrollTop).toBeGreaterThan(0)
+      fireEvent.keyDown(tree, { key: "ArrowLeft" })
+      fireEvent.keyDown(tree, { key: "ArrowLeft" })
+      expect(screen.getByRole("treeitem", { name: "package-7" })).toHaveAttribute("aria-expanded", "false")
+      expect(screen.queryByRole("treeitem", { selected: true })).toBeNull()
+    })
 
     it("virtualizes: only a small window of rows mounts, never all 10,000", () => {
       const { container } = render(<MegaFileTree defaultExpanded={new Set(["package-0"])} labels={LABELS} nodes={LARGE_TREE} onSelect={vi.fn()} />)
