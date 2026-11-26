@@ -220,6 +220,8 @@ export interface CLReviewer {
 
 export interface CLFile {
   path: string
+  /** Source path when a review compares a renamed file against its previous name. */
+  oldPath?: string
   status: 'added' | 'modified' | 'deleted'
   additions: number
   deletions: number

@@ -1,4 +1,4 @@
-import { expect, test, type Locator } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import { mintSessionCookies } from "./helpers/session";
 
@@ -70,8 +70,8 @@ const SAMPLE_CL = {
       rangePatches: { "1..2": "@@ -1 +1 @@\n-export const ranged = false;\n+export const ranged = true;\n" },
     },
     {
-      path: "src/main.rs", status: "modified", additions: 1, deletions: 1,
-      patch: 'diff --git a/src/main.rs b/src/main.rs\n--- a/src/main.rs\n+++ b/src/main.rs\n@@ -1 +1 @@\n-fn answer() -> u32 { 0 }\n+fn answer() -> u32 { 42 }\n',
+      path: "src/main.rs", oldPath: "src/legacy_main.rs", status: "modified", additions: 1, deletions: 1,
+      patch: "diff --git a/src/legacy_main.rs b/src/main.rs\nsimilarity index 67%\nrename from src/legacy_main.rs\nrename to src/main.rs\n--- a/src/legacy_main.rs\n+++ b/src/main.rs\n@@ -1 +1 @@\n-fn answer() -> u32 { 0 }\n+fn answer() -> u32 { 42 }\n",
     },
     {
       path: "notes.undetected", status: "added", additions: 1, deletions: 0,
@@ -104,6 +104,15 @@ const SAMPLE_CL = {
 const CL_PATH = `/en/workspace/cls/${SAMPLE_CL.publicId}`;
 const LEGACY_CODES = { hyphenated: "bQ_yC79Z-1tP", underscored: "Pc9Bk_sY4X7Z" } as const;
 const RELATED_PUBLIC_ID = "g2CA8bk5Y0xR";
+const INDEX_FILE = "packages/engine/src/index.ts";
+
+function fileCard(page: Page, path: string) {
+  return page.locator(`[data-mega-cls="file-card"][data-path="${path}"]`);
+}
+
+function filePatch(page: Page, path: string) {
+  return fileCard(page, path).locator('[data-mega-cls="diff-patch"]');
+}
 
 function patchLine(patch: Locator, kind: "addition" | "deletion") {
   return patch.locator(`[data-code] [data-line][data-line-type="change-${kind}"]`);
@@ -189,14 +198,18 @@ async function stubAttachmentApis(
     failingChecks?: boolean;
     failChecks?: boolean;
     failDeps?: boolean;
+    failViewedOnce?: boolean;
+    mega2?: boolean;
     emptyDeps?: boolean;
     largeDeps?: boolean;
   },
 ): Promise<void> {
   await stubRail(page);
+  let rejectViewed = options?.failViewedOnce;
   const cl = {
     ...SAMPLE_CL,
-    files: options?.files ?? SAMPLE_CL.files,
+    id: options?.mega2 ? "cl_m2_fixture" : SAMPLE_CL.id,
+    files: (options?.files ?? SAMPLE_CL.files).map(file => ({ ...file, viewed: file.viewed ?? false })),
     revisions: options?.emptyRevisions ? [] : SAMPLE_CL.revisions,
   };
 
@@ -255,10 +268,22 @@ async function stubAttachmentApis(
     }
 
     if (pathname === `${numericPath}/viewed` && method === "POST") {
+      if (rejectViewed) {
+        rejectViewed = false;
+        await route.fulfill({ status: 500, json: { error: { code: "MEGA_INTERNAL_ERROR", message: "Save failed" } } });
+        return;
+      }
+      const { path, viewed } = route.request().postDataJSON();
+      const file = cl.files.find(candidate => candidate.path === path);
+      if (!file || typeof viewed !== "boolean") {
+        await route.fulfill({ status: 400, json: { error: { code: "INVALID_FILE" } } });
+        return;
+      }
+      file.viewed = viewed;
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ data: { ok: true } }),
+        body: JSON.stringify({ data: file }),
       });
       return;
     }
@@ -287,7 +312,7 @@ test.describe("workspace CL attachment pages (WA-10)", () => {
     await context.addCookies(cookies);
   });
 
-  test("folder toggles preserve the open diff and keyboard file selection changes its highlighting", async ({ page }) => {
+  test("the file tree opens the corresponding highlighted card and folder toggles preserve the diffs", async ({ page }) => {
     await stubAttachmentApis(page);
     await page.goto(`${CL_PATH}/files`);
     await expect(page.locator('[data-mega-cls="files"]')).toBeVisible();
@@ -300,7 +325,7 @@ test.describe("workspace CL attachment pages (WA-10)", () => {
     await expect(tsFile).toHaveAttribute("aria-selected", "true");
     await expect(tsFile).toContainText("+1");
     await expect(tsFile).toContainText("−1");
-    const patch = page.locator('[data-mega-cls="diff-patch"]');
+    const patch = filePatch(page, INDEX_FILE);
     const added = patchLine(patch, "addition");
     const removed = patchLine(patch, "deletion");
     await expect(added).toHaveText("export const x = 1;");
@@ -322,31 +347,37 @@ test.describe("workspace CL attachment pages (WA-10)", () => {
     await tree.press("ArrowDown"); // main.rs
     await tree.press("Enter");
     await expect(tree.getByRole("treeitem", { name: /^main\.rs\b/ })).toHaveAttribute("aria-selected", "true");
-    await expect(added).toHaveText("fn answer() -> u32 { 42 }");
-    await expect(removed).toHaveText("fn answer() -> u32 { 0 }");
-    await expect.poll(async () => (await tokenColors(added)).length).toBeGreaterThan(1);
-    await expect(patch.locator("diffs-container")).toHaveCount(1);
+    const rust = filePatch(page, "src/main.rs");
+    const rename = fileCard(page, "src/main.rs").locator("header");
+    await expect(rename).toContainText("src/legacy_main.rs");
+    await expect(rename).toContainText("src/main.rs");
+    await expect(rename.getByRole("button", { name: "Copy file path" })).toBeVisible();
+    await expect(rust).toBeInViewport();
+    await expect(patchLine(rust, "addition")).toHaveText("fn answer() -> u32 { 42 }");
+    await expect(patchLine(rust, "deletion")).toHaveText("fn answer() -> u32 { 0 }");
+    await expect.poll(async () => (await tokenColors(patchLine(rust, "addition"))).length).toBeGreaterThan(1);
+    await expect(patchLine(patch, "addition")).toHaveText("export const x = 1;");
     await expect(page.locator('[data-mega-cls="tabs"] [data-tab="files"][data-mega-cls="tab-active"]')).toBeVisible();
   });
 
   test("unknown file types keep their text and empty and binary patches are distinguished", async ({ page }) => {
     await stubAttachmentApis(page);
     await page.goto(`${CL_PATH}/files?file=notes.undetected`);
-    const patch = page.locator('[data-mega-cls="diff-patch"]');
+    const patch = filePatch(page, "notes.undetected");
     await expect(patchLine(patch, "addition")).toHaveText("Plain file contents <example>");
     const tree = page.getByRole("tree", { name: "Changed files" });
     await tree.getByRole("treeitem", { name: "notes", exact: true }).click();
     await tree.getByRole("treeitem", { name: /^empty\.txt\b/ }).click();
-    await expect(patch).toHaveText("(empty patch)");
+    await expect(filePatch(page, "notes/empty.txt")).toHaveText("(empty patch)");
     await tree.getByRole("treeitem", { name: "assets", exact: true }).click();
     await tree.getByRole("treeitem", { name: /^logo\.bin\b/ }).click();
-    await expect(patch.getByRole("status")).toHaveText("Binary file · no text diff available");
+    await expect(filePatch(page, "assets/logo.bin").getByRole("status")).toHaveText("Binary file · no text diff available");
   });
 
   test("a large Rust file highlights both ends as its diff scrolls", async ({ page }) => {
     await stubAttachmentApis(page);
     await page.goto(`${CL_PATH}/files?file=src%2Fgenerated.rs`);
-    const patch = page.locator('[data-mega-cls="diff-patch"]');
+    const patch = filePatch(page, "src/generated.rs");
     const lines = patchLine(patch, "addition");
     const first = lines.filter({ hasText: "pub const V0: u32 = 0;" });
     await expect(first).toBeVisible();
@@ -373,7 +404,151 @@ test.describe("workspace CL attachment pages (WA-10)", () => {
     const target = tree.getByRole("treeitem", { name: /^file-1199\.ts\b/, level: 3, selected: true });
     await expect(target).toBeInViewport();
     expect(await tree.getByRole("treeitem").count()).toBeLessThan(files.length);
-    await expect(patchLine(page.locator('[data-mega-cls="diff-patch"]'), "addition")).toHaveText("export const value = 1199;");
+    const selectedCard = fileCard(page, "project/src/file-1199.ts");
+    await expect(selectedCard).toBeInViewport();
+    await expect(patchLine(selectedCard, "addition")).toHaveText("export const value = 1199;");
+    await expect(page.locator('[data-mega-cls="file-card"]')).toHaveCount(5);
+  });
+
+  test("reviewers can collapse a single card, change layout, and persist viewed progress", async ({ page }) => {
+    await stubAttachmentApis(page);
+    await page.goto(`${CL_PATH}/files`);
+    const ts = fileCard(page, INDEX_FILE);
+    const rust = fileCard(page, "src/main.rs");
+    const expand = ts.locator('[data-mega-cls="file-toggle"]');
+    const progress = page.locator('[data-mega-cls="viewed-progress"]');
+    await expect(page.locator('[data-mega-cls="file-card"]')).toHaveCount(5);
+    await expect(progress).toHaveText("0/7 viewed");
+    await expand.click();
+    await expect(expand).toHaveAttribute("aria-expanded", "false");
+    await expect(ts.locator("diffs-container")).toHaveCount(0);
+    await expect(patchLine(rust, "addition")).toHaveText("fn answer() -> u32 { 42 }");
+    await expand.click();
+    await page.getByRole("button", { name: "Split", exact: true }).click();
+    await expect(ts.locator("code[data-additions]")).toBeVisible();
+    await expect(ts.locator("code[data-deletions]")).toBeVisible();
+    await page.getByRole("button", { name: "Unified", exact: true }).click();
+    await expect(ts.locator("code[data-unified]")).toBeVisible();
+
+    const viewed = ts.getByRole("checkbox");
+    const saved = page.waitForResponse(response => response.request().method() === "POST"
+      && new URL(response.url()).pathname.endsWith("/viewed"));
+    await viewed.click();
+    await expect(viewed).toBeChecked();
+    expect((await saved).ok()).toBe(true);
+    await expect(progress).toHaveText("1/7 viewed");
+    await expect(rust.getByRole("checkbox")).not.toBeChecked();
+    await page.reload();
+    await expect(viewed).toBeChecked();
+    await expect(progress).toHaveText("1/7 viewed");
+    await viewed.click();
+    await expect(viewed).not.toBeChecked();
+    await expect(progress).toHaveText("0/7 viewed");
+  });
+
+  test("file pages allow browsing beyond the first group and returning to earlier cards", async ({ page }) => {
+    await stubAttachmentApis(page);
+    await page.goto(`${CL_PATH}/files`);
+    const next = page.locator('[data-mega-cls="next-files"]');
+    const previous = page.locator('[data-mega-cls="previous-files"]');
+    await expect(previous).toBeDisabled();
+    await next.click();
+    await expect(next).toBeDisabled();
+    await expect(fileCard(page, INDEX_FILE)).toHaveCount(0);
+    await expect(fileCard(page, "tools/index.ts")).toBeAttached();
+    await expect(page.locator('[data-mega-cls="file-card"]')).toHaveCount(2);
+    await previous.click();
+    await expect(fileCard(page, INDEX_FILE)).toBeAttached();
+    await expect(next).toBeEnabled();
+    const tree = page.getByRole("tree", { name: "Changed files" });
+    await tree.getByRole("treeitem", { name: "tools", exact: true }).click();
+    await tree.getByRole("treeitem", { name: /^index\.ts\b/, level: 2 }).click();
+    const tool = fileCard(page, "tools/index.ts");
+    await expect(patchLine(tool, "addition")).toHaveText("export const tool = true;");
+    await expect(tool.locator("header")).toBeInViewport();
+    await expect(next).toBeDisabled();
+  });
+
+  test("a failed Viewed update leaves the count unchanged and the same file can be retried", async ({ page }) => {
+    await stubAttachmentApis(page, { failViewedOnce: true });
+    await page.goto(`${CL_PATH}/files`);
+    const viewed = fileCard(page, INDEX_FILE).getByRole("checkbox");
+    const progress = page.locator('[data-mega-cls="viewed-progress"]');
+    await viewed.click();
+    await expect(page.locator('[data-mega-cls="files"] [role="alert"]')).toBeVisible();
+    await expect(viewed).not.toBeChecked();
+    await expect(progress).toHaveText("0/7 viewed");
+    await viewed.click();
+    await expect(viewed).toBeChecked();
+    await expect(progress).toHaveText("1/7 viewed");
+  });
+
+  test("revision switches update the patch, file and review statistics, and browser-local Mega2 progress", async ({ page }) => {
+    const changedRange = "@@ -8,3 +10,2 @@\n-old A\n-old B\n-old C\n+export const ranged = true;\n+export const next = 1;\n";
+    const files = SAMPLE_CL.files.map(file => file.path === INDEX_FILE
+      ? { ...file, rangePatches: { "1..2": changedRange } }
+      : file);
+    await stubAttachmentApis(page, { mega2: true, files });
+    const viewedWrites: string[] = [];
+    page.on("request", request => {
+      if (request.method() === "POST" && new URL(request.url()).pathname.endsWith("/viewed")) viewedWrites.push(request.url());
+    });
+    await page.goto(`${CL_PATH}/files`);
+    const range = page.getByRole("combobox", { name: "Revision range" });
+    const viewed = fileCard(page, INDEX_FILE).getByRole("checkbox");
+    const progress = page.locator('[data-mega-cls="viewed-progress"]');
+    const header = fileCard(page, INDEX_FILE).locator("header");
+    const leaf = page.getByRole("treeitem", { level: 4, selected: true });
+    const toolbar = page.locator('[data-mega-cls="review-toolbar"]');
+    async function expectCounts(scope: Locator, additions: number, deletions: number) {
+      await expect(scope.getByText(`+${additions}`, { exact: true })).toBeVisible();
+      await expect(scope.getByText(`−${deletions}`, { exact: true })).toBeVisible();
+    }
+    await viewed.check();
+    await expect(progress).toHaveText("1/7 viewed");
+    await range.selectOption("1..2");
+    await expect(page).toHaveURL(/[?&]range=1\.\.2/);
+    await expect(patchLine(fileCard(page, INDEX_FILE), "addition")).toHaveText(["export const ranged = true;", "export const next = 1;"]);
+    await expectCounts(header, 2, 3);
+    await expectCounts(leaf, 2, 3);
+    await expectCounts(toolbar, 505, 4);
+    await expect(viewed).not.toBeChecked();
+    await expect(progress).toHaveText("0/7 viewed");
+    await range.selectOption("");
+    await expect(page).toHaveURL(`${CL_PATH}/files`);
+    await page.reload();
+    await expect(viewed).toBeChecked();
+    await expect(progress).toHaveText("1/7 viewed");
+    await expect(patchLine(fileCard(page, INDEX_FILE), "addition")).toHaveText("export const x = 1;");
+    await expectCounts(header, 1, 1);
+    await expectCounts(leaf, 1, 1);
+    await expectCounts(toolbar, 504, 2);
+    expect(viewedWrites).toEqual([]);
+  });
+
+  test("hiding the tree preserves the review and the path filter distinguishes duplicate filenames", async ({ page }) => {
+    await stubAttachmentApis(page);
+    await page.goto(`${CL_PATH}/files`);
+    const toggle = page.locator('[data-mega-cls="toggle-tree"]');
+    const tree = page.getByRole("tree", { name: "Changed files" });
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await expect(tree).toBeHidden();
+    await expect(fileCard(page, INDEX_FILE)).toBeVisible();
+    await toggle.click();
+    await expect(tree).toBeVisible();
+    const filter = page.getByRole("searchbox", { name: "Filter changed files" });
+    await filter.fill("TOOLS/INDEX");
+    const target = tree.getByRole("treeitem", { name: /^index\.ts\b/ });
+    await expect(target).toHaveCount(1);
+    await expect(page.locator('[data-mega-cls="file-card"]')).toHaveCount(1);
+    await target.click();
+    await expect(patchLine(fileCard(page, "tools/index.ts"), "addition")).toHaveText("export const tool = true;");
+    await filter.fill("no-such-file");
+    await expect(tree.getByRole("treeitem")).toHaveCount(0);
+    await expect(page.locator('[data-mega-cls="file-card"]')).toHaveCount(0);
+    await filter.fill("");
+    await expect(tree.getByRole("treeitem", { name: "packages", exact: true })).toBeVisible();
   });
 
   test("files empty state", async ({ page }) => {
@@ -387,7 +562,7 @@ test.describe("workspace CL attachment pages (WA-10)", () => {
     const suffix = "/files?range=1..2&file=tools%2Findex.ts#diff";
     await page.goto(`/en/workspace/cls/1${suffix}`);
     await expect(page).toHaveURL(`${CL_PATH}${suffix}`);
-    const patch = page.locator('[data-mega-cls="diff-patch"]');
+    const patch = filePatch(page, "tools/index.ts");
     const tree = page.getByRole("tree", { name: "Changed files" });
     const selected = tree.getByRole("treeitem", { name: /^index\.ts\b/, level: 2, selected: true });
     await expect(tree.getByRole("treeitem", { name: "tools", level: 1 })).toHaveAttribute("aria-expanded", "true");
@@ -414,7 +589,7 @@ test.describe("workspace CL attachment pages (WA-10)", () => {
       await page.goto(`/en/workspace/cls/${ref}${suffix}`);
       await expect(page).toHaveURL(`${CL_PATH}${suffix}`);
       await expect(page.locator('[data-mega-cls="detail-title"]')).toContainText(SAMPLE_CL.publicId);
-      await expect(patchLine(page.locator('[data-mega-cls="diff-patch"]'), "addition")).toHaveText("export const ranged = true;");
+      await expect(patchLine(filePatch(page, INDEX_FILE), "addition")).toHaveText("export const ranged = true;");
     });
   }
 
@@ -492,7 +667,7 @@ test.describe("workspace CL attachment pages (WA-10)", () => {
     await page.setViewportSize({ width: 390, height: 780 });
     await page.goto(`/zh-CN/workspace/cls/${SAMPLE_CL.publicId}/files`);
     await expect(page.locator('[data-mega-cls="tabs"]')).toContainText("文件");
-    const added = patchLine(page.locator('[data-mega-cls="diff-patch"]'), "addition");
+    const added = patchLine(filePatch(page, INDEX_FILE), "addition");
     const modes = new Map<string, string[]>();
     for (const mode of ["light", "dark"] as const) {
       await page.evaluate(mode => localStorage.setItem("mega-settings", JSON.stringify({ mode, density: "comfortable", accent: "default" })), mode);
@@ -505,5 +680,8 @@ test.describe("workspace CL attachment pages (WA-10)", () => {
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
     }
     expect(modes.get("dark")).not.toEqual(modes.get("light"));
+    await page.locator('[data-mega-cls="toggle-tree"]').click();
+    await expect(page.getByRole("tree")).toBeHidden();
+    await expect(added).toBeInViewport();
   });
 });

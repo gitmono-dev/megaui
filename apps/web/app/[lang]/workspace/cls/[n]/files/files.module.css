@@ -1,57 +1,25 @@
 .layout {
   display: grid;
-  grid-template-columns: clamp(14rem, 28%, 20rem) minmax(0, 1fr);
+  grid-template-columns: clamp(15rem, 23%, 21rem) minmax(0, 1fr);
   align-items: start;
-  gap: 16px;
-}
-
-.fileList {
-  --tree-max-height: 70vh;
   min-width: 0;
-  overflow: hidden;
-  border: 1px solid var(--mega-border);
-  border-right: 0;
-  border-radius: var(--mega-panel-radius);
 }
-
-.fileList > :global([data-mega-tree="root"]) { max-height: var(--tree-max-height); }
-.fileList :global([data-mega-tree="row"]) > svg { flex: none; }
-.filePath { min-width: 0; overflow-wrap: anywhere; }
-.stat {
-  flex: none;
-  margin-inline-start: auto;
-  font-size: 0.85em;
-  font-weight: 400;
-  font-variant-numeric: tabular-nums;
+.layout[data-tree-open="false"] { grid-template-columns: minmax(0, 1fr); }
+.diffPane { min-width: 0; padding: 0 clamp(12px, 1.5vw, 24px) 24px; }
+.range {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 550;
   white-space: nowrap;
 }
-.added { color: var(--mega-diff-add-fg); }
-.deleted { color: var(--mega-diff-del-fg); }
-
-.diffPane { min-width: 0; }
-.panel {
-  overflow: hidden;
-  border: 1px solid var(--mega-border);
-  border-radius: var(--mega-panel-radius);
-  background: var(--mega-bg);
-}
-
-.header, .notice {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.header {
-  justify-content: space-between;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--mega-border);
-  background: var(--mega-subtle);
-}
-.header button { flex: none; }
-.header button[aria-pressed="true"] { background: var(--mega-active-bg); color: var(--mega-active-fg); }
-.patch { min-width: 0; overflow-x: auto; }
-
+.range svg { flex: none; color: var(--mega-muted); }
+.range select { max-width: 13rem; font: inherit; color: inherit; background: var(--mega-bg); border: 1px solid var(--mega-border); border-radius: 6px; padding: 3px 5px; }
+.notice, .empty { margin: 8px 0 12px; padding: 10px 14px; color: var(--mega-muted); }
+.notice { display: flex; align-items: center; gap: 8px; }
+.notice p { margin: 0; }
 @container (max-width: 48rem) {
-  .layout { grid-template-columns: minmax(0, 1fr); gap: 12px; }
-  .fileList { --tree-max-height: min(32vh, 14rem); }
+  .layout { grid-template-columns: minmax(0, 1fr); }
+  .diffPane { padding-inline: 10px; }
 }

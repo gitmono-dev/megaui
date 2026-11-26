@@ -27,7 +27,6 @@ vi.mock("@/lib/auth-client", () => ({
 // Stub child presentation/plugin boundaries only. The six tested components,
 // their hooks, query/mutation lifecycle and navigation decisions are real.
 const callbacks = vi.hoisted(() => ({
-  patchView: vi.fn<(props: { path: string; patch: string }) => void>(),
   tree: undefined as ComponentProps<typeof import("@/app/[lang]/workspace/code/[...path]/components/code-path-tree").CodePathTree> | undefined,
   header: undefined as ComponentProps<typeof import("@/app/[lang]/workspace/code/[...path]/components/code-path-header").CodePathHeader> | undefined,
   toolbar: undefined as ComponentProps<typeof import("@/app/[lang]/workspace/docs/components/doc-toolbar").DocToolbar> | undefined,
@@ -38,10 +37,8 @@ const callbacks = vi.hoisted(() => ({
 }));
 vi.mock("@megaui/ui/code-view", async (importOriginal) => ({
   ...await importOriginal<object>(),
-  MegaPatchView: (props: ComponentProps<typeof import("@megaui/ui/code-view").MegaPatchView>) => {
-    callbacks.patchView(props);
-    return null;
-  },
+  MegaPatchView: (props: ComponentProps<typeof import("@megaui/ui/code-view").MegaPatchView>) =>
+    createElement("pre", null, props.patch),
 }));
 vi.mock("@/app/[lang]/workspace/code/[...path]/components/code-path-content", () => ({
   CodePathContent: (props: ComponentProps<typeof import("@/app/[lang]/workspace/code/[...path]/components/code-path-content").CodePathContent>) =>
@@ -275,29 +272,37 @@ describe("known context preserves behavior and revokes old callbacks", () => {
   it("keeps CL range/file and viewed writes while known, refuses queued admission after null", async () => {
     known("range=1..2&file=b.ts");
     const selectedPatch = "@@ -1 +1 @@\n-const version = 1;\n+const version = 2;\n";
-    const cl = { number: 42, publicId: "CL0fixture42", revisions: [{ number: 1 }, { number: 2 }], files: [
-      { path: "a.ts", patch: "first", additions: 1, deletions: 0 },
-      { path: "b.ts", patch: "latest", additions: 1, deletions: 1, viewed: false, rangePatches: { "1..2": selectedPatch } },
+    const cl = { id: "cl_navigation", number: 42, publicId: "CL0fixture42", revisions: [{ number: 1 }, { number: 2 }], files: [
+      { path: "a.ts", status: "added", patch: "first", additions: 1, deletions: 0 },
+      { path: "b.ts", status: "modified", patch: "latest", additions: 1, deletions: 1, viewed: false, rangePatches: { "1..2": selectedPatch } },
     ] };
     queryClient.setQueryData(megaQueryKeys.cl("42"), cl);
-    fetchSpy.mockImplementation(async () => json(cl));
+    fetchSpy.mockImplementation(async (url, init) => {
+      if (String(url).endsWith("/viewed") && init?.method === "POST") {
+        const { path, viewed } = JSON.parse(init.body);
+        return json({ ...required(cl.files.find(file => file.path === path)), viewed });
+      }
+      return json(cl);
+    });
     await render(CLFilesPage);
-    expect(callbacks.patchView).toHaveBeenLastCalledWith(expect.objectContaining({ path: "b.ts", patch: selectedPatch }));
-    await act(async () => button('[data-mega-cls="file-viewed"]').click());
+    const file = '[data-mega-cls="file-card"][data-path="b.ts"]';
+    const patch = `${file} [data-mega-cls="diff-patch"]`;
+    const viewed = () => required(container.querySelector<HTMLInputElement>(`${file} input[data-mega-cls="file-viewed"]`));
+    expect(required(container.querySelector(patch)).textContent).toBe(selectedPatch);
+    await act(async () => viewed().click());
     expect(fetchSpy.mock.calls.some(([url, init]) => String(url).endsWith("/cls/42/viewed") && init.body === JSON.stringify({ path: "b.ts", viewed: true }))).toBe(true);
     fetchSpy.mockClear();
     // React Query defers mutationFn; invalidate the rendered lifetime before it enters.
     await act(async () => {
-      button('[data-mega-cls="file-viewed"]').click();
+      viewed().click();
       navigation.search = null;
       flushSync(() => root.render(createElement(StrictMode, null,
         createElement(QueryClientProvider, { client: queryClient }, createElement(CLFilesPage)))));
     });
     expect(fetchSpy).not.toHaveBeenCalled();
-    callbacks.patchView.mockClear();
     known("range=1..2&file=b.ts");
     await render(CLFilesPage);
-    expect(callbacks.patchView).toHaveBeenLastCalledWith(expect.objectContaining({ path: "b.ts", patch: selectedPatch }));
+    expect(required(container.querySelector(patch)).textContent).toBe(selectedPatch);
   });
 
   it("does not mount a writer for unknown or snapshot navigation; revokes old doc mutations", async () => {

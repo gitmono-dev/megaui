@@ -1,4 +1,4 @@
-import { isBlockId } from "@megaui/core";
+import { countDiffLines, isBlockId } from "@megaui/core";
 import type {
   CIStatus,
   CL,
@@ -57,7 +57,6 @@ const MAX_MEGA2_DIFF_PAGES = 200;
 const MERGE_BOX_CONCURRENCY = 8;
 
 export interface ProjectedMega2CLFile extends CLFile {
-  readonly oldPath?: string;
   readonly mega2Action?: Mega2ClFileRes["action"];
 }
 
@@ -146,49 +145,6 @@ export function deriveMergeStateFromMergeBox(
       c.result === "FAILED",
   );
   return hasSyncFailure ? "rebase-needed" : "needs-review";
-}
-
-const HUNK_HEADER_RE = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
-
-function countDiffLines(patch: string): { additions: number; deletions: number } {
-  let additions = 0;
-  let deletions = 0;
-  let oldRemaining = 0;
-  let newRemaining = 0;
-  let hasHunk = false;
-
-  for (const line of patch.split("\n")) {
-    if (oldRemaining === 0 && newRemaining === 0) {
-      const match = HUNK_HEADER_RE.exec(line);
-      if (match) {
-        hasHunk = true;
-        oldRemaining = match[2] !== undefined ? Number(match[2]) : 1;
-        newRemaining = match[4] !== undefined ? Number(match[4]) : 1;
-      }
-      continue;
-    }
-    if (line.startsWith("+")) {
-      additions += 1;
-      if (newRemaining > 0) newRemaining -= 1;
-    } else if (line.startsWith("-")) {
-      deletions += 1;
-      if (oldRemaining > 0) oldRemaining -= 1;
-    } else if (line.startsWith(" ")) {
-      if (oldRemaining > 0) oldRemaining -= 1;
-      if (newRemaining > 0) newRemaining -= 1;
-    } else if (line.startsWith("\\")) {
-      // "\ No newline at end of file" does not consume hunk line counts.
-    }
-  }
-
-  if (!hasHunk) {
-    for (const line of patch.split("\n")) {
-      if (line.startsWith("+") && !line.startsWith("+++ ")) additions += 1;
-      else if (line.startsWith("-") && !line.startsWith("--- ")) deletions += 1;
-    }
-  }
-
-  return { additions, deletions };
 }
 
 function mapFileAction(action: Mega2ClFileRes["action"]): CLFile["status"] {

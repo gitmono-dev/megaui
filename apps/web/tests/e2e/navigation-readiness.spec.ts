@@ -12,12 +12,26 @@ async function fixture(page: Page) {
     if (request.method() !== "GET" && (pathname.startsWith("/api/mega/") || pathname === "/api/upload")) writes.push(pathname);
   });
   const docs = await stubWorkspace(page, "doc_navigation", lexicalDocumentWithText("Navigation fixture document"));
-  const cl = { number: 42, publicId: "Qa1NaviA0042", revisions: [{ number: 1 }, { number: 2 }], files: [
-    { path: "a.ts", patch: "@@ -0,0 +1 @@\n+export const first = true;\n", additions: 1, deletions: 0 },
-    { path: "b.ts", patch: "@@ -0,0 +1 @@\n+export const latest = true;\n", additions: 1, deletions: 0, viewed: false,
+  const cl = { id: "cl_navigation", number: 42, publicId: "Qa1NaviA0042", revisions: [{ number: 1 }, { number: 2 }], files: [
+    { path: "a.ts", status: "added", patch: "@@ -0,0 +1 @@\n+export const first = true;\n", additions: 1, deletions: 0 },
+    { path: "b.ts", status: "added", patch: "@@ -0,0 +1 @@\n+export const latest = true;\n", additions: 1, deletions: 0, viewed: false,
       rangePatches: { "1..2": "@@ -0,0 +1 @@\n+export const selected = true;\n" } },
   ] };
-  await page.route("**/api/mega/cls/**", (route) => route.fulfill({ json: { data: cl } }));
+  await page.route("**/api/mega/cls/**", async (route) => {
+    const request = route.request();
+    if (request.method() === "POST" && new URL(request.url()).pathname === "/api/mega/cls/42/viewed") {
+      const { path, viewed } = request.postDataJSON();
+      const file = cl.files.find((item) => item.path === path);
+      if (!file || typeof viewed !== "boolean") {
+        await route.fulfill({ status: 400 });
+        return;
+      }
+      file.viewed = viewed;
+      await route.fulfill({ json: { data: file } });
+      return;
+    }
+    await route.fulfill({ json: { data: cl } });
+  });
   await page.route("**/api/mega/workspace", (route) => route.fulfill({ json: { data: { name: "Synthetic", defaultBranch: "main" } } }));
   await page.route("**/api/mega/code-tree**", (route) => route.fulfill({ json: { data: [
     { path: "README file.md", name: "README file.md", kind: "file" },
@@ -57,15 +71,17 @@ for (const consumer of ["cl", "code", "doc", "roam", "settings-nav", "settings"]
 test("CL file/range and viewed action resume after search becomes known", async ({ page }) => {
   const state = await fixture(page);
   await select(page, "cl", "known", "range=1..2&file=b.ts");
-  const addition = page.locator('[data-mega-cls="diff-patch"] [data-code] [data-line][data-line-type="change-addition"]');
+  const file = page.locator('[data-mega-cls="file-card"][data-path="b.ts"]');
+  const addition = file.locator('[data-mega-cls="diff-patch"] [data-code] [data-line][data-line-type="change-addition"]');
+  const viewed = file.getByRole("checkbox");
   await expect(addition).toHaveText("export const selected = true;");
-  await page.locator('[data-mega-cls="file-viewed"]').click();
+  await viewed.click();
   await expect.poll(() => state.writes.filter((url) => url.endsWith("/viewed")).length).toBe(1);
   await page.getByLabel("Readiness", { exact: true }).selectOption("no-search");
   await expect(page.locator('[data-mega-cls="file-viewed"]')).toHaveCount(0);
   await page.getByLabel("Readiness", { exact: true }).selectOption("known");
   await expect(addition).toHaveText("export const selected = true;");
-  await page.locator('[data-mega-cls="file-viewed"]').click();
+  await viewed.click();
   await expect.poll(() => state.writes.filter((url) => url.endsWith("/viewed")).length).toBe(2);
   expect(state.errors).toEqual([]);
 });

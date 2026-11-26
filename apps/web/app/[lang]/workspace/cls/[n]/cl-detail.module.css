@@ -16,6 +16,19 @@
   border: 0;
 }
 
+.frame[data-files-review] {
+  width: 100%;
+  padding-inline: 0;
+}
+.frame[data-files-review] > .header,
+.frame[data-files-review] > .tabs {
+  margin-inline: var(--mega-page-gutter);
+}
+.frame[data-files-review] .subpage {
+  padding-top: 0;
+  background: var(--mega-bg);
+}
+
 .breadcrumb,
 .breadcrumb a,
 .meta,

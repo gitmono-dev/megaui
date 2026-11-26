@@ -403,7 +403,8 @@ test.describe("WA-09 workspace CL list/detail", () => {
     });
     await page.locator('[data-mega-cls="tabs"] [data-tab="files"]').press("Enter");
     await filesRequest;
-    const addition = page.locator('[data-mega-cls="diff-patch"] [data-code] [data-line][data-line-type="change-addition"]');
+    const file = page.locator('[data-mega-cls="file-card"][data-path="packages/engine/src/index.ts"]');
+    const addition = file.locator('[data-mega-cls="diff-patch"] [data-code] [data-line][data-line-type="change-addition"]');
     await expect(addition).toHaveText("export const x = 1;");
   });
 

@@ -96,8 +96,9 @@ DB coupling:
 - `filter.ts` — the compact workspace filter DSL (`parseQuery`/`serializeQuery`)
   and the single Issue/CL list predicates (GC-02) `matchesIssueFilter` /
   `matchesCLFilter`.
-- `patch.ts` — CL file-diff range helpers: `parseRevRange`,
-  `clFilePatchForRange`, `normalizeRevRangeBounds`.
+- `patch.ts` — `parseRevRange` and `normalizeRevRangeBounds` handle revision ranges.
+  `clFilePatchForRange` selects the stored patch. `clFileForRange` pairs it with
+  the additions and deletions counted by `countDiffLines`.
 - `tree-sort.ts` — canonical repo/doc tree ordering (directories before
   files, each group by name).
 - `linkify-plain.ts` — replaces the first plain-text occurrence of a title

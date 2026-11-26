@@ -2,26 +2,37 @@
 
 import { useParams, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { GitCompareArrows } from "lucide-react";
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 
-import { clFilePatchForRange, isCLReference, parseRevRange, type CL } from "@megaui/core";
-import { MegaPatchView } from "@megaui/ui/code-view";
-import { MegaFileTree } from "@megaui/ui/file-tree";
+import { clFileForRange, isCLReference, parseRevRange, type CL, type CLFile } from "@megaui/core";
 import { MegaApiError, megaGet, megaPost, megaQueryKeys } from "@megaui/ui/query";
 
 import { useTranslation } from "@/hooks/use-translation";
-import { buildChangedFilesTree } from "./changed-files-tree";
+import { authClient } from "@/lib/auth-client";
+import { ReviewDiffs } from "./review-diffs";
+import { filterChangedFiles, ReviewFileTree, ReviewToolbar } from "./review-navigation";
+import { useLocalViewed } from "./use-local-viewed";
 import styles from "./files.module.css";
 
-// megaui-only (FS-92): wait for navigation before mounting actionable content.
+const NO_FILES: readonly CLFile[] = [];
+
+// Keep the review controls unmounted until the route and its query are both available.
 export default function CLFilesPage() {
   const params = useParams<{ n: string }>();
   const searchParams = useSearchParams();
   const { t } = useTranslation();
-  if (params === null || searchParams === null) {
+  if (!params || !searchParams) {
     return <section aria-busy="true" data-mega-cls="files"><p>{t.workspace.clDetail.files.loading}</p></section>;
   }
-  return <ReadyCLFilesPage key={`${params.n}:${searchParams.get("file") ?? ""}`} routeId={params.n} searchParams={searchParams} />;
+  return <ReadyCLFilesPage key={params.n} routeId={params.n} searchParams={searchParams} />;
+}
+
+function updateReviewQuery(key: "range" | "file", value: string) {
+  const url = new URL(window.location.href);
+  if (value) url.searchParams.set(key, value);
+  else url.searchParams.delete(key);
+  window.history.replaceState(null, "", url.pathname + url.search + url.hash);
 }
 
 function ReadyCLFilesPage({ routeId, searchParams }: {
@@ -29,16 +40,15 @@ function ReadyCLFilesPage({ routeId, searchParams }: {
   searchParams: NonNullable<ReturnType<typeof useSearchParams>>;
 }) {
   const { t } = useTranslation();
+  const text = t.workspace.clDetail.files;
   const queryClient = useQueryClient();
-  const filesText = t.workspace.clDetail.files;
+  const { data: session } = authClient.useSession();
   const contextKey = `${routeId}?${searchParams.toString()}`;
   const currentContext = useRef<string | null>(null);
   useLayoutEffect(() => {
     currentContext.current = contextKey;
     return () => { currentContext.current = null; };
   }, [contextKey]);
-  const rangeParam = searchParams.get("range");
-  const fileParam = searchParams.get("file");
 
   const clQuery = useQuery({
     queryKey: megaQueryKeys.cl(routeId),
@@ -47,102 +57,109 @@ function ReadyCLFilesPage({ routeId, searchParams }: {
     staleTime: 10_000,
     retry: (count, error) => !(error instanceof MegaApiError && error.status === 404) && count < 2,
   });
-  const range = useMemo(
-    () => clQuery.data && parseRevRange(rangeParam, clQuery.data.revisions),
-    [clQuery.data, rangeParam],
-  );
-  const files = clQuery.data?.files;
-  const { nodes, filesByPath } = useMemo(() => buildChangedFilesTree(files ?? []), [files]);
-  const [selectedPath, setSelectedPath] = useState<string | null>(null);
-  const activeFile = filesByPath.get(selectedPath ?? fileParam ?? "") ?? files?.[0];
-  const patch = activeFile ? clFilePatchForRange(activeFile, range) : "";
+  const cl = clQuery.data;
+  const rangeParam = searchParams.get("range");
+  const fileParam = searchParams.get("file");
+  const range = useMemo(() => cl && parseRevRange(rangeParam, cl.revisions), [cl, rangeParam]);
+  const selectedRange = range ? `${range.from}..${range.to}` : "";
+  const availableRanges = useMemo(() => {
+    const choices = new Set<string>();
+    for (const file of cl?.files ?? NO_FILES) {
+      for (const key of Object.keys(file.rangePatches ?? {})) choices.add(key);
+    }
+    if (selectedRange) choices.add(selectedRange);
+    return [...choices].filter((key) => cl && parseRevRange(key, cl.revisions)).sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
+  }, [cl, selectedRange]);
+
+  // Mega2 provides the patch but has no per-reviewer file receipt. Keep its progress
+  // separate for every signed-in viewer and revision. Database-backed CLs use the BFF.
+  const localProgress = Boolean(cl?.id?.startsWith("cl_m2_"));
+  const actorId = session?.user?.id;
+  const head = cl?.revisions?.[0]?.sha;
+  const scope = localProgress && actorId && cl && head
+    ? { actorId, publicId: cl.publicId, revision: head, range: selectedRange }
+    : undefined;
+  const { paths, setViewed } = useLocalViewed(scope);
+  const [localError, setLocalError] = useState(false);
+  const [pendingReceipt, setPendingReceipt] = useState<{ path: string; viewed: boolean } | null>(null);
+  const scopedFiles = useMemo(() => {
+    const source = cl?.files ?? NO_FILES;
+    return range ? source.map((file) => clFileForRange(file, range)) : source;
+  }, [cl?.files, range]);
+  const files = useMemo(() => {
+    if (localProgress) return scopedFiles.map((file) => paths.has(file.path) ? { ...file, viewed: true } : file);
+    if (!pendingReceipt) return scopedFiles;
+    return scopedFiles.map((file) => file.path === pendingReceipt.path ? { ...file, viewed: pendingReceipt.viewed } : file);
+  }, [scopedFiles, localProgress, paths, pendingReceipt]);
+  const [filter, setFilter] = useState("");
+  const [treeOpen, setTreeOpen] = useState(true);
+  const [diffStyle, setDiffStyle] = useState<"unified" | "split">("unified");
+  const [jumpTarget, setJumpTarget] = useState<{ path: string }>();
+  useLayoutEffect(() => {
+    setJumpTarget(fileParam ? { path: fileParam } : undefined);
+  }, [fileParam]);
+  const filtered = useMemo(() => filterChangedFiles(files, filter), [files, filter]);
+  const activeFile = filtered.find((file) => file.path === fileParam) ?? filtered[0];
+  const viewedCount = useMemo(() => files.reduce((sum, file) => sum + Number(file.viewed), 0), [files]);
 
   const viewedMutation = useMutation({
     mutationFn: (input: { path: string; viewed: boolean }) => {
-      if (currentContext.current !== contextKey) throw new Error("Navigation context is unavailable");
-      if (!clQuery.data) throw new Error("CL detail is unavailable");
-      return megaPost(["cls", String(clQuery.data.number), "viewed"], input);
+      if (!cl || currentContext.current !== contextKey) throw new Error("Navigation context is unavailable");
+      return megaPost(["cls", String(cl.number), "viewed"], input);
     },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: megaQueryKeys.cl(routeId) });
+    onSuccess: (_, input) => {
+      queryClient.setQueryData<CL>(megaQueryKeys.cl(routeId), (current) => current && ({
+        ...current,
+        files: current.files.map((file) => file.path === input.path ? { ...file, viewed: input.viewed } : file),
+      }));
     },
+    onSettled: () => setPendingReceipt(null),
   });
 
-  if (clQuery.isPending) {
-    return <section aria-busy="true" data-mega-cls="files"><p>{filesText.loading}</p></section>;
+  function markViewed(path: string, viewed: boolean) {
+    if (currentContext.current !== contextKey) return;
+    if (localProgress) setLocalError(!setViewed(path, viewed));
+    else if (!viewedMutation.isPending) {
+      setPendingReceipt({ path, viewed });
+      viewedMutation.mutate({ path, viewed });
+    }
   }
 
-  if (clQuery.isError && !clQuery.data) {
-    return (
-      <section data-mega-cls="files">
-        <div className={styles.notice} role="alert">
-          <p style={{ margin: 0 }}>{filesText.error}</p>
-          <button data-mega-cls="retry" onClick={() => void clQuery.refetch()} type="button">
-            {filesText.retry}
-          </button>
-        </div>
-      </section>
-    );
+  function selectFile(path: string) {
+    setJumpTarget({ path });
+    if (path !== fileParam) updateReviewQuery("file", path);
   }
 
-  if (!activeFile) {
-    return (
-      <section data-mega-cls="files">
-        <p data-mega-cls="files-empty">{filesText.empty}</p>
-      </section>
-    );
+  if (clQuery.isPending) return <section aria-busy="true" data-mega-cls="files"><p>{text.loading}</p></section>;
+  if (clQuery.isError && !cl) {
+    return <section data-mega-cls="files"><div className={styles.notice} role="alert">
+      <p>{text.error}</p><button type="button" data-mega-cls="retry" onClick={() => void clQuery.refetch()}>{text.retry}</button>
+    </div></section>;
   }
+  if (!files.length) return <section data-mega-cls="files"><p data-mega-cls="files-empty">{text.empty}</p></section>;
+
+  const rangeControl = <div className={styles.range}>
+    <GitCompareArrows size={15} aria-hidden="true" />
+    {availableRanges.length ? <select aria-label={text.revisionRange} value={selectedRange} onChange={(e) => updateReviewQuery("range", e.target.value)}>
+      <option value="">{text.allChanges}</option>
+      {availableRanges.map((value) => <option key={value} value={value}>{text.toolbar.rangeBadge.replace("{range}", value)}</option>)}
+    </select> : <span>{text.allChanges}</span>}
+  </div>;
 
   return (
-    <section className={styles.layout} data-mega-cls="files">
-      <aside className={styles.fileList} data-mega-cls="files-list">
-        <MegaFileTree
-          activePath={activeFile.path}
-          directoryAction="toggle"
-          labels={{ treeAriaLabel: filesText.list.treeAriaLabel }}
-          nodes={nodes}
-          onSelect={(node) => setSelectedPath(node.path)}
-          renderRowEnd={(node) => {
-            const file = node.kind === "file" ? filesByPath.get(node.path) : undefined;
-            return file && (
-              <span className={styles.stat}>
-                <span className={styles.added}>+{file.additions}</span>{" "}
-                <span className={styles.deleted}>−{file.deletions}</span>
-              </span>
-            );
-          }}
-          revealActiveFile
-          width="100%"
-        />
-      </aside>
+    <section className={styles.layout} data-tree-open={treeOpen} data-mega-cls="files">
+      {treeOpen && <ReviewFileTree files={filtered} activePath={activeFile?.path} filter={filter} onFilterChange={(value) => {
+        setFilter(value);
+        setJumpTarget(undefined);
+      }} onSelectPath={selectFile} />}
       <div className={styles.diffPane} data-mega-cls="files-diff">
-        {rangeParam && !range ? (
-          <p role="status">{filesText.invalidRange.replace("{range}", rangeParam)}</p>
-        ) : null}
-        <div className={styles.panel}>
-          <header className={styles.header}>
-            <strong className={styles.filePath}>{activeFile.path}</strong>
-            <button
-              aria-pressed={Boolean(activeFile.viewed)}
-              data-mega-cls="file-viewed"
-              disabled={viewedMutation.isPending}
-              onClick={() =>
-                viewedMutation.mutate({ path: activeFile.path, viewed: !activeFile.viewed })
-              }
-              type="button"
-            >
-              {activeFile.viewed ? t.workspace.clDetail.conversation.viewed : filesText.toolbar.viewed}
-            </button>
-          </header>
-          <div className={styles.patch} data-mega-cls="diff-patch">
-            <MegaPatchView
-              binaryLabel={filesText.binary}
-              emptyLabel={t.workspace.clDetail.conversation.emptyPatch}
-              patch={patch}
-              path={activeFile.path}
-            />
-          </div>
-        </div>
+        <ReviewToolbar files={files} viewedCount={viewedCount} treeOpen={treeOpen} onToggleTree={() => setTreeOpen(!treeOpen)}
+          diffStyle={diffStyle} onDiffStyleChange={setDiffStyle} rangeControl={rangeControl} progressHint={localProgress ? text.browserProgress : undefined} />
+        {rangeParam && !range && <p role="status" className={styles.notice}>{text.invalidRange.replace("{range}", rangeParam)}</p>}
+        {(localError || viewedMutation.isError) && <p role="alert" className={styles.notice}>{text.viewedFailed}</p>}
+        {activeFile ? <ReviewDiffs files={filtered} activePath={activeFile.path} jumpTarget={jumpTarget?.path === activeFile.path ? jumpTarget : undefined}
+          onSelectFile={selectFile} diffStyle={diffStyle} viewedPending={viewedMutation.isPending || (localProgress && !scope)}
+          onViewedChange={markViewed} /> : <p className={styles.empty}>{text.list.noMatches}</p>}
       </div>
     </section>
   );

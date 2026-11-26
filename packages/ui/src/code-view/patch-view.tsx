@@ -13,10 +13,10 @@ interface MegaPatchViewProps {
   patch: string
   emptyLabel: string
   binaryLabel: string
+  diffStyle?: "unified" | "split"
 }
 
-const unifiedOptions = {
-  diffStyle: "unified",
+const patchOptions = {
   diffIndicators: "classic",
   disableFileHeader: true,
   theme: MEGA_CODE_THEMES,
@@ -52,7 +52,7 @@ function languageForPath(path: string) {
   return language === "text" ? getFiletypeFromFileName(name.toLowerCase()) : language
 }
 
-function HighlightedPatch({ file }: { file: FileDiffMetadata }) {
+function HighlightedPatch({ file, diffStyle }: { file: FileDiffMetadata; diffStyle: "unified" | "split" }) {
   const wrapper = useRef<HTMLDivElement>(null)
   const instance = useRef<FileDiff | null>(null)
   const workerPool = useWorkerPool()
@@ -66,32 +66,33 @@ function HighlightedPatch({ file }: { file: FileDiffMetadata }) {
     // Give the virtualizer a top edge to anchor before the first highlighted rows arrive.
     if (virtualizer) host.style.minHeight = "1px"
     wrapper.current.appendChild(host)
+    const options = { ...patchOptions, diffStyle }
     const diff = virtualizer
-      ? new VirtualizedFileDiff(unifiedOptions, virtualizer, undefined, workerPool)
-      : new FileDiff(unifiedOptions, workerPool)
+      ? new VirtualizedFileDiff(options, virtualizer, undefined, workerPool)
+      : new FileDiff(options, workerPool)
     instance.current = diff
     diff.render({ fileDiff: file, fileContainer: host })
     return () => {
       diff.cleanUp()
       instance.current = null
     }
-  }, [file, virtualizer, workerPool])
+  }, [file, diffStyle, virtualizer, workerPool])
 
   useEffect(() => {
     instance.current?.setThemeType(themeType)
-  }, [file, virtualizer, workerPool, themeType])
+  }, [file, diffStyle, virtualizer, workerPool, themeType])
   return <div ref={wrapper} />
 }
 
 /** A single server-supplied patch, highlighted using its selected file's real path. */
-export function MegaPatchView({ path, patch, emptyLabel, binaryLabel }: MegaPatchViewProps) {
+export function MegaPatchView({ path, patch, emptyLabel, binaryLabel, diffStyle = "unified" }: MegaPatchViewProps) {
   const parsed = useMemo(() => readPatch(path, patch), [path, patch])
   if (parsed.kind === "empty" || parsed.kind === "binary") {
     return <p role="status">{parsed.kind === "empty" ? emptyLabel : binaryLabel}</p>
   }
   if (parsed.kind === "raw") return <pre style={{ margin: 0, overflow: "auto" }}>{patch}</pre>
 
-  const view = <HighlightedPatch file={parsed.file} />
+  const view = <HighlightedPatch file={parsed.file} diffStyle={diffStyle} />
   if (parsed.file.unifiedLineCount <= 400) return view
   return (
     <MegaDiffsWorkerProvider>

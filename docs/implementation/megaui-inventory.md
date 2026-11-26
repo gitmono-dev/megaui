@@ -62,7 +62,9 @@
 
 变更单概览沿用工作台的字号、间距和主题色。标题下方显示来源分支和已知的目标分支，合并摘要紧接标签导航，文件差异按需加载。布局参考 [GitHub PR Overview 公开预览](https://github.blog/changelog/2026-11-05-new-pull-request-overview-page-in-public-preview/) 和 [11 月 19 日的预览更新](https://github.blog/changelog/2026-11-19-improvements-on-the-pull-request-overview-in-public-preview/)。
 
-文件变更页与代码浏览复用同一目录树，按目录优先排列本次变更涉及的路径。文件旁显示增删行数，打开文件链接会展开父目录并定位到选中项。Diffs 按文件名识别语言，以统一差异视图显示语法颜色、新旧行号和增删标记。未知语言保留纯文本差异，二进制文件显示提示。长补丁按可见行渲染。[Diffs 文档](https://diffs.com/docs)
+文件变更页参考 Libra PR 的 Files changed 布局。左侧目录树按路径筛选文件，右侧分组连续显示可折叠的文件差异卡片，每组最多五个文件。选择树中的文件可跨组定位并更新文件链接。工具栏显示查看进度，可在统一和并排视图间切换。有已保存的修订范围时可直接切换比较范围。真实 Mega2 变更单的查看进度保存在当前浏览器，按登录用户、变更单、修订和比较范围隔离。[Libra PR #1076 文件变更页](https://github.com/libra-tools/libra/pull/1076/changes)
+
+Diffs 按文件名识别语言，显示语法颜色、新旧行号和增删标记。未知语言保留纯文本差异，二进制文件显示提示。长补丁按可见行渲染。[Diffs 文档](https://diffs.com/docs)
 
 ### Issues（2）
 

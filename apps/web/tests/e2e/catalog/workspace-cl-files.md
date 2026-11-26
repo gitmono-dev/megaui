@@ -5,16 +5,21 @@
 
 ## Purpose
 
-End-to-end coverage of `/[lang]/workspace/cls/[publicId]/{files,revisions,checks,deps}`: file list + patch preview, revision compare → files range link, checks empty/failing/error, dependency graph (≥50 nodes smoke). Stub BFF by default.
+End-to-end coverage of `/[lang]/workspace/cls/[publicId]/{files,revisions,checks,deps}` includes paged file review, revision comparison, check states and the dependency graph. The suite uses a stub BFF.
 
 ## Scenarios
 
 | ID | Name | AC |
 |----|------|----|
-| S-01 | Nested directories, folder toggles that preserve the open diff, keyboard file selection, per-file line counts, TypeScript and Rust syntax colors | AC-1 |
+| S-01 | Nested directories, keyboard selection, file line counts, rename paths, and TypeScript and Rust syntax colors | AC-1 |
 | S-01b | Readable unknown file types and distinct empty and binary states | AC-1 |
 | S-01c | A 500-line Rust diff keeps the rendered line count bounded and highlights code at both ends | AC-1 |
 | S-01d | A deep link into a directory of 1,200 files reveals the selected leaf while rendering just the visible rows and overscan | AC-1 |
+| S-01e | Independent card disclosure, unified and split layouts, and persisted Viewed progress | AC-1 |
+| S-01f | Pages contain at most five diff cards and support forward and backward navigation | AC-1 |
+| S-01g | Tree visibility and case-insensitive path filters with duplicate filenames and empty results | AC-1 |
+| S-01h | A failed Viewed write keeps the correct review count and allows retry | AC-1 |
+| S-01i | Switching the revision range changes the patch and the browser-local Mega2 review marks; the full-diff mark survives reload | AC-1 |
 | S-02 | Files empty | AC-1 |
 | S-03 | A numeric deep link opens the requested index.ts among duplicate filenames, with its directory expanded and its revision range and fragment preserved across refresh. Enter opens the revisions tab by public ID | AC-1 |
 | S-03b | Bookmarks for both hyphenated and underscored public IDs keep the file range and fragment at the current alphanumeric ID | AC-1 |

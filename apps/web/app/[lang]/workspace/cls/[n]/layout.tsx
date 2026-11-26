@@ -100,7 +100,7 @@ export default function CLDetailLayout({ children }: { children: ReactNode }) {
   const ciLabel = detail.revisions.card.ciStatuses[cl.ci];
   return (
     <main className={styles.page} data-mega-cls="detail">
-      <div className={styles.frame}>
+      <div className={styles.frame} data-files-review={activeTab === "files" || undefined}>
         <header className={styles.header} data-mega-cls="chrome">
           <div className={styles.breadcrumb}>
             <Link href={listHref}><GitPullRequest size={15} aria-hidden="true" />{detail.chrome.breadcrumbCls}</Link>

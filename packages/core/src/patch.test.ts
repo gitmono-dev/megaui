@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { clFilePatchForRange, normalizeRevRangeBounds, parseRevRange } from './patch'
+import { clFileForRange, clFilePatchForRange, normalizeRevRangeBounds, parseRevRange } from './patch'
 import type { CLFile, Revision } from './types'
 
 function revision(number: number): Revision {
@@ -81,6 +81,15 @@ describe('clFilePatchForRange', () => {
   it('falls back to the full patch when rangePatches is absent', () => {
     const bare: CLFile = { ...file, rangePatches: undefined }
     expect(clFilePatchForRange(bare, { from: 1, to: 2 })).toBe('full-patch')
+  })
+
+  it('updates file statistics with the selected patch and preserves totals for the full diff', () => {
+    const patch = '--- a/a.ts\n+++ b/a.ts\n@@ -1 +1,2 @@\n context\n+added'
+    const input = { ...file, additions: 25, deletions: 4, rangePatches: { '1..2': patch, '2..4': '' } }
+    expect(clFileForRange(input, { from: 1, to: 2 })).toMatchObject({ patch, additions: 1, deletions: 0 })
+    expect(clFileForRange(input, { from: 2, to: 4 })).toMatchObject({ patch: '', additions: 0, deletions: 0 })
+    expect(clFileForRange(input, { from: 1, to: 4 })).toBe(input)
+    expect(clFileForRange(input, undefined)).toBe(input)
   })
 })
 
