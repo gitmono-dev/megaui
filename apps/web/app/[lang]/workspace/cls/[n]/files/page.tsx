@@ -75,7 +75,7 @@ function ReadyCLFilesPage({ clNumber, searchParams }: {
     );
   }
 
-  if (clQuery.isError) {
+  if (clQuery.isError && !clQuery.data) {
     return (
       <section data-mega-cls="files">
         <div role="alert" style={{ display: "flex", gap: MEGA_SPACING_TOKENS[8] }}>

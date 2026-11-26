@@ -7,7 +7,9 @@
   "exports": {
     ".": "./src/index.ts",
     "./testing": "./src/testing/index.ts",
-    "./seed": "./src/seed.ts"
+    "./seed": "./src/seed.ts",
+    "./services/mega2": "./src/services/mega2/index.ts",
+    "./services/orion2": "./src/services/orion2/index.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

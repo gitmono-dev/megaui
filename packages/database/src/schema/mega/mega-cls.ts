@@ -4,6 +4,7 @@
 import { InferInsertModel, InferSelectModel } from "drizzle-orm";
 import {
   boolean,
+  index,
   integer,
   jsonb,
   pgTable,
@@ -75,7 +76,10 @@ export const megaCls = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
     mergedAt: timestamp("merged_at", { withTimezone: true }),
   },
-  (table) => [uniqueIndex("mega_cls_number_uidx").on(table.number)],
+  (table) => [
+    uniqueIndex("mega_cls_number_uidx").on(table.number),
+    index("mega_cls_link_idx").on(table.link),
+  ],
 );
 
 export const megaClComments = pgTable("mega_cl_comments", {
@@ -109,6 +113,23 @@ export const megaInlineComments = pgTable("mega_inline_comments", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
+/**
+ * Immutable `(link <-> number)` identity map for live `mega2` CL projection (`CLB-22`).
+ * Holds zero mutable CL fields and zero user FKs so deleting a viewer can never
+ * drop an allocated `!{number}` identity.
+ */
+export const megaClLinks = pgTable(
+  "mega_cl_links",
+  {
+    link: text("link").primaryKey(),
+    number: integer("number").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [uniqueIndex("mega_cl_links_number_uidx").on(table.number)],
+);
+
+export type MegaClLink = InferSelectModel<typeof megaClLinks>;
+export type NewMegaClLink = InferInsertModel<typeof megaClLinks>;
 export type MegaCl = InferSelectModel<typeof megaCls>;
 export type NewMegaCl = InferInsertModel<typeof megaCls>;
 export type MegaClComment = InferSelectModel<typeof megaClComments>;

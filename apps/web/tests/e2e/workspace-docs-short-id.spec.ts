@@ -4,12 +4,15 @@ import { mintSessionCookies } from "./helpers/session";
 type ContentNode = { type?: string; blockId?: string; sourceBlockId?: string; children?: ContentNode[]; blockRef?: { targetBlockId: string } };
 const walk = (node: ContentNode): ContentNode[] => [node, ...(node.children ?? []).flatMap(walk)];
 
+const e2eOrigin = new URL(process.env.E2E_BASE_URL?.trim() || "http://127.0.0.1:3000").origin;
+const csrfHeaders = { Origin: e2eOrigin };
+
 test("12-character block IDs survive creation, splitting, table insertion, copying and saved references", async ({ page, context }) => {
   await context.addCookies(mintSessionCookies().cookies);
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
-  const created = await page.request.post("/api/mega/docs", { data: { title: `Short ID verification ${Date.now()}` } });
+  const created = await page.request.post("/api/mega/docs", { headers: csrfHeaders, data: { title: `Short ID verification ${Date.now()}` } });
   expect(created.ok()).toBe(true);
   const { data: doc } = await created.json() as { data: { id: string; body: string } };
   const initial = JSON.parse(doc.body) as { root: ContentNode };
@@ -65,7 +68,7 @@ test("12-character block IDs survive creation, splitting, table insertion, copyi
     expect(errors).toEqual([]);
   } finally {
     await page.goto("/en/workspace/docs");
-    const deleted = await page.request.post(`/api/mega/docs/${doc.id}/delete`);
+    const deleted = await page.request.post(`/api/mega/docs/${doc.id}/delete`, { headers: csrfHeaders });
     expect(deleted.ok()).toBe(true);
   }
 });

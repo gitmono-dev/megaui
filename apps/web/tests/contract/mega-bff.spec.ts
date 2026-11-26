@@ -130,9 +130,10 @@ describe("WA-03 mega BFF contract", () => {
     });
 
     const { DELETE } = await import("../../app/api/mega/[...segments]/route");
+    const canonicalOrigin = new URL(process.env.APP_BASE_URL ?? "http://127.0.0.1:3000").origin;
     const response = await DELETE(
       new Request("http://127.0.0.1:3000/api/mega/noop", {
-        headers: { Cookie: sessionCookieHeader },
+        headers: { Cookie: sessionCookieHeader, Origin: canonicalOrigin },
       }),
       { params: Promise.resolve({ segments: ["noop"] }) },
     );
@@ -143,6 +144,7 @@ describe("WA-03 mega BFF contract", () => {
   });
 
   it("rejects invalid JSON bodies with 400", async () => {
+    const canonicalOrigin = new URL(process.env.APP_BASE_URL ?? "http://127.0.0.1:3000").origin;
     await expect(
       readMegaRequestBody(
         new Request("http://127.0.0.1:3000/api/mega/docs", {
@@ -158,6 +160,7 @@ describe("WA-03 mega BFF contract", () => {
         method: "POST",
         headers: {
           Cookie: sessionCookieHeader,
+          Origin: canonicalOrigin,
           "Content-Type": "application/json",
         },
         body: "{not-json",

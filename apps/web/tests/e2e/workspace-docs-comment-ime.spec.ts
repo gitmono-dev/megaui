@@ -1,11 +1,14 @@
 import { expect, test } from "@playwright/test";
 import { mintSessionCookies } from "./helpers/session";
 
+const e2eOrigin = new URL(process.env.E2E_BASE_URL?.trim() || "http://127.0.0.1:3000").origin;
+const csrfHeaders = { Origin: e2eOrigin };
+
 for (const mode of ['full document', 'focused block', 'sidebar'] as const) {
   test(`Chinese comment composition keeps focus and scroll (${mode})`, async ({ page, context }) => {
     test.setTimeout(60_000);
     await context.addCookies(mintSessionCookies().cookies);
-    const created = await page.request.post('/api/mega/docs', { data: { title: `Comment IME ${mode} ${Date.now()}` } });
+    const created = await page.request.post('/api/mega/docs', { headers: csrfHeaders, data: { title: `Comment IME ${mode} ${Date.now()}` } });
     expect(created.ok()).toBe(true);
     const { data: doc } = await created.json();
     const children = Array.from({ length: 40 }, (_, index) => ({
@@ -14,7 +17,7 @@ for (const mode of ['full document', 'focused block', 'sidebar'] as const) {
       direction: null, format: '', indent: 0,
     }));
     const body = JSON.stringify({ root: { type: 'root', version: 1, children, direction: null, format: '', indent: 0 } });
-    expect((await page.request.post(`/api/mega/docs/${doc.id}/save`, { data: { body } })).ok()).toBe(true);
+    expect((await page.request.post(`/api/mega/docs/${doc.id}/save`, { headers: csrfHeaders, data: { body } })).ok()).toBe(true);
     const cdp = await context.newCDPSession(page);
     try {
       await page.goto(`/en/workspace/docs/${doc.id}${mode === 'focused block' ? '?block=commentRow00' : ''}`);
@@ -53,7 +56,7 @@ for (const mode of ['full document', 'focused block', 'sidebar'] as const) {
     } finally {
       await cdp.detach();
       await page.goto('/en/workspace/docs');
-      expect((await page.request.post(`/api/mega/docs/${doc.id}/delete`)).ok()).toBe(true);
+      expect((await page.request.post(`/api/mega/docs/${doc.id}/delete`, { headers: csrfHeaders })).ok()).toBe(true);
     }
   });
 }

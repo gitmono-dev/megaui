@@ -1656,7 +1656,9 @@ export const zhCN = {
         ci: {
           passing: "通过",
           failing: "失败",
-          queued: "排队中"
+          queued: "排队中",
+          running: "运行中",
+          skipped: "已跳过"
         },
         verdicts: {
           approved: "已批准",
@@ -1865,6 +1867,27 @@ export const zhCN = {
         bench: {
           title: "基准变化",
           from: "基线 {value}"
+        },
+        controls: {
+          title: "构建控制",
+          triggerBuild: "触发构建",
+          retryBuild: "重试构建",
+          cancelBuild: "取消构建",
+          submitting: "执行中…",
+          taskMeta: "任务 {taskId} · 尝试 {attemptId} · {status}",
+          noTaskYet: "当前修订尚无 Orion2 构建任务。",
+          actionError: "构建操作失败：{message}",
+          attemptHistory: "构建历史",
+          viewLogs: "查看日志"
+        },
+        liveLog: {
+          title: "实时 Buck2 构建日志",
+          connecting: "正在连接…",
+          streaming: "串流中",
+          closed: "日志流已结束",
+          error: "日志流已断开",
+          empty: "等待构建输出…",
+          truncated: "仅保留最新 {limit} 行"
         }
       },
       deps: {
@@ -1955,7 +1978,16 @@ export const zhCN = {
           merged: "已合并",
           mergeAction: "合并 CL",
           rebaseAction: "Rebase",
-          squashNote: "合并此 CL 只会在 main 上产生一个新提交。"
+          squashNote: "合并此 CL 只会在 main 上产生一个新提交。",
+          ciFailingTitle: "CI 检查失败",
+          ciFailingSubtitle: "请先修复失败的 CI 检查后再合并。",
+          ciRunningTitle: "CI 检查进行中",
+          ciRunningSubtitle: "CI 检查正在运行中，请等待通过后再合并。",
+          ciQueuedTitle: "CI 检查排队中",
+          ciQueuedSubtitle: "等待排队中的 CI 检查完成。",
+          ciSkippedTitle: "需要完成 CI 检查",
+          ciSkippedSubtitle: "当前修订的 CI 检查已跳过或已失效，请重新运行并通过后再合并。",
+          viewChecks: "查看检查"
         },
         composer: {
           write: "撰写",

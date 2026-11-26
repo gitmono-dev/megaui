@@ -9,6 +9,7 @@ import { POST } from "../../app/api/mega/[...segments]/route";
 import { getAuth } from "../../lib/auth";
 import type { AgentStreamEvent } from "../../lib/adapter/handlers/agent-stream";
 import {
+  maybeHandleAgentStreamPost,
   resetAgentStreamLlmClientForTests,
   setAgentStreamLlmClientForTests,
 } from "../../lib/adapter/handlers/agent-stream";
@@ -21,16 +22,43 @@ function megaUrl(path: string): string {
   return `http://127.0.0.1:3000/api/mega${path}`;
 }
 
+function canonicalOrigin(): string {
+  return new URL(process.env.APP_BASE_URL ?? "http://127.0.0.1:3000").origin;
+}
+
 function authedRequest(path: string, cookie: string, init: RequestInit = {}): Request {
   return new Request(megaUrl(path), {
     ...init,
     headers: {
       Cookie: cookie,
+      Origin: canonicalOrigin(),
       Accept: "text/event-stream",
       "Content-Type": "application/json",
       ...(init.headers ?? {}),
     },
   });
+}
+
+async function postAgentStream(
+  path: string,
+  segments: readonly string[],
+  cookie: string,
+  payload: unknown,
+  signal?: AbortSignal,
+): Promise<Response> {
+  const response = await maybeHandleAgentStreamPost(
+    authedRequest(path, cookie, {
+      method: "POST",
+      body: JSON.stringify(payload),
+      ...(signal ? { signal } : {}),
+    }),
+    segments,
+    payload,
+  );
+  if (!response) {
+    throw new Error(`Expected SSE response for /api/mega/${segments.join("/")}`);
+  }
+  return response;
 }
 
 async function parseSseEvents(response: Response): Promise<AgentStreamEvent[]> {
@@ -86,15 +114,26 @@ describe(
       resetAgentStreamLlmClientForTests();
     });
 
-    it("streams start → delta → done with stub LLM", async () => {
-      setAgentStreamLlmClientForTests(stubLlm(["Hello", " world"]));
-
+    it("returns 404 on /api/mega/agent/:threadId/ask since the public agent surface is retired", async () => {
       const response = await POST(
         authedRequest(`/agent/${threadId}/ask`, sessionCookieHeader, {
           method: "POST",
-          body: JSON.stringify({ message: "What is megaui?" }),
+          body: JSON.stringify({ message: "Retired route" }),
         }),
         { params: Promise.resolve({ segments: ["agent", threadId, "ask"] }) },
+      );
+
+      expect(response.status).toBe(404);
+    });
+
+    it("streams start → delta → done with stub LLM", async () => {
+      setAgentStreamLlmClientForTests(stubLlm(["Hello", " world"]));
+
+      const response = await postAgentStream(
+        `/agent/${threadId}/ask`,
+        ["agent", threadId, "ask"],
+        sessionCookieHeader,
+        { message: "What is megaui?" },
       );
 
       expect(response.status).toBe(200);
@@ -129,12 +168,11 @@ describe(
     it("returns llm_disabled on HTTP 200 when LLM is not configured", async () => {
       setAgentStreamLlmClientForTests(null);
 
-      const response = await POST(
-        authedRequest(`/agent/${threadId}/ask`, sessionCookieHeader, {
-          method: "POST",
-          body: JSON.stringify({ message: "Ping without LLM" }),
-        }),
-        { params: Promise.resolve({ segments: ["agent", threadId, "ask"] }) },
+      const response = await postAgentStream(
+        `/agent/${threadId}/ask`,
+        ["agent", threadId, "ask"],
+        sessionCookieHeader,
+        { message: "Ping without LLM" },
       );
 
       expect(response.status).toBe(200);
@@ -151,35 +189,32 @@ describe(
     it("regenerate replaces the trailing assistant without duplicating rows", async () => {
       setAgentStreamLlmClientForTests(stubLlm(["First", " answer"]));
 
-      const askResponse = await POST(
-        authedRequest(`/agent/${threadId}/ask`, sessionCookieHeader, {
-          method: "POST",
-          body: JSON.stringify({ message: "Seed turn" }),
-        }),
-        { params: Promise.resolve({ segments: ["agent", threadId, "ask"] }) },
+      const askResponse = await postAgentStream(
+        `/agent/${threadId}/ask`,
+        ["agent", threadId, "ask"],
+        sessionCookieHeader,
+        { message: "Seed turn" },
       );
       await parseSseEvents(askResponse);
 
       setAgentStreamLlmClientForTests(stubLlm(["Re", "generated"]));
 
-      const regenResponse = await POST(
-        authedRequest(`/agent/${threadId}/regenerate`, sessionCookieHeader, {
-          method: "POST",
-          body: JSON.stringify({}),
-        }),
-        { params: Promise.resolve({ segments: ["agent", threadId, "regenerate"] }) },
+      const regenResponse = await postAgentStream(
+        `/agent/${threadId}/regenerate`,
+        ["agent", threadId, "regenerate"],
+        sessionCookieHeader,
+        {},
       );
       const regenEvents = await parseSseEvents(regenResponse);
       expect(regenEvents.at(-1)?.type).toBe("done");
 
       setAgentStreamLlmClientForTests(stubLlm(["Again"]));
 
-      const secondRegen = await POST(
-        authedRequest(`/agent/${threadId}/regenerate`, sessionCookieHeader, {
-          method: "POST",
-          body: JSON.stringify({}),
-        }),
-        { params: Promise.resolve({ segments: ["agent", threadId, "regenerate"] }) },
+      const secondRegen = await postAgentStream(
+        `/agent/${threadId}/regenerate`,
+        ["agent", threadId, "regenerate"],
+        sessionCookieHeader,
+        {},
       );
       await parseSseEvents(secondRegen);
 
@@ -201,13 +236,12 @@ describe(
       });
 
       const controller = new AbortController();
-      const responsePromise = POST(
-        authedRequest(`/agent/${threadId}/ask`, sessionCookieHeader, {
-          method: "POST",
-          body: JSON.stringify({ message: "Abort me" }),
-          signal: controller.signal,
-        }),
-        { params: Promise.resolve({ segments: ["agent", threadId, "ask"] }) },
+      const responsePromise = postAgentStream(
+        `/agent/${threadId}/ask`,
+        ["agent", threadId, "ask"],
+        sessionCookieHeader,
+        { message: "Abort me" },
+        controller.signal,
       );
 
       const response = await responsePromise;
@@ -227,12 +261,11 @@ describe(
     it("preserves the prior assistant reply when regenerate is aborted", async () => {
       setAgentStreamLlmClientForTests(stubLlm(["Keep", " me"]));
 
-      const askResponse = await POST(
-        authedRequest(`/agent/${threadId}/ask`, sessionCookieHeader, {
-          method: "POST",
-          body: JSON.stringify({ message: "Original" }),
-        }),
-        { params: Promise.resolve({ segments: ["agent", threadId, "ask"] }) },
+      const askResponse = await postAgentStream(
+        `/agent/${threadId}/ask`,
+        ["agent", threadId, "ask"],
+        sessionCookieHeader,
+        { message: "Original" },
       );
       await parseSseEvents(askResponse);
 
@@ -246,13 +279,12 @@ describe(
       });
 
       const controller = new AbortController();
-      const response = await POST(
-        authedRequest(`/agent/${threadId}/regenerate`, sessionCookieHeader, {
-          method: "POST",
-          body: JSON.stringify({}),
-          signal: controller.signal,
-        }),
-        { params: Promise.resolve({ segments: ["agent", threadId, "regenerate"] }) },
+      const response = await postAgentStream(
+        `/agent/${threadId}/regenerate`,
+        ["agent", threadId, "regenerate"],
+        sessionCookieHeader,
+        {},
+        controller.signal,
       );
 
       const reader = response.body!.getReader();

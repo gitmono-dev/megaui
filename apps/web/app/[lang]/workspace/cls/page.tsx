@@ -44,6 +44,13 @@ function CLListContent() {
   const listQuery = useQuery({
     queryKey: megaQueryKeys.cls(query ? filter : undefined),
     queryFn: () => megaGet<CL[]>("cls", query ? { filter } : undefined),
+    refetchInterval: (q) => {
+      const data = q.state.data;
+      if (!data) return false;
+      const openRows = data.filter((cl) => cl.state !== "merged" && cl.state !== "closed");
+      if (openRows.length === 0) return false;
+      return openRows.some((cl) => cl.ci === "queued" || cl.ci === "running") ? 3000 : 10000;
+    },
   });
 
   if (listQuery.isPending) {
@@ -54,7 +61,7 @@ function CLListContent() {
     );
   }
 
-  if (listQuery.isError) {
+  if (listQuery.isError && !listQuery.data) {
     return (
       <main data-mega-cls="page" style={sectionPad}>
         <div role="alert" style={{ alignItems: "center", display: "flex", gap: MEGA_SPACING_TOKENS[8] }}>
@@ -103,6 +110,25 @@ function CLListContent() {
           />
         </label>
 
+        {listQuery.isError ? (
+          <div
+            data-mega-cls="refresh-error"
+            role="alert"
+            style={{
+              alignItems: "center",
+              color: MEGA_TOKENS.danger,
+              display: "flex",
+              gap: MEGA_SPACING_TOKENS[8],
+              marginTop: MEGA_SPACING_TOKENS[8],
+            }}
+          >
+            <p style={{ margin: 0 }}>{clsText.error}</p>
+            <button data-mega-cls="retry" onClick={() => void listQuery.refetch()} type="button">
+              {clsText.retry}
+            </button>
+          </div>
+        ) : null}
+
         {rows.length === 0 ? (
           <p data-mega-cls="empty" style={{ color: MEGA_TOKENS.muted, marginTop: `calc(${MEGA_SPACING_TOKENS[8]} * 2)` }}>
             {clsText.empty}
@@ -119,7 +145,15 @@ function CLListContent() {
                   <strong>!{cl.number}</strong> {cl.title}
                 </Link>
                 <div style={{ color: MEGA_TOKENS.muted, fontSize: "calc(var(--mega-density-font-size) - 1px)", marginTop: MEGA_SPACING_TOKENS[4] }}>
-                  {clsText.row.states[cl.state]} · {cl.packageId} · +{cl.additions}/−{cl.deletions}
+                  {clsText.row.states[cl.state]} ·{" "}
+                  <span
+                    data-ci={cl.ci}
+                    data-mega-cls="row-ci"
+                    style={{ color: cl.ci === "failing" ? MEGA_TOKENS.danger : cl.ci === "passing" ? MEGA_TOKENS.accent : MEGA_TOKENS.muted }}
+                  >
+                    {clsText.row.ci[cl.ci] ?? cl.ci}
+                  </span>{" "}
+                  · {cl.packageId} · +{cl.additions}/−{cl.deletions}
                 </div>
               </li>
             ))}

@@ -1655,7 +1655,9 @@ export const en = {
         ci: {
           passing: "passing",
           failing: "failing",
-          queued: "queued"
+          queued: "queued",
+          running: "running",
+          skipped: "skipped"
         },
         verdicts: {
           approved: "approved",
@@ -1864,6 +1866,27 @@ export const en = {
         bench: {
           title: "Benchmark delta",
           from: "from {value}"
+        },
+        controls: {
+          title: "Build controls",
+          triggerBuild: "Trigger Build",
+          retryBuild: "Retry Build",
+          cancelBuild: "Cancel Build",
+          submitting: "Working…",
+          taskMeta: "Task {taskId} · Attempt {attemptId} · {status}",
+          noTaskYet: "No Orion2 build task yet for this revision.",
+          actionError: "Build action failed: {message}",
+          attemptHistory: "Build history",
+          viewLogs: "View logs"
+        },
+        liveLog: {
+          title: "Live Buck2 logs",
+          connecting: "Connecting…",
+          streaming: "Streaming",
+          closed: "Stream closed",
+          error: "Log stream disconnected",
+          empty: "Waiting for build output…",
+          truncated: "Showing latest {limit} lines"
         }
       },
       deps: {
@@ -1954,7 +1977,16 @@ export const en = {
           merged: "Merged",
           mergeAction: "Merge CL",
           rebaseAction: "Rebase",
-          squashNote: "Merging this CL creates exactly one new commit on main."
+          squashNote: "Merging this CL creates exactly one new commit on main.",
+          ciFailingTitle: "CI checks failed",
+          ciFailingSubtitle: "Fix failing CI checks before merging.",
+          ciRunningTitle: "CI checks in progress",
+          ciRunningSubtitle: "CI checks are currently running. Wait for them to pass before merging.",
+          ciQueuedTitle: "CI checks queued",
+          ciQueuedSubtitle: "Waiting for queued CI checks to finish.",
+          ciSkippedTitle: "CI checks required",
+          ciSkippedSubtitle: "CI checks were skipped or invalidated for this revision. Re-run checks until they pass before merging.",
+          viewChecks: "View checks"
         },
         composer: {
           write: "Write",

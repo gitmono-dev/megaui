@@ -159,8 +159,15 @@
     {
       "idx": 22,
       "version": "7",
-      "when": 1795449372003,
-      "tag": "0022_fuzzy_nehzno",
+      "when": 1795560954776,
+      "tag": "0022_mega_cl_links",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1795679970280,
+      "tag": "0023_mega_site_settings",
       "breakpoints": true
     }
   ]

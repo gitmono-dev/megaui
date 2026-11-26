@@ -41,17 +41,17 @@ export default function CLConversationPage() {
   const commentsQuery = useQuery({
     queryKey: megaQueryKeys.clComments(clNumber),
     queryFn: () => megaGet<CLComment[]>(["cls", String(clNumber), "comments"]),
-    enabled: clQuery.isSuccess,
+    enabled: Boolean(clQuery.data),
   });
   const inlineQuery = useQuery({
     queryKey: megaQueryKeys.clInlineComments(clNumber),
     queryFn: () => megaGet<InlineComment[]>(["cls", String(clNumber), "inline-comments"]),
-    enabled: clQuery.isSuccess,
+    enabled: Boolean(clQuery.data),
   });
   const commitsQuery = useQuery({
     queryKey: megaQueryKeys.clCommits(clNumber),
     queryFn: () => megaGet<ClCommit[]>(["cls", String(clNumber), "commits"]),
-    enabled: clQuery.isSuccess,
+    enabled: Boolean(clQuery.data),
     retry: (count, error) => !(error instanceof MegaApiError && error.status === 404) && count < 2,
   });
 

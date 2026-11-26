@@ -242,6 +242,7 @@ test.describe("workspace chat live (RT-09)", () => {
       const channelId = decodeURIComponent(new URL(channelUrl).pathname.split("/").pop() ?? "");
       const userB = await resolveSessionUserId(b.context);
       const invite = await a.context.request.post(`/api/mega/channels/${channelId}/members/invite`, {
+        headers: { Origin: new URL(channelUrl).origin },
         data: { userId: userB },
       });
       expect(invite.ok()).toBeTruthy();

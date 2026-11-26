@@ -37,7 +37,7 @@ export default function CLRevisionsPage() {
   const commitsQuery = useQuery({
     queryKey: megaQueryKeys.clCommits(clNumber),
     queryFn: () => megaGet<ClCommit[]>(["cls", String(clNumber), "commits"]),
-    enabled: Number.isInteger(clNumber) && clNumber > 0 && clQuery.isSuccess,
+    enabled: Number.isInteger(clNumber) && clNumber > 0 && Boolean(clQuery.data),
     retry: (count, error) => !(error instanceof MegaApiError && error.status === 404) && count < 2,
   });
 
@@ -55,7 +55,7 @@ export default function CLRevisionsPage() {
     );
   }
 
-  if (clQuery.isError) {
+  if (clQuery.isError && !clQuery.data) {
     return (
       <section data-mega-cls="revisions">
         <div role="alert" style={{ display: "flex", gap: MEGA_SPACING_TOKENS[8] }}>
