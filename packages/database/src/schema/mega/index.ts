@@ -6,3 +6,4 @@ export * from "./mega-cls";
 export * from "./mega-releases";
 export * from "./mega-chat";
 export * from "./mega-chat-closure";
+export * from "./mega-site-settings";

@@ -20,6 +20,7 @@ import {
   megaMessages,
   megaNotifications,
   megaReleases,
+  megaSiteSettings,
 } from "./index";
 
 const EXPECTED_TABLES = [
@@ -42,10 +43,11 @@ const EXPECTED_TABLES = [
   megaAgentThreads,
   megaChannelMembers,
   megaNotifications,
+  megaSiteSettings,
 ] as const;
 
 describe("mega schema table inventory (PK-05 AC1)", () => {
-  it("exports exactly the 19 mega content tables (no SaaS tables)", () => {
+  it("exports exactly the 20 mega tables (no SaaS tables)", () => {
     const names = EXPECTED_TABLES.map((table) => getTableName(table)).sort();
     expect(names).toEqual(
       [
@@ -68,9 +70,10 @@ describe("mega schema table inventory (PK-05 AC1)", () => {
         "mega_agent_threads",
         "mega_channel_members",
         "mega_notifications",
+        "mega_site_settings",
       ].sort(),
     );
-    expect(names).toHaveLength(19);
+    expect(names).toHaveLength(20);
   });
 
   it("keeps user-owned FK columns that cascade on user delete (sample)", () => {

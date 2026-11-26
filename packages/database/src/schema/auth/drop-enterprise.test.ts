@@ -233,8 +233,10 @@ describe("FSL-168: the forward migration drops the enterprise structure", () => 
       ledger: await ledger(pool),
     };
 
-    // Forward: the generated migration set applies from that state.
-    await isolated.migrate();
+    // Forward: the generated migration applies from that state. The journal stays cut right
+    // after it, so later migrations do not leak into the before/after comparisons.
+    writeFileSync(join(directory, `${migrationTag}.sql`), originalSql);
+    await migrate(drizzle(pool), { migrationsFolder: directory });
   }, 180_000);
 
   afterAll(async () => {

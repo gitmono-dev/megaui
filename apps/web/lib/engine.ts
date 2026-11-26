@@ -15,6 +15,7 @@ import {
   createIssuesDomain,
   createNotificationsDomain,
   createReleasesDomain,
+  createSiteSettingsDomain,
   type AgentDomain,
   type ChatDomain,
   type ClsDomain,
@@ -23,6 +24,7 @@ import {
   type IssuesDomain,
   type NotificationsDomain,
   type ReleasesDomain,
+  type SiteSettingsDomain,
 } from "@megaui/engine";
 
 let docsDomain: DocsDomain | null = null;
@@ -33,6 +35,7 @@ let releasesDomain: ReleasesDomain | null = null;
 let notificationsDomain: NotificationsDomain | null = null;
 let collabDomain: CollabDomain | null = null;
 let agentDomain: AgentDomain | null = null;
+let siteSettingsDomain: SiteSettingsDomain | null = null;
 
 export function getDocsDomain(): DocsDomain {
   if (!docsDomain) {
@@ -90,6 +93,13 @@ export function getAgentDomain(): AgentDomain {
   return agentDomain;
 }
 
+export function getSiteSettingsDomain(): SiteSettingsDomain {
+  if (!siteSettingsDomain) {
+    siteSettingsDomain = createSiteSettingsDomain(getDb());
+  }
+  return siteSettingsDomain;
+}
+
 /** Test-only reset — clears lazy singletons between contract cases. */
 export function resetEngineDomainsForTests(): void {
   docsDomain = null;
@@ -100,4 +110,5 @@ export function resetEngineDomainsForTests(): void {
   notificationsDomain = null;
   collabDomain = null;
   agentDomain = null;
+  siteSettingsDomain = null;
 }

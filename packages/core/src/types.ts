@@ -554,6 +554,9 @@ export interface Notification {
 /** Single source for the username shape — shared by service, API and form validation. */
 export const MEGA_USERNAME_PATTERN = /^[a-z0-9][a-z0-9-]{1,30}$/
 
+/** Single source for the admin-managed Code root README size limit (UTF-16 code units). */
+export const MEGA_CODE_README_MAX_LENGTH = 100_000
+
 export interface ChannelBase {
   id: string
   name: string

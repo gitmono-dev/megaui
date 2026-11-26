@@ -454,6 +454,9 @@ export const en = {
       loading: "Loading the code root view",
       error: "The code view is unavailable.",
       retry: "Retry",
+      readme: {
+        title: "README"
+      },
       header: {
         monorepoChip: "monorepo",
         publicChip: "public",
@@ -876,6 +879,8 @@ export const en = {
         appearance: "Appearance",
         notifications: "Notifications",
         shortcuts: "Keyboard shortcuts",
+        codeReadme: "Code README",
+        admin: "Admin",
         deferredTooltip: "Coming later (out of scope for this milestone)"
       },
       ssh: {
@@ -1022,6 +1027,25 @@ export const en = {
         saving: "Saving…",
         saveSuccess: "Profile updated.",
         saveError: "Could not save the profile."
+      },
+      codeReadmePage: {
+        pageTitle: "Code README",
+        pageDesc: "The Markdown shown below the file list on the Code page. Only mega2 admins can change it; it is stored in megaui, not in the repository.",
+        loading: "Loading the Code README",
+        loadError: "Failed to load the Code README. Try again.",
+        retry: "Retry",
+        editorLabel: "README (Markdown)",
+        editorPlaceholder: "# Welcome\n\nDescribe this monorepo…",
+        previewTitle: "Saved preview",
+        previewEmpty: "Nothing to preview. An empty README hides the section on the Code page.",
+        lengthHint: "{count} / {max} characters",
+        tooLong: "The README is longer than {max} characters.",
+        lastUpdated: "Last updated {time}",
+        save: "Save README",
+        saving: "Saving…",
+        saveSuccess: "Code README saved.",
+        saveError: "Could not save the Code README.",
+        forbidden: "Only mega2 admins can change the Code README."
       },
       notificationsPage: {
         pageTitle: "Notifications",

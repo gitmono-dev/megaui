@@ -7,6 +7,7 @@ import { SettingsNav } from "./components/settings-nav";
 import { ProfileForm } from "./components/profile-form";
 import { AccountSecuritySection } from "./components/account-security-section";
 import { AppearanceSection } from "./components/appearance-section";
+import { CodeReadmeSection } from "./components/code-readme-section";
 import { NotificationsSection } from "./components/notifications-section";
 import { ShortcutsSection } from "./components/shortcuts-section";
 import { SshKeysSection } from "./components/ssh-keys-section";
@@ -28,6 +29,7 @@ function SettingsContent() {
     appearance: <AppearanceSection />,
     notifications: <NotificationsSection />,
     shortcuts: <ShortcutsSection />,
+    "code-readme": <CodeReadmeSection />,
   }[section];
   return <main data-mega-settings="page" style={{ display: "flex", gap: `calc(${MEGA_SPACING_TOKENS[8]} * 3)`, minHeight: 480, padding: `calc(${MEGA_SPACING_TOKENS[8]} * 3)` }}>
     <SettingsNav /><div style={{ flex: 1, maxWidth: 760 }}>{content}</div>

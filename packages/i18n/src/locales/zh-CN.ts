@@ -454,6 +454,9 @@ export const zhCN = {
       loading: "正在加载代码根视图",
       error: "代码视图暂时不可用。",
       retry: "重试",
+      readme: {
+        title: "README"
+      },
       header: {
         monorepoChip: "monorepo",
         publicChip: "public",
@@ -876,6 +879,8 @@ export const zhCN = {
         appearance: "外观",
         notifications: "通知",
         shortcuts: "键盘快捷键",
+        codeReadme: "Code README",
+        admin: "管理",
         deferredTooltip: "后续里程碑提供（本期不做）"
       },
       ssh: {
@@ -1022,6 +1027,25 @@ export const zhCN = {
         saving: "保存中…",
         saveSuccess: "个人资料已更新。",
         saveError: "无法保存个人资料。"
+      },
+      codeReadmePage: {
+        pageTitle: "Code README",
+        pageDesc: "显示在 Code 页面文件列表下方的 Markdown。只有 mega2 管理员可以修改；内容保存在 megaui 中，不写入仓库。",
+        loading: "正在加载 Code README",
+        loadError: "加载 Code README 失败，请重试。",
+        retry: "重试",
+        editorLabel: "README（Markdown）",
+        editorPlaceholder: "# 欢迎\n\n介绍这个 monorepo……",
+        previewTitle: "已保存内容预览",
+        previewEmpty: "暂无可预览的内容。README 为空时，Code 页面不显示该区域。",
+        lengthHint: "{count} / {max} 字符",
+        tooLong: "README 超过 {max} 个字符。",
+        lastUpdated: "最后更新于 {time}",
+        save: "保存 README",
+        saving: "正在保存…",
+        saveSuccess: "Code README 已保存。",
+        saveError: "无法保存 Code README。",
+        forbidden: "只有 mega2 管理员可以修改 Code README。"
       },
       notificationsPage: {
         pageTitle: "通知",

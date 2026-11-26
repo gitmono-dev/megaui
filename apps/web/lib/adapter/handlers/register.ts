@@ -13,5 +13,6 @@ import "./collab-token";
 import "./sessions";
 import "./home";
 import "./code";
+import "./site-settings";
 
 import "./images";

@@ -53,6 +53,7 @@ const EXPECTED_PUBLIC_TABLES = [
   "mega_messages",
   "mega_notifications",
   "mega_releases",
+  "mega_site_settings",
   "session",
   "user",
   "verification",

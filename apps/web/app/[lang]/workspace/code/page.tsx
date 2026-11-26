@@ -3,6 +3,8 @@
 // Diff vs upstream (GC-03 / WA-08):
 // - No workspace toggle-star (mega2-backed; star unavailable).
 // - Fail-closed: root-entries/workspace errors surface alert+retry (no fixtures).
+// - megaui-only: admin-managed README (settings → Code README) below the root list;
+//   it is optional decoration, so a load failure hides it instead of the page.
 "use client";
 
 import Link from "next/link";
@@ -10,19 +12,25 @@ import { useQuery } from "@tanstack/react-query";
 import { File as FileGlyph, Folder } from "lucide-react";
 import { useMemo, type CSSProperties } from "react";
 
-import type { RootEntry } from "@megaui/core";
+import type { ProseBlock, RootEntry } from "@megaui/core";
 import { megaGet, megaQueryKeys } from "@megaui/ui/query";
 
 import { getSiteName } from "@/lib/site-name";
 import { MEGA_RADIUS_TOKENS, MEGA_SPACING_TOKENS, MEGA_TOKENS } from "@megaui/ui/tokens";
 
 import { useTranslation } from "@/hooks/use-translation";
+import { ReadmeProse } from "./components/readme-prose";
 
 const sectionStyle: CSSProperties = {
   background: MEGA_TOKENS.bg,
   borderBottom: `1px solid ${MEGA_TOKENS.border}`,
   padding: `calc(${MEGA_SPACING_TOKENS[8]} * 2.25) calc(${MEGA_SPACING_TOKENS[8]} * 3.5) calc(${MEGA_SPACING_TOKENS[8]} * 1.75)`,
 };
+
+interface CodeReadmeView {
+  markdown: string;
+  blocks: ProseBlock[];
+}
 
 function sortEntries(entries: readonly RootEntry[]): RootEntry[] {
   return [...entries].sort((a, b) => {
@@ -40,6 +48,12 @@ export default function CodeRootPage() {
     queryKey: megaQueryKeys.rootEntries(),
     queryFn: () => megaGet<RootEntry[]>("root-entries"),
   });
+
+  const codeReadmeQuery = useQuery({
+    queryKey: megaQueryKeys.codeReadme(),
+    queryFn: () => megaGet<CodeReadmeView>("code-readme"),
+  });
+  const readmeBlocks = codeReadmeQuery.data?.blocks ?? [];
 
   const entries = useMemo(
     () => sortEntries(rootEntriesQuery.data ?? []),
@@ -138,6 +152,31 @@ export default function CodeRootPage() {
           </ul>
         )}
       </section>
+
+      {readmeBlocks.length > 0 ? (
+        <section
+          aria-label={code.readme.title}
+          data-mega-code="root-readme"
+          style={{
+            padding: `0 calc(${MEGA_SPACING_TOKENS[8]} * 3.5) calc(${MEGA_SPACING_TOKENS[8]} * 5)`,
+          }}
+        >
+          <div style={{ border: `1px solid ${MEGA_TOKENS.border}`, borderRadius: MEGA_RADIUS_TOKENS.md }}>
+            <h2
+              style={{
+                borderBottom: `1px solid ${MEGA_TOKENS.border}`,
+                fontSize: "var(--mega-density-font-size)",
+                fontWeight: 600,
+                margin: 0,
+                padding: MEGA_SPACING_TOKENS[8],
+              }}
+            >
+              {code.readme.title}
+            </h2>
+            <ReadmeProse blocks={readmeBlocks} />
+          </div>
+        </section>
+      ) : null}
     </main>
   );
 }

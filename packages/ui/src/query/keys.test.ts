@@ -77,6 +77,8 @@ describe('megaQueryKeys domain coverage (UI-04 AC1)', () => {
     expect(megaQueryKeys.codeTree()).toEqual(['mega', 'code-tree', 'root'])
     expect(megaQueryKeys.rootEntries()).toEqual(['mega', 'root-entries'])
     expect(megaQueryKeys.readme()).toEqual(['mega', 'readme'])
+    expect(megaQueryKeys.codeReadme()).toEqual(['mega', 'code-readme'])
+    expect(megaQueryKeys.adminMe()).toEqual(['mega', 'admin', 'me'])
     expect(megaQueryKeys.sourceFile('a/b.ts')).toEqual(['mega', 'source-file', 'a/b.ts'])
   })
 
