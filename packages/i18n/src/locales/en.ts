@@ -2165,6 +2165,14 @@ export const en = {
         enterMilestone: "Select or enter a milestone",
         loadError: "Could not load suggestions",
         retry: "Retry",
+        editors: { assignees: "Assign members", labels: "Select labels", type: "Select issue type", fields: "Select priority", projects: "Select projects", milestone: "Select milestone" },
+        filterLabels: "Filter or add labels",
+        filterTypes: "Filter types",
+        filterPriorities: "Filter priorities",
+        filterProjects: "Filter or add projects",
+        addValue: "Add “{name}”",
+        noOptions: "No matching options",
+        typeDescriptions: { task: "A specific piece of work", bug: "An unexpected problem or behavior", feature: "A request, idea, or new functionality" },
         types: { task: "Task", bug: "Bug", feature: "Feature" }
       },
       create: {

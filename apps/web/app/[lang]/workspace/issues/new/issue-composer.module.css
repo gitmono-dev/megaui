@@ -31,19 +31,52 @@
 .sidebar fieldset { margin: 0; padding: 0; border: 0; min-width: 0; }
 .property { padding: 12px 0; border-bottom: 1px solid var(--mega-border); }
 .property:first-child { padding-top: 0; }
-.property summary { display: flex; justify-content: space-between; align-items: center; gap: 8px; cursor: pointer; font-weight: 650; color: var(--mega-text); }
-.property summary::-webkit-details-marker { display: none; }
-.property summary:hover, .property summary:focus-visible { color: var(--mega-active-fg); }
+.trigger {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  width: calc(100% + 12px); margin-inline: -6px; padding: 4px 6px;
+  background: transparent; border: 0; border-radius: var(--mega-control-radius); color: var(--mega-muted);
+  font: inherit; font-weight: 650; text-align: start; cursor: pointer;
+}
+.trigger:hover, .trigger[data-state="open"] { background: var(--mega-border); color: var(--mega-text); }
 .selection { color: var(--mega-muted); margin-top: 6px; overflow-wrap: anywhere; }
 .selection:empty { display: none; }
 .selection button.self { display: inline; margin-inline-start: 8px; border: 0; padding: 0; min-height: auto; background: transparent; color: var(--mega-active-fg); text-decoration: underline; }
-.picker { margin: 10px 0; display: grid; gap: 8px; }
-.picker select, .picker input:not([type="checkbox"]) { width: 100%; min-width: 0; margin: 0; }
-.picker label { font-weight: 400; }
-.addName { display: flex; gap: 6px; }
-.choices { max-height: 14rem; overflow-y: auto; }
-.choices label { display: flex; align-items: center; gap: 8px; padding: 4px 0; overflow-wrap: anywhere; }
-.choices input[type="checkbox"] { width: auto; margin: 0; }
+.popup {
+  display: flex; flex-direction: column; box-sizing: border-box; overflow: hidden;
+  width: min(20rem, var(--radix-popover-content-available-width), calc(100vw - 24px));
+  max-height: min(26rem, var(--radix-popover-content-available-height)); padding: 0;
+  background: var(--mega-bg); color: var(--mega-text); border: 1px solid var(--mega-border);
+  border-radius: var(--mega-panel-radius); box-shadow: var(--mega-overlay-shadow);
+  font-size: var(--mega-density-font-size); line-height: 1.5;
+}
+:global(html[data-mega-density="compact"]) .popup { font-size: var(--mega-density-compact-font-size); }
+.pickerHeader { padding: 10px; border-bottom: 1px solid var(--mega-border); }
+.pickerHeader h2 { margin: 0 4px 8px; font-size: 1.08em; font-weight: 650; }
+.search {
+  display: flex; align-items: center; gap: 6px; padding: 4px 8px;
+  border: 1px solid var(--mega-border); border-radius: var(--mega-control-radius); color: var(--mega-muted);
+}
+.search:focus-within { border-color: var(--mega-selected-border); }
+.search input { width: 100%; min-width: 0; background: transparent; color: var(--mega-text); font: inherit; outline: none; }
+.choices { overflow-y: auto; overscroll-behavior: contain; padding: 4px; }
+.option {
+  width: 100%; display: flex; align-items: baseline; gap: 6px; padding: 0 8px;
+  border: 0; border-radius: var(--mega-control-radius); color: var(--mega-text);
+  background: transparent; font: inherit; text-align: start; cursor: pointer; overflow-wrap: anywhere;
+}
+.option:hover, .option:focus-visible { background: var(--mega-subtle); }
+.option:focus-visible { outline: 2px solid var(--mega-selected-border); outline-offset: -2px; }
+.option:disabled { opacity: .55; cursor: default; }
+.check { width: 15px; flex: none; align-self: center; color: var(--mega-active-fg); }
+.optionBody { flex: 1; min-width: 0; padding-block: 7px; }
+.option + .option .optionBody { border-top: 1px solid var(--mega-border); }
+.optionTitle { display: flex; align-items: baseline; gap: 8px; font-weight: 600; }
+.optionTitle i { width: .85em; height: .85em; border: 2px solid currentColor; border-radius: 50%; flex: none; }
+.optionTitle i[data-type="task"] { color: var(--mega-warning); }
+.optionTitle i[data-type="bug"] { color: var(--mega-danger); }
+.optionTitle i[data-type="feature"] { color: var(--mega-accent); }
+.description { display: block; margin-inline-start: calc(.85em + 8px); color: var(--mega-muted); }
+.pickerNote { margin: 0; padding: 8px 12px; color: var(--mega-muted); }
 .form > .error, .actions { grid-column: 1; }
 @media (max-width: 800px) {
   .form { grid-template-columns: minmax(0, 1fr); }

@@ -329,23 +329,24 @@ test.describe("workspace issues (WA-11)", () => {
     const titleBounds = await page.getByLabel("标题", { exact: true }).boundingBox();
     const sidebarBounds = await sidebar.boundingBox();
     expect(sidebarBounds!.x).toBeGreaterThanOrEqual(titleBounds!.x + titleBounds!.width);
-    const open = (name: string) => sidebar.locator("summary").getByText(name, { exact: true }).click();
-    await expect(sidebar.getByLabel("优先级")).toBeHidden();
+    const open = (name: string) => sidebar.locator("button[data-mega-control=issue-property]").filter({ hasText: name }).click();
+    await expect(page.getByText("选择优先级")).toHaveCount(0);
     await sidebar.getByRole("button", { name: "分配给自己" }).click();
     await open("负责人");
-    await expect(sidebar.getByRole("checkbox", { checked: true })).toHaveCount(1);
+    await expect(page.locator('[data-radix-popper-content-wrapper] button[aria-pressed="true"]')).toHaveCount(1);
     await open("标签");
-    await sidebar.getByLabel("新标签").fill("界面");
-    await sidebar.getByLabel("新标签").press("Enter");
+    await page.getByLabel("筛选或添加标签").fill("界面");
+    await page.getByRole("button", { name: "添加「界面」" }).click();
     await open("类型");
-    await sidebar.getByRole("combobox", { name: "类型" }).selectOption("bug");
+    await page.getByRole("button", { name: /缺陷/ }).click();
     await open("字段");
-    await sidebar.getByLabel("优先级").selectOption("P1");
+    await page.getByRole("button", { name: "P1" }).click();
     await open("项目");
-    await sidebar.getByLabel("新项目").fill("工作台");
-    await sidebar.getByRole("button", { name: "添加" }).click();
+    await page.getByLabel("筛选或添加项目").fill("工作台");
+    await page.getByRole("button", { name: "添加「工作台」" }).click();
     await open("里程碑");
-    await sidebar.getByLabel("里程碑", { exact: true }).fill("首版");
+    await page.getByLabel("选择或输入里程碑").fill("首版");
+    await page.getByRole("button", { name: "添加「首版」" }).click();
     await page.getByRole("button", { name: "创建议题" }).click();
     await expect(page).toHaveURL(/\/issues\/\d+$/);
     await page.reload();
@@ -353,7 +354,7 @@ test.describe("workspace issues (WA-11)", () => {
     for (const value of ["负责人", "界面", "缺陷", "P1", "工作台", "首版"]) await expect(saved).toContainText(value);
     await page.goto("/zh-CN/workspace/issues/new");
     await open("项目");
-    await expect(sidebar.getByRole("checkbox", { name: "工作台", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "工作台" })).toHaveAttribute("aria-pressed", "true");
   });
 
   test("legacy create link opens the page and cancel restores the filter on mobile", async ({ page }) => {

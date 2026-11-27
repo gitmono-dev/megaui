@@ -2165,6 +2165,14 @@ export const zhCN = {
         enterMilestone: "选择或输入里程碑",
         loadError: "加载可选属性失败",
         retry: "重试",
+        editors: { assignees: "选择负责人", labels: "选择标签", type: "选择议题类型", fields: "选择优先级", projects: "选择项目", milestone: "选择里程碑" },
+        filterLabels: "筛选或添加标签",
+        filterTypes: "筛选类型",
+        filterPriorities: "筛选优先级",
+        filterProjects: "筛选或添加项目",
+        addValue: "添加「{name}」",
+        noOptions: "没有匹配的选项",
+        typeDescriptions: { task: "一项具体的工作", bug: "意外出现的问题或行为", feature: "需求、想法或新功能" },
         types: { task: "任务", bug: "缺陷", feature: "功能" }
       },
       create: {
