@@ -144,6 +144,11 @@ async function stubIssuesApis(
     const url = route.request().url();
     const method = route.request().method();
 
+    if (new URL(url).pathname === "/api/mega/issues/property-options" && method === "GET") {
+      await route.fulfill({ json: { data: { members: [], labels: [], projects: [], milestones: [] } } });
+      return;
+    }
+
     if (options?.failList && /\/api\/mega\/issues(\?|$)/.test(url) && method === "GET") {
       await route.fulfill({
         status: 500,
@@ -300,7 +305,7 @@ test.describe("workspace issues (WA-11)", () => {
     await expect(page).toHaveURL(/\/issues\/new$/);
     const form = page.locator('[data-mega-issues="create"]');
     await expect(form.getByRole("heading")).toHaveText("新建议题");
-    await expect(form.locator("input, textarea, select")).toHaveCount(2);
+    await expect(form.locator("input:visible, textarea:visible, select:visible")).toHaveCount(2);
     const widths = await form.evaluate(el => [el.clientWidth, el.parentElement!.clientWidth]);
     expect(widths[0]).toBe(widths[1]);
     const submit = form.getByRole("button", { name: "创建议题" });
@@ -317,6 +322,40 @@ test.describe("workspace issues (WA-11)", () => {
     await expect(page).toHaveURL(/\/issues\/99$/);
   });
 
+  test("creates and reloads an issue with sidebar properties", async ({ page }) => {
+    await page.goto("/zh-CN/workspace/issues/new");
+    await page.getByLabel("标题", { exact: true }).fill("属性回读");
+    const sidebar = page.getByRole("complementary", { name: "议题属性" });
+    const titleBounds = await page.getByLabel("标题", { exact: true }).boundingBox();
+    const sidebarBounds = await sidebar.boundingBox();
+    expect(sidebarBounds!.x).toBeGreaterThanOrEqual(titleBounds!.x + titleBounds!.width);
+    const open = (name: string) => sidebar.locator("summary").getByText(name, { exact: true }).click();
+    await expect(sidebar.getByLabel("优先级")).toBeHidden();
+    await sidebar.getByRole("button", { name: "分配给自己" }).click();
+    await open("负责人");
+    await expect(sidebar.getByRole("checkbox", { checked: true })).toHaveCount(1);
+    await open("标签");
+    await sidebar.getByLabel("新标签").fill("界面");
+    await sidebar.getByLabel("新标签").press("Enter");
+    await open("类型");
+    await sidebar.getByRole("combobox", { name: "类型" }).selectOption("bug");
+    await open("字段");
+    await sidebar.getByLabel("优先级").selectOption("P1");
+    await open("项目");
+    await sidebar.getByLabel("新项目").fill("工作台");
+    await sidebar.getByRole("button", { name: "添加" }).click();
+    await open("里程碑");
+    await sidebar.getByLabel("里程碑", { exact: true }).fill("首版");
+    await page.getByRole("button", { name: "创建议题" }).click();
+    await expect(page).toHaveURL(/\/issues\/\d+$/);
+    await page.reload();
+    const saved = page.locator('[data-mega-issues="sidebar"]');
+    for (const value of ["负责人", "界面", "缺陷", "P1", "工作台", "首版"]) await expect(saved).toContainText(value);
+    await page.goto("/zh-CN/workspace/issues/new");
+    await open("项目");
+    await expect(sidebar.getByRole("checkbox", { name: "工作台", exact: true })).toBeVisible();
+  });
+
   test("legacy create link opens the page and cancel restores the filter on mobile", async ({ page }) => {
     await stubIssuesApis(page);
     await page.setViewportSize({ width: 390, height: 840 });
@@ -324,6 +363,9 @@ test.describe("workspace issues (WA-11)", () => {
     await expect(page).toHaveURL(/\/issues\/new\?q=is%3Aclosed$/);
     await expect(page.getByRole("heading", { name: "New issue" })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+    const editor = await page.locator('[data-mega-issues="new-body"]').boundingBox();
+    const sidebar = await page.getByRole("complementary", { name: "Issue properties" }).boundingBox();
+    expect(sidebar!.y).toBeGreaterThanOrEqual(editor!.y + editor!.height);
     await page.getByRole("button", { name: "Cancel" }).click();
     await expect(page).toHaveURL(/\/issues\?q=is%3Aclosed$/);
     await expect(page.locator('[data-mega-issues="filter"]')).toHaveValue("is:closed");

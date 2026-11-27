@@ -2140,6 +2140,33 @@ export const en = {
           "priority-desc": "Priority"
         }
       },
+      properties: {
+        title: "Issue properties",
+        assignees: "Assignees",
+        unassigned: "Unassigned",
+        assignSelf: "Assign yourself",
+        self: "You",
+        findMember: "Find a member",
+        noMembers: "No matching members",
+        labels: "Labels",
+        noLabels: "No labels",
+        type: "Type",
+        noType: "No type",
+        fields: "Fields",
+        priority: "Priority",
+        defaultPriority: "Default",
+        projects: "Projects",
+        noProjects: "No projects",
+        milestone: "Milestone",
+        noMilestone: "No milestone",
+        add: "Add",
+        newLabel: "New label",
+        newProject: "New project",
+        enterMilestone: "Select or enter a milestone",
+        loadError: "Could not load suggestions",
+        retry: "Retry",
+        types: { task: "Task", bug: "Bug", feature: "Feature" }
+      },
       create: {
         title: "New issue",
         titleLabel: "Title",

@@ -74,7 +74,7 @@ Diffs 按文件名识别语言，显示语法颜色、新旧行号和增删标�
 
 ### Issues
 
-新建议题使用独立的全宽页面 `/{lang}/workspace/issues/new`，填写标题即可创建，也可编辑和预览描述。旧的 `?new=1` 链接会跳转到新页面。创建时可以省略 Package 和优先级，未指定 Package 的议题属于整个工作区，优先级沿用数据库默认值 P2。[GitHub 创建议题流程](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/creating-an-issue)
+新建议题使用独立的全宽页面 `/{lang}/workspace/issues/new`，填写标题即可创建，也可编辑和预览描述。右侧属性栏支持分配给自己或其他工作区成员、添加标签、选择类型、关联项目和指定里程碑。标签、项目和里程碑可输入新名称，也可复用已有议题使用过的名称。「字段」默认收起，展开后可选择优先级，省略时默认为 P2。所选属性随议题一起保存，可在详情页查看。新议题属于整个工作区。旧的 `?new=1` 链接会跳转到新页面。[GitHub 创建议题流程](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/creating-an-issue)
 
 | # | 路由 | 页面文件 | 核心组件 | 关键交互 | i18n 键域 |
 |---|---|---|---|---|---|

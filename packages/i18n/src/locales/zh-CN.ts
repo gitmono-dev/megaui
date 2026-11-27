@@ -2140,6 +2140,33 @@ export const zhCN = {
           "priority-desc": "优先级"
         }
       },
+      properties: {
+        title: "议题属性",
+        assignees: "负责人",
+        unassigned: "未分配",
+        assignSelf: "分配给自己",
+        self: "你",
+        findMember: "搜索成员",
+        noMembers: "没有匹配的成员",
+        labels: "标签",
+        noLabels: "暂无标签",
+        type: "类型",
+        noType: "未指定类型",
+        fields: "字段",
+        priority: "优先级",
+        defaultPriority: "默认",
+        projects: "项目",
+        noProjects: "暂无项目",
+        milestone: "里程碑",
+        noMilestone: "未设置里程碑",
+        add: "添加",
+        newLabel: "新标签",
+        newProject: "新项目",
+        enterMilestone: "选择或输入里程碑",
+        loadError: "加载可选属性失败",
+        retry: "重试",
+        types: { task: "任务", bug: "缺陷", feature: "功能" }
+      },
       create: {
         title: "新建议题",
         titleLabel: "标题",

@@ -3,7 +3,7 @@
 .back { color: var(--mega-muted); font-size: var(--mega-density-font-size); text-decoration: none; }
 .back:hover { color: var(--mega-active-fg); text-decoration: underline; }
 .page h1 { margin: 12px 0 24px; }
-.form { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+
 .form label { color: var(--mega-text); font-size: var(--mega-density-font-size); font-weight: 650; }
 .form input { width: 100%; margin-bottom: 12px; }
 .editor { overflow: hidden; border: 1px solid var(--mega-border); border-radius: var(--mega-panel-radius); background: var(--mega-bg); }
@@ -24,3 +24,28 @@
 .preview[data-empty="true"] { color: var(--mega-muted); }
 .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
 .error { margin: 0; color: var(--mega-danger); }
+
+.form { display: grid; row-gap: 8px; grid-template-columns: minmax(0, 1fr) minmax(13rem, 18rem); column-gap: clamp(20px, 3vw, 48px); align-items: start; }
+.mainColumn { grid-column: 1; display: grid; min-width: 0; gap: 8px; }
+.sidebar { grid-column: 2; grid-row: 1 / span 3; min-width: 0; font-size: var(--mega-density-font-size); }
+.sidebar fieldset { margin: 0; padding: 0; border: 0; min-width: 0; }
+.property { padding: 12px 0; border-bottom: 1px solid var(--mega-border); }
+.property:first-child { padding-top: 0; }
+.property summary { display: flex; justify-content: space-between; align-items: center; gap: 8px; cursor: pointer; font-weight: 650; color: var(--mega-text); }
+.property summary::-webkit-details-marker { display: none; }
+.property summary:hover, .property summary:focus-visible { color: var(--mega-active-fg); }
+.selection { color: var(--mega-muted); margin-top: 6px; overflow-wrap: anywhere; }
+.selection:empty { display: none; }
+.selection button.self { display: inline; margin-inline-start: 8px; border: 0; padding: 0; min-height: auto; background: transparent; color: var(--mega-active-fg); text-decoration: underline; }
+.picker { margin: 10px 0; display: grid; gap: 8px; }
+.picker select, .picker input:not([type="checkbox"]) { width: 100%; min-width: 0; margin: 0; }
+.picker label { font-weight: 400; }
+.addName { display: flex; gap: 6px; }
+.choices { max-height: 14rem; overflow-y: auto; }
+.choices label { display: flex; align-items: center; gap: 8px; padding: 4px 0; overflow-wrap: anywhere; }
+.choices input[type="checkbox"] { width: auto; margin: 0; }
+.form > .error, .actions { grid-column: 1; }
+@media (max-width: 800px) {
+  .form { grid-template-columns: minmax(0, 1fr); }
+  .sidebar { grid-column: 1; grid-row: auto; }
+}
