@@ -10,13 +10,12 @@
 //   single idempotent one-way action (no reopen). This card's AC requires
 //   a full state-transition legality matrix, so both `close` and `reopen`
 //   are modeled explicitly (see `issues.ts` diff header for the matrix).
-import type { Filter, Issue, IssuePriority } from "@megaui/core";
+import type { Filter, Issue, IssuePropertiesInput } from "@megaui/core";
 import type { PaginationInput } from "../../context";
 
-export interface CreateIssueInput {
+export interface CreateIssueInput extends IssuePropertiesInput {
   title: string;
   packageId?: string;
-  priority?: IssuePriority;
   /** Plain-text body (no Lexical/plain-text import pipeline ported yet — see issues.ts diff header). */
   body?: string;
 }

@@ -39,6 +39,9 @@ async function dispatchIssuesGet(context: MegaDispatchContext): Promise<unknown>
       actorUserId,
     );
   }
+  if (only(segments, ["issues", "property-options"])) {
+    return issues.listPropertyOptions(actorUserId);
+  }
   if (segments[0] === "issues" && segments.length === 2) {
     return issues.getIssue(segmentNumber(segments[1]), actorUserId);
   }

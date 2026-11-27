@@ -1,6 +1,7 @@
 // megaui:libs/database/schema/pg/mega-issues.ts@0ff3a9d
 //
 // Ported for PK-05 (REF-07). SaaS tables intentionally omitted at package scope.
+import type { IssueType } from "@megaui/core";
 import { InferInsertModel, InferSelectModel } from "drizzle-orm";
 import {
   integer,
@@ -36,6 +37,8 @@ export const megaIssues = pgTable(
     authorId: text("author_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
+    issueType: text("issue_type").$type<IssueType>(),
+    projects: jsonb("projects").$type<string[]>().notNull().default([]),
     milestone: jsonb("milestone").$type<Record<string, unknown> | null>(),
     labelIds: jsonb("label_ids").$type<string[]>().notNull().default([]),
     assigneeIds: jsonb("assignee_ids").$type<string[]>().notNull().default([]),

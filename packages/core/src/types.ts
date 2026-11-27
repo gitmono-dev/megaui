@@ -148,6 +148,25 @@ export interface Reaction {
   reactedByMe: boolean
 }
 
+export const ISSUE_TYPES = ['task', 'bug', 'feature'] as const
+export type IssueType = typeof ISSUE_TYPES[number]
+
+export interface IssuePropertiesInput {
+  assigneeIds?: string[]
+  labels?: string[]
+  issueType?: IssueType
+  projects?: string[]
+  milestoneTitle?: string
+  priority?: IssuePriority
+}
+
+export interface IssuePropertyOptions {
+  members: Pick<User, 'id' | 'displayName'>[]
+  labels: string[]
+  projects: string[]
+  milestones: string[]
+}
+
 export interface Issue {
   id: string
   number: number
@@ -157,6 +176,8 @@ export interface Issue {
   priority: IssuePriority
   labels: readonly Label[]
   milestone?: Milestone
+  issueType?: IssueType
+  projects?: readonly string[]
   linkedCLs: readonly number[]
   linkedClPublicIds?: readonly string[]
   reactions: readonly Reaction[]

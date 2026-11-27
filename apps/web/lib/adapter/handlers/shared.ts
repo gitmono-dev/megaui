@@ -5,6 +5,7 @@
 //   mega-api monolith). Chat/agg routes land in WA-05.
 
 import {
+  ISSUE_TYPES,
   MEGA_CL_LABELS,
   MEGA_FILTER_SORTS,
   MEGA_ISSUE_PRIORITIES,
@@ -50,6 +51,11 @@ export const createIssueSchema = z.object({
   title: z.string().trim().min(1),
   packageId: z.string().trim().min(1).optional(),
   priority: prioritySchema.optional(),
+  assigneeIds: z.array(z.string().trim().min(1).max(255)).max(32).optional(),
+  labels: z.array(z.string().trim().min(1).max(80)).max(32).optional(),
+  projects: z.array(z.string().trim().min(1).max(80)).max(32).optional(),
+  issueType: z.enum(ISSUE_TYPES).optional(),
+  milestoneTitle: z.string().trim().min(1).max(80).optional(),
   body: z.string().trim().min(1).optional(),
 });
 

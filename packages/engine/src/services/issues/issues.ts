@@ -47,15 +47,13 @@
 //   (not author-or-assignee); issue toggle bumps `updatedAt`; comment
 //   toggle does not. Legacy wire-shaped jsonb without `userIds` projects
 //   as empty until the next toggle. No link/block index rebuild.
-// - Labels are always `[]`: megaui has not ported a label catalog
-//   (`ISSUE_LABELS` fixture / `mega_labels` table) yet. `labelIds` on the
-//   row are preserved but not resolved to `Label` objects.
+// - Issue labels and projects use their workspace names as identifiers.
 // - Issue numbering is serialized with a dedicated `pg_advisory_xact_lock`
 //   namespace instead of relying on a bare `MAX(number)+1` read outside a
 //   lock (upstream has no race guard here at all).
 import { randomUUID } from "node:crypto";
-import type { Issue, IssueComment, Milestone } from "@megaui/core";
-import { ISSUE_PRIORITY_RANK, MEGA_ISSUE_PRIORITIES, matchesIssueFilter } from "@megaui/core";
+import type { Issue, IssueComment, IssuePropertyOptions, Milestone } from "@megaui/core";
+import { ISSUE_TYPES, ISSUE_PRIORITY_RANK, MEGA_ISSUE_PRIORITIES, matchesIssueFilter } from "@megaui/core";
 import {
   megaClPublicIds,
   megaContent,
@@ -192,7 +190,9 @@ async function loadIssue(database: Database, number: number, actorUserId?: strin
     body,
     state: row.state === megaIssueStates.CLOSED ? "closed" : "open",
     priority: row.priority as Issue["priority"],
-    labels: [],
+    labels: row.labelIds.map(name => ({ id: name, name, color: "#64748b" })),
+    issueType: row.issueType ?? undefined,
+    projects: row.projects,
     milestone: parseMilestone(row.milestone),
     linkedCLs,
     linkedClPublicIds: linkedCLs.flatMap((clNumber) => publicIdByNumber.get(clNumber) ?? []),
@@ -312,6 +312,27 @@ export function createIssuesService(database: Database) {
     return { body: trimmedBody };
   }
 
+  async function listPropertyOptions(actorUserId: string | null | undefined): Promise<IssuePropertyOptions> {
+    await assertWorkspaceMember(actorUserId);
+    const [users, names] = await Promise.all([
+      database.select({ id: user.id }).from(user).where(sql`${user.banned} IS NOT TRUE`),
+      database.execute<{ kind: string; name: string }>(sql`
+        SELECT 'label' AS kind, jsonb_array_elements_text(${megaIssues.labelIds}) AS name FROM ${megaIssues}
+        UNION SELECT 'project', jsonb_array_elements_text(${megaIssues.projects}) FROM ${megaIssues}
+        UNION SELECT 'milestone', ${megaIssues.milestone}->>'title' FROM ${megaIssues}
+          WHERE ${megaIssues.milestone}->>'title' IS NOT NULL
+        ORDER BY kind, name
+      `),
+    ]);
+    const profiles = await resolvePublicProfiles(database, users.map(row => row.id));
+    const values = (kind: string) => names.rows.filter(row => row.kind === kind).map(row => row.name);
+    return {
+      members: Array.from(profiles.values(), ({ id, displayName }) => ({ id, displayName }))
+        .sort((a, b) => a.displayName.localeCompare(b.displayName)),
+      labels: values("label"), projects: values("project"), milestones: values("milestone"),
+    };
+  }
+
   async function createIssue(input: CreateIssueInput, actorUserId: string | null | undefined): Promise<Issue> {
     const authorId = await assertWorkspaceMember(actorUserId);
     const title = input.title.trim();
@@ -323,6 +344,22 @@ export function createIssuesService(database: Database) {
       throw new MegaBadRequestError(`Invalid issue priority: ${input.priority}`);
     }
 
+    if (input.issueType !== undefined && !ISSUE_TYPES.includes(input.issueType)) {
+      throw new MegaBadRequestError("Invalid issue type");
+    }
+    const normalizeNames = (values: string[] = []) => {
+      const names = values.map(value => value.trim());
+      if (names.length > 32 || names.some(name => !name || name.length > 80)) {
+        throw new MegaBadRequestError("Invalid issue property");
+      }
+      return [...new Set(names)];
+    };
+    const labels = normalizeNames(input.labels);
+    const projects = normalizeNames(input.projects);
+    const milestone = input.milestoneTitle === undefined ? undefined : normalizeNames([input.milestoneTitle])[0];
+    const assignees = [...new Set(input.assigneeIds ?? [])];
+    if (assignees.length > 32) throw new MegaBadRequestError("Too many issue assignees");
+
     const now = new Date();
     const id = newIssueId("issue");
     const bodyText = input.body?.trim();
@@ -331,6 +368,11 @@ export function createIssuesService(database: Database) {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(${ISSUE_NUMBER_LOCK_NS})`);
       const [maxRow] = await tx.select({ number: megaIssues.number }).from(megaIssues).orderBy(desc(megaIssues.number)).limit(1);
       const nextNumber = (maxRow?.number ?? 0) + 1;
+      if (assignees.length) {
+        const eligible = await tx.select({ id: user.id }).from(user)
+          .where(and(inArray(user.id, assignees), sql`${user.banned} IS NOT TRUE`)).for("share");
+        if (eligible.length !== assignees.length) throw new MegaBadRequestError("Invalid issue assignee");
+      }
       await tx.insert(megaIssues).values({
         id,
         number: nextNumber,
@@ -339,9 +381,11 @@ export function createIssuesService(database: Database) {
         priority,
         packageId,
         authorId,
-        milestone: null,
-        labelIds: [],
-        assigneeIds: [],
+        issueType: input.issueType,
+        projects,
+        milestone: milestone ? { id: milestone, title: milestone } : null,
+        labelIds: labels,
+        assigneeIds: assignees,
         watcherIds: [authorId],
         linkedCLs: [],
         reactions: [],
@@ -529,6 +573,7 @@ export function createIssuesService(database: Database) {
   }
 
   return {
+    listPropertyOptions,
     listIssues,
     getIssue,
     getIssueBody,

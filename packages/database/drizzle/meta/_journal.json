@@ -190,6 +190,13 @@
       "when": 1795684692021,
       "tag": "0026_alphanumeric_cl_ids",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1795764246093,
+      "tag": "0027_issue_properties",
+      "breakpoints": true
     }
   ]
 }
