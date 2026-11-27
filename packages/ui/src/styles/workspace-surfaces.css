@@ -200,6 +200,26 @@
   padding: var(--mega-page-gutter) !important;
 }
 
+[data-mega-home="page"] {
+  font-size: var(--mega-density-font-size);
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+[data-mega-home="kpi-label"],
+[data-mega-home="card"] > header > a {
+  font-size: var(--mega-control-font-size);
+}
+
+[data-mega-home="kpi-value"],
+[data-mega-home="hero-mark"] {
+  font-size: calc(var(--mega-density-font-size) + 7px);
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+[data-mega-home="kpi-value"] { font-variant-numeric: tabular-nums; }
+
 [data-mega-home="page"] > div:first-child {
   background: var(--mega-subtle) !important;
   padding: var(--mega-page-gutter) !important;

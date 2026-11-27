@@ -83,7 +83,8 @@ test.describe("WA-07 workspace home / shell", () => {
       await route.fulfill({ response, json: { data: {
         ...data,
         kpis: { ...data.kpis, reviewsRequested: 0 },
-        cards: { ...data.cards, reviewRequests: [], recentCls: [recent] },
+        cards: { ...data.cards, reviewRequests: [], recentCls: [recent], assignedIssues: [],
+          activity: [{ id: "update", actorName: "Reviewer", entityRef: recent.publicId }] },
       } } });
     });
     await page.goto("/zh-CN/workspace");
@@ -92,6 +93,13 @@ test.describe("WA-07 workspace home / shell", () => {
     await expect(card.getByRole("link", { name: new RegExp(recent.title) }))
       .toHaveAttribute("href", `/zh-CN/workspace/cls/${recent.publicId}`);
     await expect(page.locator('[data-mega-home="kpi"]').filter({ hasText: "待我评审" })).toContainText("0");
+
+    const empty = page.locator('[data-card="issues"] [data-mega-home="card-empty"]');
+    const bodySize = await empty.evaluate(el => getComputedStyle(el).fontSize);
+    await expect(card.getByRole("link", { name: new RegExp(recent.title) })).toHaveCSS("font-size", bodySize);
+    await expect(page.locator('[data-card="activity"] > p')).toHaveCSS("font-size", bodySize);
+    const labelSize = await page.locator('[data-mega-home="kpi-label"]').first().evaluate(el => getComputedStyle(el).fontSize);
+    await expect(card.locator("header a")).toHaveCSS("font-size", labelSize);
   });
 
   test("home error state shows alert and retry", async ({ browser }) => {

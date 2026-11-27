@@ -36,7 +36,7 @@
 | `workspace-docs-short-id.spec.ts` | [workspace-docs-short-id.md](./catalog/workspace-docs-short-id.md) | 12-character block identity | real BFF + collaboration | compose `:17001/:17002` |
 | `workspace-docs-publish.spec.ts` | [workspace-docs-publish.md](./catalog/workspace-docs-publish.md) | Document publication lifecycle | real BFF + collaboration | compose `:17001/:17002` |
 | `workspace-docs.spec.ts` | [workspace-docs.md](./catalog/workspace-docs.md) | WA-12 | stub | ran |
-| `workspace-home.spec.ts` | [workspace-home.md](./catalog/workspace-home.md) | Recent CL links, WA-07 | stub | catalog-ready |
+| `workspace-home.spec.ts` | [workspace-home.md](./catalog/workspace-home.md) | Recent CL links and dashboard typography, WA-07 | stub | catalog-ready |
 | `workspace-inbox.spec.ts` | [workspace-inbox.md](./catalog/workspace-inbox.md) | WA-16 inbox and release publish conflict | stub | ran |
 | `workspace-issues.spec.ts` | [workspace-issues.md](./catalog/workspace-issues.md) | WA-11 list loading, full-width issue composer and detail | stub | ran |
 | `workspace-surface-style.spec.ts` | [workspace-surface-style.md](./catalog/workspace-surface-style.md) | UI-01 | stub | ran (compose `:17001`) |

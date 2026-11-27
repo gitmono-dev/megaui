@@ -44,9 +44,9 @@ function Card({
       }}
     >
       <header style={{ alignItems: "baseline", display: "flex", justifyContent: "space-between", marginBottom: MEGA_SPACING_TOKENS[8] }}>
-        <h2 style={{ fontSize: "var(--mega-density-font-size)", fontWeight: 650, margin: 0 }}>{title}</h2>
+        <h2 style={{ margin: 0 }}>{title}</h2>
         {actionHref && actionLabel ? (
-          <Link href={actionHref} style={{ color: MEGA_TOKENS.muted, fontSize: "calc(var(--mega-density-font-size) - 1px)", textDecoration: "none" }}>
+          <Link href={actionHref} style={{ color: MEGA_TOKENS.muted, textDecoration: "none" }}>
             {actionLabel}
           </Link>
         ) : null}

@@ -39,7 +39,6 @@ const actionStyle: CSSProperties = {
   borderRadius: `calc(${MEGA_RADIUS_TOKENS.md} * 2)`,
   cursor: "pointer",
   display: "inline-flex",
-  fontSize: "calc(var(--mega-density-font-size) - 0.5px)",
   gap: MEGA_SPACING_TOKENS[6],
   padding: `calc(${MEGA_SPACING_TOKENS[6]} + ${MEGA_SPACING_TOKENS[1]}) calc(${MEGA_SPACING_TOKENS[8]} + ${MEGA_SPACING_TOKENS[5]})`,
   textDecoration: "none",
@@ -78,8 +77,6 @@ export function HomeHero({
           color: MEGA_TOKENS.accentForeground,
           display: "inline-flex",
           flexShrink: 0,
-          fontSize: 22,
-          fontWeight: 800,
           height: 46,
           justifyContent: "center",
           width: 46,
@@ -92,10 +89,6 @@ export function HomeHero({
           data-mega-home="hero-greeting"
           style={{
             color: MEGA_TOKENS.text,
-            fontSize: 28,
-            fontWeight: 650,
-            letterSpacing: "-0.03em",
-            lineHeight: 1.15,
             margin: 0,
           }}
         >

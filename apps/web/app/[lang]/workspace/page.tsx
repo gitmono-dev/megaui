@@ -80,10 +80,10 @@ export default function WorkspaceHomePage() {
     return (
       <main data-mega-home="page">
         <div role="alert" style={{ ...heroSectionStyle, alignItems: "center", display: "flex", gap: MEGA_SPACING_TOKENS[8] }}>
-          <p style={{ color: MEGA_TOKENS.muted, fontSize: "var(--mega-density-font-size)", margin: 0 }}>
+          <p style={{ color: MEGA_TOKENS.muted, margin: 0 }}>
             {home.error}
           </p>
-          <code style={{ color: MEGA_TOKENS.muted, fontFamily: MEGA_TOKENS.fontMono, fontSize: "calc(var(--mega-density-font-size) - 3px)" }}>
+          <code style={{ color: MEGA_TOKENS.muted, fontFamily: MEGA_TOKENS.fontMono, fontSize: "var(--mega-control-font-size)" }}>
             MEGA-HOME-LOAD
           </code>
           <button data-mega-shell="rail-retry" data-mega-home="retry" onClick={() => void homeQuery.refetch()} type="button">

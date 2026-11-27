@@ -33,11 +33,11 @@ function StatTile({
         padding: MEGA_SPACING_TOKENS[8],
       }}
     >
-      <div style={{ alignItems: "center", color: MEGA_TOKENS.muted, display: "flex", gap: MEGA_SPACING_TOKENS[6], fontSize: "calc(var(--mega-density-font-size) - 1px)" }}>
+      <div data-mega-home="kpi-label" style={{ alignItems: "center", color: MEGA_TOKENS.muted, display: "flex", gap: MEGA_SPACING_TOKENS[6] }}>
         <ShellIcon name={icon} size={14} />
         {label}
       </div>
-      <div style={{ color: MEGA_TOKENS.text, fontSize: 22, fontWeight: 650, marginTop: MEGA_SPACING_TOKENS[6] }}>
+      <div data-mega-home="kpi-value" style={{ color: MEGA_TOKENS.text, marginTop: MEGA_SPACING_TOKENS[6] }}>
         {value}
       </div>
     </div>
