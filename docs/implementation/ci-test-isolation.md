@@ -1,6 +1,6 @@
 # CI 全量测试隔离与并行
 
-quality 的 CMD-05 保持 `pnpm vitest run`，仅在该步骤设置 `VITEST_MAX_WORKERS=3`，job 时限为 120 分钟。根配置的完整收集范围、文件隔离、既有测试预算、后续 Mock 与守卫均保持。三个 worker 是测试文件执行并发上限，不是容器总数上限；部分既有隔离测试内部会创建多个数据库。
+quality 的 CMD-05 保持 `pnpm vitest run`，仅在该步骤设置 `VITEST_MAX_WORKERS=2`，job 时限为 120 分钟。根配置的完整收集范围、文件隔离、既有测试预算、后续 Mock 与守卫均保持。两个 worker 是测试文件执行并发上限，不是容器总数上限；部分既有隔离测试内部会创建多个数据库。
 
 八组旧 BFF 契约使用 `apps/web/tests/helpers/owned-contract.ts`：aggregation、agent SSE、content、docs comments、issues body、issues reactions、code 和基础 BFF。每个文件先登记一个惰性 lifetime，并在 `afterAll` 登记清理，再于原 `beforeAll` 中启动。启动失败会保留失败结果；不会因没有外部数据库或 mint 失败而空过认证断言。
 

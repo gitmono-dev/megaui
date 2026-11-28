@@ -241,7 +241,8 @@ jobs:
 
       - name: Unit tests (CMD-05)
         env:
-          VITEST_MAX_WORKERS: '3'
+          # Keep isolated database and source-copy setup within runner I/O capacity.
+          VITEST_MAX_WORKERS: '2'
           TMPDIR: ${{ env.MEGAUI_TEST_TMPDIR }}
         run: pnpm vitest run
 
