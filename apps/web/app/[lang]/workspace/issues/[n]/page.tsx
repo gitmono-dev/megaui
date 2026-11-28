@@ -148,6 +148,7 @@ export default function IssueDetailPage() {
       <div className={styles.conversation}>
       <IssueBodyPanel
         addReactionLabel={detail.timeline.addReaction}
+        authorRoleLabel={detail.timeline.authorRole}
         autoSaveHint={detail.body.autoSaveHint}
         bodyDraft={bodyEditor.bodyDraft}
         bodySaveState={bodyEditor.bodySaveState}

@@ -1,6 +1,6 @@
 import type { Issue } from "@megaui/core";
-import { ReactionsBar } from "@megaui/ui/composites";
-import { MEGA_RADIUS_TOKENS, MEGA_SPACING_TOKENS, MEGA_TOKENS } from "@megaui/ui/tokens";
+import { CommentThread } from "@megaui/ui/composites";
+import { MEGA_SPACING_TOKENS, MEGA_TOKENS } from "@megaui/ui/tokens";
 
 import { ISSUE_REACTION_EMOJIS } from "../lib/issue-reactions";
 import type { IssueBodySaveState } from "../hooks/use-issue-body-editor";
@@ -9,6 +9,7 @@ import { IssueMarkdown } from "../../components/issue-markdown";
 interface IssueBodyPanelProps {
   readonly addReactionLabel: string;
   readonly autoSaveHint: string;
+  readonly authorRoleLabel: string;
   readonly bodyDraft: string;
   readonly bodySaveState: IssueBodySaveState;
   readonly canEdit: boolean;
@@ -32,6 +33,7 @@ interface IssueBodyPanelProps {
 export function IssueBodyPanel({
   addReactionLabel,
   autoSaveHint,
+  authorRoleLabel,
   bodyDraft,
   bodySaveState,
   canEdit,
@@ -69,78 +71,34 @@ export function IssueBodyPanel({
   })();
 
   return (
-    <section
-      data-mega-issues="body"
-      style={{
-        border: `1px solid ${MEGA_TOKENS.border}`,
-        borderRadius: MEGA_RADIUS_TOKENS.md,
-        marginTop: `calc(${MEGA_SPACING_TOKENS[8]} * 2)`,
-        padding: MEGA_SPACING_TOKENS[8],
-      }}
-    >
-      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: "8px" }}>
-        <h2 style={{ fontSize: "1rem", fontWeight: 700, margin: 0 }}>{title}</h2>
-        <span style={{ color: MEGA_TOKENS.muted }}>{issue.author.displayName} · {issue.createdAt}</span>
-      </div>
-      {canEdit ? (
-        <div
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            gap: MEGA_SPACING_TOKENS[8],
-            marginTop: MEGA_SPACING_TOKENS[6],
-          }}
-        >
-          <button
-            data-mega-issues="body-edit"
-            disabled={savePending}
-            onClick={onEditToggle}
-            type="button"
-          >
-            {editingBody ? finishEditingLabel : editLabel}
-          </button>
-          {editingBody ? (
-            <span
-              data-mega-issues="body-save-state"
-              data-state={bodySaveState}
-              style={{ color: MEGA_TOKENS.muted }}
-            >
-              {bodySaveLabel}
-            </span>
-          ) : null}
-        </div>
-      ) : null}
-      {editingBody ? (
-        <textarea
-          data-mega-issues="body-editor"
-          onChange={(event) => onBodyChange(event.target.value)}
-          placeholder={placeholder}
-          rows={8}
-          style={{ marginTop: MEGA_SPACING_TOKENS[6], width: "100%" }}
-          value={bodyDraft}
+    <section data-mega-issues="body" aria-label={title} style={{ marginTop: `calc(${MEGA_SPACING_TOKENS[8]} * 2)` }}>
+      <div data-mega-issues={canReact || issue.reactions.length > 0 ? "issue-reactions" : undefined}>
+        <CommentThread
+          id={`issue-${issue.id}`}
+          author={issue.author}
+          roleLabel={authorRoleLabel}
+          timestampLabel={issue.createdAt}
+          action={canEdit ? (
+            <div style={{ display: "flex", alignItems: "center", gap: MEGA_SPACING_TOKENS[6] }}>
+              {editingBody && <span data-mega-issues="body-save-state" data-state={bodySaveState} style={{ color: MEGA_TOKENS.muted }}>{bodySaveLabel}</span>}
+              <button data-mega-issues="body-edit" disabled={savePending} onClick={onEditToggle} type="button">
+                {editingBody ? finishEditingLabel : editLabel}
+              </button>
+            </div>
+          ) : undefined}
+          body={editingBody ? (
+            <textarea data-mega-issues="body-editor" onChange={event => onBodyChange(event.target.value)}
+              placeholder={placeholder} rows={8} style={{ width: "100%" }} value={bodyDraft} />
+          ) : (
+            <div data-mega-issues="body-text">{issue.body?.trim() ? <IssueMarkdown text={issue.body} /> : emptyLabel}</div>
+          )}
+          reactions={canReact || issue.reactions.length > 0 ? {
+            addAction: canReact ? { emojiOptions: ISSUE_REACTION_EMOJIS, label: addReactionLabel, onAdd: onReaction } : undefined,
+            onReactionToggle: canReact ? reaction => onReaction(reaction.emoji) : undefined,
+            reactions: issue.reactions,
+          } : undefined}
         />
-      ) : (
-        <div data-mega-issues="body-text" style={{ margin: `${MEGA_SPACING_TOKENS[6]} 0 0` }}>
-          {issue.body?.trim() ? <IssueMarkdown text={issue.body} /> : emptyLabel}
-        </div>
-      )}
-      {canReact || issue.reactions.length > 0 ? (
-        <div data-mega-issues="issue-reactions" style={{ marginTop: MEGA_SPACING_TOKENS[8] }}>
-          <ReactionsBar
-            addAction={
-              canReact
-                ? {
-                    emojiOptions: ISSUE_REACTION_EMOJIS,
-                    label: addReactionLabel,
-                    onAdd: onReaction,
-                  }
-                : undefined
-            }
-            onReactionToggle={canReact ? (reaction) => onReaction(reaction.emoji) : undefined}
-            reactions={issue.reactions}
-          />
-        </div>
-      ) : null}
+      </div>
     </section>
   );
 }

@@ -19,12 +19,18 @@ export interface MegaCodeBlockProps {
 
 const EXTENSIONS: Record<string, string> = {
   bash: "sh",
+  "c++": "cpp",
+  "c#": "cs",
+  csharp: "cs",
+  javascript: "js",
+  javascriptreact: "jsx",
   markdown: "md",
   python: "py",
   rust: "rs",
   shell: "sh",
   toml: "toml",
   typescript: "ts",
+  typescriptreact: "tsx",
 }
 
 /**
@@ -35,7 +41,8 @@ const EXTENSIONS: Record<string, string> = {
  */
 export function MegaCodeBlock({ language, prerenderedHTML, text }: MegaCodeBlockProps) {
   const themeType = useMegaCodeThemeType()
-  const extension = EXTENSIONS[language ?? ""] ?? language ?? "txt"
+  const normalizedLanguage = language?.trim().toLowerCase()
+  const extension = EXTENSIONS[normalizedLanguage ?? ""] ?? normalizedLanguage ?? "txt"
 
   return (
     <div
