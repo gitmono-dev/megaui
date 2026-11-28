@@ -206,6 +206,9 @@
   line-height: 1.5;
 }
 
+[data-mega-home="card"] a { color: var(--mega-doc-link); text-decoration: none; }
+[data-mega-home="card"] a:hover { text-decoration: underline; }
+
 [data-mega-home="kpi-label"],
 [data-mega-home="card"] > header > a {
   font-size: var(--mega-control-font-size);

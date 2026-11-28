@@ -46,7 +46,7 @@ function Card({
       <header style={{ alignItems: "baseline", display: "flex", justifyContent: "space-between", marginBottom: MEGA_SPACING_TOKENS[8] }}>
         <h2 style={{ margin: 0 }}>{title}</h2>
         {actionHref && actionLabel ? (
-          <Link href={actionHref} style={{ color: MEGA_TOKENS.muted, textDecoration: "none" }}>
+          <Link href={actionHref}>
             {actionLabel}
           </Link>
         ) : null}
@@ -96,7 +96,7 @@ export function HomeCardGrid({
           ? labels.reviewCls.empty
           : cls.map((cl) => (
               <Link href={`${workspaceBase}/cls/${cl.publicId}`} key={cl.publicId} style={{ display: "block", marginBottom: MEGA_SPACING_TOKENS[6] }}>
-                {cl.publicId} {cl.title}
+                {cl.title}
               </Link>
             ))}
       </Card>
@@ -124,11 +124,15 @@ export function HomeCardGrid({
       >
         {cards.activity.length === 0
           ? labels.activity.empty
-          : cards.activity.map((row) => (
-              <p key={row.id} style={{ margin: `0 0 ${MEGA_SPACING_TOKENS[6]}` }}>
-                {labels.activity.updated.replace("{actor}", row.author ? presentCLAuthor(row.author, viewer).displayName : row.actorName).replace("{ref}", row.entityRef)}
-              </p>
-            ))}
+          : cards.activity.map((row) => {
+              const actor = row.author ? presentCLAuthor(row.author, viewer).displayName : row.actorName;
+              const [before, after = ""] = labels.activity.updated.split("{ref}");
+              return <p key={row.id} style={{ margin: `0 0 ${MEGA_SPACING_TOKENS[6]}` }}>
+                {before?.replace("{actor}", actor)}
+                <Link href={`${workspaceBase}/cls/${encodeURIComponent(row.entityRef)}`}>{row.title}</Link>
+                {after.replace("{actor}", actor)}
+              </p>;
+            })}
       </Card>
       <Card
         actionHref={`${workspaceBase}/tags`}

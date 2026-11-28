@@ -679,15 +679,11 @@
 
 /* Match Roam's blue page titles and muted brackets in both document surfaces. */
 :where([data-mega-content="outliner"], [data-mega-content="reader"]) :where([data-mega-content="ref"], [data-mega-content="ref-unresolved"])[data-ref-kind="doc"]:not([data-ref-notation="tag"]) {
-  color: #106ba3;
+  color: var(--mega-doc-link);
 }
 
 [data-mega-content="ref-bracket"] {
   color: #a7b6c2;
-}
-
-.dark :where([data-mega-content="outliner"], [data-mega-content="reader"]) :where([data-mega-content="ref"], [data-mega-content="ref-unresolved"])[data-ref-kind="doc"]:not([data-ref-notation="tag"]) {
-  color: #75bce8;
 }
 
 :where([data-mega-content="ref"], [data-mega-content="ref-unresolved"])[data-ref-notation="tag"] {

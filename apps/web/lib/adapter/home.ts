@@ -2,12 +2,13 @@
 //
 // Diff vs upstream (GC-03 / WA-07):
 // - Aggregates live engine domains instead of the in-memory mock store.
-// - `mainCI` is `skipped` until WA-08/EG-11 package CI is wired (no mock).
+// - Main-branch CI is unavailable until a repository-scoped, authorized source is wired.
 // - Actor-scoped: reviews/issues/mentions use the signed-in user, not CURRENT_USER.
 
 import type { Channel, CL, User } from "@megaui/core";
 import { isOpenCLState } from "@megaui/core";
 import { MAX_PAGE_LIMIT } from "@megaui/engine";
+import { isOrion2Configured } from "@megaui/engine/services/orion2";
 
 import {
   getAgentDomain,
@@ -24,7 +25,7 @@ export interface HomeKpis {
   reviewsRequested: number;
   mentions: number;
   myOpenIssues: number;
-  mainCI: "passing" | "failing" | "queued" | "running" | "skipped";
+  mainCI: "passing" | "failing" | "queued" | "running" | "skipped" | "unconfigured" | "unavailable";
   agentSessionsToday: number;
 }
 
@@ -45,6 +46,7 @@ export interface HomeDashboard {
       actorName: string;
       author: Pick<User, "id" | "username" | "displayName" | "avatarInitials">;
       entityRef: string;
+      title: string;
       kind: "updated";
       createdAt: string;
     }[];
@@ -144,7 +146,7 @@ export async function getHomeDashboard(actorUserId: string | null, headers: Head
       reviewsRequested: reviewRequests.length,
       mentions: mentions.length,
       myOpenIssues: myOpenIssues.length,
-      mainCI: "skipped",
+      mainCI: isOrion2Configured(process.env) ? "unavailable" : "unconfigured",
       agentSessionsToday: agentThreadsToday.length,
     },
     cards: {
@@ -169,6 +171,7 @@ export async function getHomeDashboard(actorUserId: string | null, headers: Head
           displayName: cl.author.displayName, avatarInitials: cl.author.avatarInitials,
         },
         entityRef: cl.publicId,
+        title: cl.title,
         kind: "updated" as const,
         createdAt: cl.updatedAt,
       })),

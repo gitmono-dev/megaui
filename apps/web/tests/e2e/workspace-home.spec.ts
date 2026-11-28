@@ -84,7 +84,7 @@ test.describe("WA-07 workspace home / shell", () => {
         ...data,
         kpis: { ...data.kpis, reviewsRequested: 0 },
         cards: { ...data.cards, reviewRequests: [], recentCls: [recent], assignedIssues: [],
-          activity: [{ id: "update", actorName: "Reviewer", entityRef: recent.publicId }] },
+          activity: [{ id: "update", actorName: "Reviewer", entityRef: recent.publicId, title: recent.title }] },
       } } });
     });
     await page.goto("/zh-CN/workspace");
@@ -92,6 +92,10 @@ test.describe("WA-07 workspace home / shell", () => {
     await expect(card.getByRole("heading")).toHaveText("最近变更单");
     await expect(card.getByRole("link", { name: new RegExp(recent.title) }))
       .toHaveAttribute("href", `/zh-CN/workspace/cls/${recent.publicId}`);
+    await expect(card.getByRole("link", { name: recent.title, exact: true })).toBeVisible();
+    const activityLink = page.locator('[data-card="activity"]').getByRole("link", { name: recent.title });
+    await expect(activityLink).toHaveAttribute("href", `/zh-CN/workspace/cls/${recent.publicId}`);
+    await expect(page.locator('[data-card="activity"] > p')).toHaveText(`Reviewer 更新了 ${recent.title}`);
     await expect(page.locator('[data-mega-home="kpi"]').filter({ hasText: "待我评审" })).toContainText("0");
 
     const empty = page.locator('[data-card="issues"] [data-mega-home="card-empty"]');

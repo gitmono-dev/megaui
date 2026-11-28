@@ -407,7 +407,9 @@ export const zhCN = {
           failing: "failing",
           queued: "queued",
           running: "running",
-          skipped: "skipped"
+          skipped: "skipped",
+          unconfigured: "未配置",
+          unavailable: "暂不可用"
         }
       },
       cards: {

@@ -407,7 +407,9 @@ export const en = {
           failing: "failing",
           queued: "queued",
           running: "running",
-          skipped: "skipped"
+          skipped: "skipped",
+          unconfigured: "Not configured",
+          unavailable: "Unavailable"
         }
       },
       cards: {

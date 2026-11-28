@@ -20,6 +20,7 @@
 
   /* Accent is customizable by consumers; active states derive from it. */
   --mega-accent: #2563eb;
+  --mega-doc-link: #106ba3;
   --mega-accent-foreground: #ffffff;
   --mega-accent-tint-5: color-mix(in srgb, var(--mega-accent) 5%, transparent);
   --mega-accent-tint-8: color-mix(in srgb, var(--mega-accent) 8%, transparent);
@@ -438,6 +439,7 @@
 
 /* Applications toggle `.dark` on the document root. */
 .dark {
+  --mega-doc-link: #75bce8;
   --mega-bg: #0d1117;
   --mega-subtle: #11161c;
   --mega-border: #1f2937;
