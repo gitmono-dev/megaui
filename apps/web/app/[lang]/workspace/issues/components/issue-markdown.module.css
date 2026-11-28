@@ -10,3 +10,16 @@
 .content img { max-width: 100%; height: auto; }
 .content table { display: block; overflow-x: auto; border-collapse: collapse; }
 .content th, .content td { border: 1px solid var(--mega-border); padding: 6px 10px; }
+.content h1, .content h2, .content h3, .content h4, .content h5, .content h6 { font-weight: 600; line-height: 1.25; margin: 24px 0 16px; }
+.content h1 { font-size: 2em; }
+.content h2 { font-size: 1.5em; }
+.content h3 { font-size: 1.25em; }
+.content h4 { font-size: 1em; }
+.content h1, .content h2 { padding-bottom: .3em; border-bottom: 1px solid var(--mega-border); }
+.content ul, .content ol { padding-left: 2em; }
+.content ul { list-style: disc outside; }
+.content ol { list-style: decimal outside; }
+.content ul ul { list-style-type: circle; }
+.content li + li { margin-top: .25em; }
+.content li > ul, .content li > ol { margin-bottom: 0; }
+.content li:has(> input[type="checkbox"]) { list-style: none; }
