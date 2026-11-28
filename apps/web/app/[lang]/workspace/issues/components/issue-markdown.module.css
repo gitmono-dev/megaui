@@ -1,0 +1,12 @@
+.content { line-height: 1.6; overflow-wrap: anywhere; }
+.content > :first-child { margin-top: 0; }
+.content > :last-child { margin-bottom: 0; }
+.content p, .content pre, .content ul, .content ol, .content blockquote { margin: 0 0 12px; }
+.content a { color: var(--mega-doc-link); }
+.content pre { overflow: auto; padding: 12px; background: var(--mega-subtle); border-radius: var(--mega-control-radius); }
+.content code { font-family: var(--mega-font-mono); }
+.content :not(pre) > code { background: var(--mega-subtle); padding: .15em .3em; border-radius: 4px; }
+.content blockquote { border-left: 3px solid var(--mega-border); padding-left: 12px; color: var(--mega-muted); }
+.content img { max-width: 100%; height: auto; }
+.content table { display: block; overflow-x: auto; border-collapse: collapse; }
+.content th, .content td { border: 1px solid var(--mega-border); padding: 6px 10px; }

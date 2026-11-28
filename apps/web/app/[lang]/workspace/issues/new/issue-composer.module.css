@@ -6,10 +6,24 @@
 
 .form label { color: var(--mega-text); font-size: var(--mega-density-font-size); font-weight: 650; }
 .form input { width: 100%; margin-bottom: 12px; }
+.titleInput { display: flex; margin-bottom: 12px; }
+.titleInput input { min-width: 0; margin: 0; border-radius: 0 var(--mega-control-radius) var(--mega-control-radius) 0; }
+.statusTrigger { display: flex; align-items: center; gap: 5px; border-radius: var(--mega-control-radius) 0 0 var(--mega-control-radius); color: var(--mega-success); }
+.statusPopup { width: min(16rem, calc(100vw - 24px)); padding: 8px; background: var(--mega-bg); color: var(--mega-text); border: 1px solid var(--mega-border); box-shadow: var(--mega-overlay-shadow); border-radius: var(--mega-panel-radius); }
+.statusPopup h2 { font-size: var(--mega-density-font-size); color: var(--mega-muted); margin: 4px 8px 8px; }
+.statusPopup button { display: flex; width: 100%; align-items: center; gap: 8px; border: 0; background: transparent; text-align: left; color: var(--mega-text); }
+.statusPopup button:hover { background: var(--mega-subtle); }
+.statusCheck { display: inline-flex; width: 15px; }
+.statusIcon { color: var(--mega-success); }
 .editor { overflow: hidden; border: 1px solid var(--mega-border); border-radius: var(--mega-panel-radius); background: var(--mega-bg); }
-.toolbar { display: flex; gap: 4px; padding: 6px; border-bottom: 1px solid var(--mega-border); background: var(--mega-subtle); }
+.toolbar { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px; border-bottom: 1px solid var(--mega-border); background: var(--mega-subtle); }
 .toolbar button { border-color: transparent; background: transparent; color: var(--mega-muted); }
 .toolbar button[aria-pressed="true"] { color: var(--mega-text); border-color: var(--mega-border); background: var(--mega-bg); }
+.formatting { display: flex; flex-wrap: wrap; gap: 2px; margin-left: auto; }
+.formatting button { padding-inline: 7px; }
+.attachment { border-top: 1px solid var(--mega-border); padding: 6px; display: flex; align-items: center; gap: 8px; }
+.attachment button { display: inline-flex; align-items: center; gap: 6px; border: 0; background: transparent; color: var(--mega-muted); }
+.attachment input[hidden] { display: none; }
 .editor textarea, .preview {
   display: block;
   box-sizing: border-box;
@@ -23,6 +37,8 @@
 .preview { white-space: pre-wrap; overflow-wrap: anywhere; }
 .preview[data-empty="true"] { color: var(--mega-muted); }
 .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+.actions label.createMore { display: flex; align-items: center; gap: 6px; margin-right: 12px; font-weight: 400; }
+.actions label.createMore input { width: auto; margin: 0; }
 .error { margin: 0; color: var(--mega-danger); }
 
 .form { display: grid; row-gap: 8px; grid-template-columns: minmax(0, 1fr) minmax(13rem, 18rem); column-gap: clamp(20px, 3vw, 48px); align-items: start; }
@@ -40,7 +56,8 @@
 .trigger:hover, .trigger[data-state="open"] { background: var(--mega-border); color: var(--mega-text); }
 .selection { color: var(--mega-muted); margin-top: 6px; overflow-wrap: anywhere; }
 .selection:empty { display: none; }
-.selection button.self { display: inline; margin-inline-start: 8px; border: 0; padding: 0; min-height: auto; background: transparent; color: var(--mega-active-fg); text-decoration: underline; }
+.selection button.self { display: inline; margin-inline-start: 8px; border: 0; padding: 0; min-height: auto; background: transparent; color: var(--mega-doc-link); text-decoration: none; }
+.selection button.self:hover { text-decoration: underline; }
 .popup {
   display: flex; flex-direction: column; box-sizing: border-box; overflow: hidden;
   width: min(20rem, var(--radix-popover-content-available-width), calc(100vw - 24px));

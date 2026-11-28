@@ -1,0 +1,1 @@
+ALTER TABLE "mega_issues" ADD COLUMN "workflow_status" text DEFAULT 'backlog' NOT NULL;

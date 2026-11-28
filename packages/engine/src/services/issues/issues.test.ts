@@ -67,7 +67,7 @@ describe.skipIf(!adminDatabaseUrl)("createIssuesService list/state/comments/watc
     try {
       const issues = createIssuesService(client.db);
       const created = await issues.createIssue(
-        { title: "  New pack regression  ", packageId: "git-internal", priority: "P1", body: "Repro steps", assigneeIds: [USERS.eleanor.id], labels: ["ui", "ui"], issueType: "bug", projects: ["Checkout"], milestoneTitle: "First release" },
+        { title: "  New pack regression  ", packageId: "git-internal", priority: "P1", body: "Repro steps", assigneeIds: [USERS.eleanor.id], labels: ["ui", "ui"], issueType: "bug", workflowStatus: "in_progress", projects: ["Checkout"], milestoneTitle: "First release" },
         USERS.tianjing.id,
       );
       expect(created.title).toBe("New pack regression");
@@ -81,7 +81,7 @@ describe.skipIf(!adminDatabaseUrl)("createIssuesService list/state/comments/watc
       const fetched = await issues.getIssue(created.number);
       expect(fetched).toEqual(created);
       expect(fetched).toMatchObject({ assignees: [{ id: USERS.eleanor.id }], labels: [{ name: "ui" }],
-        issueType: "bug", projects: ["Checkout"], milestone: { title: "First release" } });
+        issueType: "bug", workflowStatus: "in_progress", projects: ["Checkout"], milestone: { title: "First release" } });
       expect(await issues.listPropertyOptions(USERS.tianjing.id)).toMatchObject({
         labels: expect.arrayContaining(["ui"]), projects: expect.arrayContaining(["Checkout"]), milestones: expect.arrayContaining(["First release"]),
       });

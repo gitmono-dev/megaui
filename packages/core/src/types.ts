@@ -150,8 +150,11 @@ export interface Reaction {
 
 export const ISSUE_TYPES = ['task', 'bug', 'feature'] as const
 export type IssueType = typeof ISSUE_TYPES[number]
+export const ISSUE_WORKFLOW_STATUSES = ['backlog', 'todo', 'in_progress', 'in_review'] as const
+export type IssueWorkflowStatus = typeof ISSUE_WORKFLOW_STATUSES[number]
 
 export interface IssuePropertiesInput {
+  workflowStatus?: IssueWorkflowStatus
   assigneeIds?: string[]
   labels?: string[]
   issueType?: IssueType
@@ -173,6 +176,7 @@ export interface Issue {
   title: string
   body?: string
   state: IssueState
+  workflowStatus?: IssueWorkflowStatus
   priority: IssuePriority
   labels: readonly Label[]
   milestone?: Milestone

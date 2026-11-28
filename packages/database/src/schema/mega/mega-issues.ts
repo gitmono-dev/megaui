@@ -1,7 +1,7 @@
 // megaui:libs/database/schema/pg/mega-issues.ts@0ff3a9d
 //
 // Ported for PK-05 (REF-07). SaaS tables intentionally omitted at package scope.
-import type { IssueType } from "@megaui/core";
+import type { IssueType, IssueWorkflowStatus } from "@megaui/core";
 import { InferInsertModel, InferSelectModel } from "drizzle-orm";
 import {
   integer,
@@ -32,6 +32,7 @@ export const megaIssues = pgTable(
     number: integer("number").notNull(),
     title: text("title").notNull(),
     state: text("state").notNull().default(megaIssueStates.OPEN),
+    workflowStatus: text("workflow_status").$type<IssueWorkflowStatus>().notNull().default("backlog"),
     priority: text("priority").notNull().default(megaIssuePriorities.P2),
     packageId: text("package_id").notNull(),
     authorId: text("author_id")

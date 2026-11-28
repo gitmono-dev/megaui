@@ -53,7 +53,7 @@
 //   lock (upstream has no race guard here at all).
 import { randomUUID } from "node:crypto";
 import type { Issue, IssueComment, IssuePropertyOptions, Milestone } from "@megaui/core";
-import { ISSUE_TYPES, ISSUE_PRIORITY_RANK, MEGA_ISSUE_PRIORITIES, matchesIssueFilter } from "@megaui/core";
+import { ISSUE_TYPES, ISSUE_WORKFLOW_STATUSES, ISSUE_PRIORITY_RANK, MEGA_ISSUE_PRIORITIES, matchesIssueFilter } from "@megaui/core";
 import {
   megaClPublicIds,
   megaContent,
@@ -189,6 +189,7 @@ async function loadIssue(database: Database, number: number, actorUserId?: strin
     title: row.title,
     body,
     state: row.state === megaIssueStates.CLOSED ? "closed" : "open",
+    workflowStatus: row.workflowStatus,
     priority: row.priority as Issue["priority"],
     labels: row.labelIds.map(name => ({ id: name, name, color: "#64748b" })),
     issueType: row.issueType ?? undefined,
@@ -347,6 +348,9 @@ export function createIssuesService(database: Database) {
     if (input.issueType !== undefined && !ISSUE_TYPES.includes(input.issueType)) {
       throw new MegaBadRequestError("Invalid issue type");
     }
+    if (input.workflowStatus !== undefined && !ISSUE_WORKFLOW_STATUSES.includes(input.workflowStatus)) {
+      throw new MegaBadRequestError("Invalid issue workflow status");
+    }
     const normalizeNames = (values: string[] = []) => {
       const names = values.map(value => value.trim());
       if (names.length > 32 || names.some(name => !name || name.length > 80)) {
@@ -378,6 +382,7 @@ export function createIssuesService(database: Database) {
         number: nextNumber,
         title,
         state: megaIssueStates.OPEN,
+        workflowStatus: input.workflowStatus ?? "backlog",
         priority,
         packageId,
         authorId,

@@ -4,6 +4,7 @@ import { MEGA_RADIUS_TOKENS, MEGA_SPACING_TOKENS, MEGA_TOKENS } from "@megaui/ui
 
 import { ISSUE_REACTION_EMOJIS } from "../lib/issue-reactions";
 import type { IssueBodySaveState } from "../hooks/use-issue-body-editor";
+import { IssueMarkdown } from "../../components/issue-markdown";
 
 interface IssueBodyPanelProps {
   readonly addReactionLabel: string;
@@ -116,12 +117,9 @@ export function IssueBodyPanel({
           value={bodyDraft}
         />
       ) : (
-        <p
-          data-mega-issues="body-text"
-          style={{ margin: `${MEGA_SPACING_TOKENS[6]} 0 0`, whiteSpace: "pre-wrap" }}
-        >
-          {issue.body?.trim() ? issue.body : emptyLabel}
-        </p>
+        <div data-mega-issues="body-text" style={{ margin: `${MEGA_SPACING_TOKENS[6]} 0 0` }}>
+          {issue.body?.trim() ? <IssueMarkdown text={issue.body} /> : emptyLabel}
+        </div>
       )}
       {canReact || issue.reactions.length > 0 ? (
         <div data-mega-issues="issue-reactions" style={{ marginTop: MEGA_SPACING_TOKENS[8] }}>

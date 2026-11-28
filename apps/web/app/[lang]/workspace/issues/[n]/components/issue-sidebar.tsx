@@ -19,6 +19,7 @@ export function IssueSidebar({
   const { t } = useTranslation();
   const labels = t.workspace.issues.properties;
   const properties = [
+    [t.workspace.issues.create.status, issue.workflowStatus && t.workspace.issues.create.statuses[issue.workflowStatus]],
     [labels.assignees, issue.assignees.map(user => user.displayName).join(", ")],
     [labels.labels, issue.labels.map(label => label.name).join(", ")],
     [labels.type, issue.issueType && labels.types[issue.issueType]],

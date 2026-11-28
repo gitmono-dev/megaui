@@ -49,8 +49,8 @@ export function IssueProperties({ value, onChange, disabled }: {
         summary={value.issueType ? text.types[value.issueType] : text.noType} selected={value.issueType ? [value.issueType] : []}
         choices={ISSUE_TYPES.map(id => ({ id, name: text.types[id], description: text.typeDescriptions[id], marker: id }))}
         onPick={id => change({ issueType: ISSUE_TYPES.find(type => type === id && type !== value.issueType) })} />
-      <PropertyPicker {...popup("fields")} title={text.fields} placeholder={text.filterPriorities}
-        summary={value.priority ? `${text.priority} · ${value.priority}` : ""} selected={[value.priority ?? ""]}
+      <PropertyPicker {...popup("fields")} title={text.priority} placeholder={text.filterPriorities}
+        summary={value.priority ?? ""} selected={[value.priority ?? ""]}
         choices={[{ id: "", name: `${text.defaultPriority} (P2)` }, ...namedChoices([...MEGA_ISSUE_PRIORITIES])]}
         onPick={id => change({ priority: MEGA_ISSUE_PRIORITIES.find(priority => priority === id) })} />
       <PropertyPicker {...popup("projects")} title={text.projects} placeholder={text.filterProjects} multiple allowNew status={status}

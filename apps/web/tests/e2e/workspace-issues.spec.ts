@@ -305,7 +305,7 @@ test.describe("workspace issues (WA-11)", () => {
     await expect(page).toHaveURL(/\/issues\/new$/);
     const form = page.locator('[data-mega-issues="create"]');
     await expect(form.getByRole("heading")).toHaveText("新建议题");
-    await expect(form.locator("input:visible, textarea:visible, select:visible")).toHaveCount(2);
+    await expect(form.locator("input:visible, textarea:visible, select:visible")).toHaveCount(3);
     const widths = await form.evaluate(el => [el.clientWidth, el.parentElement!.clientWidth]);
     expect(widths[0]).toBe(widths[1]);
     const submit = form.getByRole("button", { name: "创建议题" });
@@ -320,6 +320,32 @@ test.describe("workspace issues (WA-11)", () => {
     await submit.click();
     expect((await sent).postDataJSON()).toEqual({ title: "Review new issue", body: "First line\nSecond line" });
     await expect(page).toHaveURL(/\/issues\/99$/);
+  });
+
+  test("composer sets status, formats Markdown, uploads files and creates another issue", async ({ page }) => {
+    await stubIssuesApis(page);
+    await page.route("**/api/upload?purpose=attachment", async route => {
+      await route.fulfill({ status: 200, json: { data: { url: "https://example.com/attachment.png" } } });
+    });
+    await page.goto("/zh-CN/workspace/issues/new");
+    await page.getByRole("button", { name: "状态: 待规划" }).click();
+    await page.getByRole("button", { name: "进行中", exact: true }).click();
+    await page.getByLabel("标题", { exact: true }).fill("First issue");
+    const body = page.getByRole("textbox", { name: "描述（可选）" });
+    await body.fill("Important");
+    await body.selectText();
+    await page.getByRole("button", { name: "粗体" }).click();
+    await expect(body).toHaveValue("**Important**");
+    await page.locator('input[type="file"]').setInputFiles({ name: "attachment.png", mimeType: "image/png", buffer: Buffer.from("png") });
+    await expect(body).toHaveValue(/attachment\.png/);
+    await page.getByRole("button", { name: "预览" }).click();
+    await expect(page.locator('[data-mega-issues="create"] strong')).toHaveText("Important");
+    await page.getByLabel("继续创建").check();
+    const sent = page.waitForRequest(request => request.method() === "POST" && new URL(request.url()).pathname === "/api/mega/issues");
+    await page.getByRole("button", { name: "创建议题" }).click();
+    expect((await sent).postDataJSON()).toMatchObject({ title: "First issue", workflowStatus: "in_progress" });
+    await expect(page).toHaveURL(/\/issues\/new$/);
+    await expect(page.getByLabel("标题", { exact: true })).toHaveValue("");
   });
 
   test("creates and reloads an issue with sidebar properties", async ({ page }) => {
@@ -339,7 +365,7 @@ test.describe("workspace issues (WA-11)", () => {
     await page.getByRole("button", { name: "添加「界面」" }).click();
     await open("类型");
     await page.getByRole("button", { name: /缺陷/ }).click();
-    await open("字段");
+    await open("优先级");
     await page.getByRole("button", { name: "P1" }).click();
     await open("项目");
     await page.getByLabel("筛选或添加项目").fill("工作台");
