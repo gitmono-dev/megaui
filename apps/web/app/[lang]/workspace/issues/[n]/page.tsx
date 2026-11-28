@@ -4,8 +4,9 @@
 // reactions, comments, state transitions, and watch behavior through the BFF.
 "use client";
 
-import { useParams } from "next/navigation";
-import { useState } from "react";
+import { useParams, useRouter } from "next/navigation";
+import { isCLPublicId, isLegacyCLNumber } from "@megaui/core";
+import { useEffect, useState } from "react";
 
 import { MegaApiError } from "@megaui/ui/query";
 import { MEGA_RADIUS_TOKENS, MEGA_SPACING_TOKENS, MEGA_TOKENS } from "@megaui/ui/tokens";
@@ -26,16 +27,18 @@ import { IssueTimeline } from "./components/issue-timeline";
 import { useIssueBodyEditor } from "./hooks/use-issue-body-editor";
 import { useIssueDetailData } from "./hooks/use-issue-detail-data";
 import { issueErrorMessage } from "./lib/issue-error-message";
+import styles from "./issue-detail.module.css";
 
 export default function IssueDetailPage() {
   const params = useParams<{ n: string }>();
+  const router = useRouter();
   const { locale, t } = useTranslation();
   const { data: session } = authClient.useSession();
   const issuesText = t.workspace.issues;
   const detail = issuesText.detail;
   const workspaceBase = `/${locale}/workspace`;
-  const issueNumber = Number(params?.n);
-  const validNumber = Number.isInteger(issueNumber) && issueNumber > 0;
+  const issueNumber = params?.n ?? "";
+  const validNumber = isCLPublicId(issueNumber) || isLegacyCLNumber(issueNumber);
   const [commentDraft, setCommentDraft] = useState("");
   const [toast, setToast] = useState<{
     readonly message: string;
@@ -52,6 +55,12 @@ export default function IssueDetailPage() {
     sessionUserId,
     validNumber,
   });
+  useEffect(() => {
+    const publicId = data.issueQuery.data?.publicId;
+    if (isLegacyCLNumber(issueNumber) && publicId) {
+      router.replace(`${workspaceBase}/issues/${publicId}${window.location.search}${window.location.hash}`);
+    }
+  }, [data.issueQuery.data?.publicId, issueNumber, router, workspaceBase]);
   const bodyEditor = useIssueBodyEditor({
     issueBody: data.issueQuery.data?.body,
     issueNumber,
@@ -103,9 +112,7 @@ export default function IssueDetailPage() {
   return (
     <main
       data-mega-issues="detail"
-      style={{
-        padding: `calc(${MEGA_SPACING_TOKENS[8]} * 2) calc(${MEGA_SPACING_TOKENS[8]} * 3.5)`,
-      }}
+      className={styles.page}
     >
       {toast ? (
         <div
@@ -137,6 +144,8 @@ export default function IssueDetailPage() {
         watchingLabel={detail.header.watching}
         workspaceBase={workspaceBase}
       />
+      <div className={styles.layout}>
+      <div className={styles.conversation}>
       <IssueBodyPanel
         addReactionLabel={detail.timeline.addReaction}
         autoSaveHint={detail.body.autoSaveHint}
@@ -195,12 +204,14 @@ export default function IssueDetailPage() {
           submittingLabel={detail.composer.submitting}
         />
       ) : null}
+      </div>
       <IssueSidebar
         issue={issue}
         linkedClsLabel={detail.sidebar.linkedCls}
         noneLabel={detail.sidebar.none}
         packageLabel={detail.sidebar.package}
       />
+      </div>
     </main>
   );
 }

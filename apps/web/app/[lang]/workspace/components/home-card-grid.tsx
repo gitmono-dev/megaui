@@ -110,8 +110,8 @@ export function HomeCardGrid({
         {cards.assignedIssues.length === 0
           ? labels.assignedIssues.empty
           : cards.assignedIssues.map((issue) => (
-              <Link href={`${workspaceBase}/issues/${issue.number}`} key={issue.number} style={{ display: "block", marginBottom: MEGA_SPACING_TOKENS[6] }}>
-                #{issue.number} {issue.title}
+              <Link href={`${workspaceBase}/issues/${issue.publicId ?? issue.number}`} key={issue.number} style={{ display: "block", marginBottom: MEGA_SPACING_TOKENS[6] }}>
+                {issue.publicId ?? `#${issue.number}`} {issue.title}
               </Link>
             ))}
       </Card>

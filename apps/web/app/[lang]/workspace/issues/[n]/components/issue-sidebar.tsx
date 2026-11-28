@@ -1,5 +1,6 @@
+import Link from "next/link";
 import type { Issue } from "@megaui/core";
-import { MEGA_RADIUS_TOKENS, MEGA_SPACING_TOKENS, MEGA_TOKENS } from "@megaui/ui/tokens";
+import { MEGA_SPACING_TOKENS, MEGA_TOKENS } from "@megaui/ui/tokens";
 
 import { useTranslation } from "@/hooks/use-translation";
 
@@ -16,7 +17,7 @@ export function IssueSidebar({
   noneLabel,
   packageLabel,
 }: IssueSidebarProps) {
-  const { t } = useTranslation();
+  const { t, locale } = useTranslation();
   const labels = t.workspace.issues.properties;
   const properties = [
     [t.workspace.issues.create.status, issue.workflowStatus && t.workspace.issues.create.statuses[issue.workflowStatus]],
@@ -31,15 +32,13 @@ export function IssueSidebar({
     <aside
       data-mega-issues="sidebar"
       style={{
-        border: `1px solid ${MEGA_TOKENS.border}`,
-        borderRadius: MEGA_RADIUS_TOKENS.md,
         marginTop: `calc(${MEGA_SPACING_TOKENS[8]} * 2)`,
         padding: MEGA_SPACING_TOKENS[8],
       }}
     >
-      <dl style={{ margin: 0, display: "grid", gridTemplateColumns: "auto minmax(0, 1fr)", gap: "4px 12px", overflowWrap: "anywhere" }}>
-        {properties.filter(([, value]) => value).map(([name, value]) => (
-          <div key={name} style={{ display: "contents" }}><dt>{name}</dt><dd style={{ margin: 0 }}>{value}</dd></div>
+      <dl style={{ margin: 0, overflowWrap: "anywhere" }}>
+        {properties.map(([name, value]) => (
+          <div key={name} style={{ borderBottom: `1px solid ${MEGA_TOKENS.border}`, padding: "12px 0" }}><dt style={{ color: MEGA_TOKENS.muted, fontWeight: 600 }}>{name}</dt><dd style={{ margin: "8px 0 0" }}>{value || noneLabel}</dd></div>
         ))}
       </dl>
       {issue.packageId && <p style={{ margin: 0 }}>
@@ -48,7 +47,7 @@ export function IssueSidebar({
       <p style={{ margin: `${MEGA_SPACING_TOKENS[6]} 0 0` }}>
         <strong>{linkedClsLabel}</strong>:{" "}
         {issue.linkedClPublicIds?.length
-          ? issue.linkedClPublicIds.join(", ")
+          ? issue.linkedClPublicIds.map((id, index) => <span key={id}>{index > 0 && ", "}<Link style={{ color: "var(--mega-doc-link)" }} href={`/${locale}/workspace/cls/${id}`}>{id}</Link></span>)
           : noneLabel}
       </p>
       <p data-mega-issues="watchers" style={{ margin: `${MEGA_SPACING_TOKENS[6]} 0 0` }}>

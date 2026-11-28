@@ -66,7 +66,7 @@ export function IssueComposer({ listQuery }: { listQuery: string }) {
       void client.invalidateQueries({ queryKey: ["issue-property-options"] });
       if (createMore) {
         setTitle(""); setBody(""); setProperties({}); setPreview(false); create.reset();
-      } else router.replace(`${list}/${issue.number}`);
+      } else router.replace(`${list}/${issue.publicId ?? issue.number}`);
     },
   });
   const saving = create.isPending || create.isSuccess || uploading;

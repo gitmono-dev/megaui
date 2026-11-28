@@ -74,6 +74,33 @@ describe("IB-02 mega issues body BFF contract", () => {
     expect(emptyBody.data).toEqual({ body: "" });
   });
 
+  it("accepts the public issue code for detail, body, and comments", async () => {
+    const number = await createIssue(`public-code-${Date.now()}`, "Original");
+    const numeric = await GET(authedRequest(`/issues/${number}`, sessionCookieHeader), {
+      params: Promise.resolve({ segments: ["issues", String(number)] }),
+    });
+    const numericPayload: unknown = await numeric.json();
+    assertMegaSuccessEnvelope(numericPayload);
+    const publicId = (numericPayload.data as { publicId: string }).publicId;
+    expect(publicId).toMatch(/^[A-Za-z0-9]{12}$/);
+    const detail = await GET(authedRequest(`/issues/${publicId}`, sessionCookieHeader), {
+      params: Promise.resolve({ segments: ["issues", publicId] }),
+    });
+    const detailPayload: unknown = await detail.json();
+    assertMegaSuccessEnvelope(detailPayload);
+    expect(detailPayload.data).toMatchObject({ number, publicId });
+    const comment = await POST(authedRequest(`/issues/${publicId}/comments`, sessionCookieHeader, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ body: "**Hello**" }),
+    }), { params: Promise.resolve({ segments: ["issues", publicId, "comments"] }) });
+    expect(comment.status).toBe(200);
+    const comments = await GET(authedRequest(`/issues/${publicId}/comments`, sessionCookieHeader), {
+      params: Promise.resolve({ segments: ["issues", publicId, "comments"] }),
+    });
+    const commentsPayload: unknown = await comments.json();
+    assertMegaSuccessEnvelope(commentsPayload);
+    expect(commentsPayload.data).toEqual(expect.arrayContaining([expect.objectContaining({ body: "**Hello**" })]));
+  });
+
   it("returns { body: saved text } when POST { body } is non-empty (new)", async () => {
     const number = await createIssue(`ib-02-post-${Date.now()}`);
     const response = await POST(

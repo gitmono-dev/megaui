@@ -17,7 +17,7 @@ interface IssueActionMessages {
 interface UseIssueDetailDataOptions {
   readonly actionMessages: IssueActionMessages;
   readonly errorMessages: MegaErrorMessages;
-  readonly issueNumber: number;
+  readonly issueNumber: string;
   readonly sessionUserId: string | undefined;
   readonly validNumber: boolean;
   readonly onCommentAdded: () => void;

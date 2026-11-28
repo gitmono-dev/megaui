@@ -2,8 +2,9 @@
 //
 // Ported for PK-05 (REF-07). SaaS tables intentionally omitted at package scope.
 import type { IssueType, IssueWorkflowStatus } from "@megaui/core";
-import { InferInsertModel, InferSelectModel } from "drizzle-orm";
+import { InferInsertModel, InferSelectModel, sql } from "drizzle-orm";
 import {
+  check,
   integer,
   jsonb,
   pgTable,
@@ -30,6 +31,7 @@ export const megaIssues = pgTable(
   {
     id: text("id").primaryKey(),
     number: integer("number").notNull(),
+    publicId: text("public_id").notNull().default(sql`substring(replace(gen_random_uuid()::text, '-', '') from 1 for 12)`),
     title: text("title").notNull(),
     state: text("state").notNull().default(megaIssueStates.OPEN),
     workflowStatus: text("workflow_status").$type<IssueWorkflowStatus>().notNull().default("backlog"),
@@ -55,7 +57,8 @@ export const megaIssues = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
-  (table) => [uniqueIndex("mega_issues_number_uidx").on(table.number)],
+  (table) => [uniqueIndex("mega_issues_number_uidx").on(table.number), uniqueIndex("mega_issues_public_id_uidx").on(table.publicId),
+    check("mega_issues_public_id_format_check", sql`${table.publicId} COLLATE "C" ~ '^[A-Za-z0-9]{12}$'`)],
 );
 
 export const megaIssueComments = pgTable("mega_issue_comments", {

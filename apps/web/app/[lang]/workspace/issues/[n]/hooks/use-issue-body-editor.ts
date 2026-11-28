@@ -8,7 +8,7 @@ export type IssueBodySaveState = "idle" | "saving" | "saved" | "error";
 
 interface UseIssueBodyEditorOptions {
   readonly issueBody: string | undefined;
-  readonly issueNumber: number;
+  readonly issueNumber: string;
   readonly onSaveError: (error: unknown) => void;
 }
 

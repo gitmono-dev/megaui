@@ -78,7 +78,10 @@ export function IssueBodyPanel({
         padding: MEGA_SPACING_TOKENS[8],
       }}
     >
-      <h2 style={{ fontSize: "1rem", fontWeight: 700, margin: 0 }}>{title}</h2>
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: "8px" }}>
+        <h2 style={{ fontSize: "1rem", fontWeight: 700, margin: 0 }}>{title}</h2>
+        <span style={{ color: MEGA_TOKENS.muted }}>{issue.author.displayName} · {issue.createdAt}</span>
+      </div>
       {canEdit ? (
         <div
           style={{

@@ -53,7 +53,7 @@
 //   lock (upstream has no race guard here at all).
 import { randomUUID } from "node:crypto";
 import type { Issue, IssueComment, IssuePropertyOptions, Milestone } from "@megaui/core";
-import { ISSUE_TYPES, ISSUE_WORKFLOW_STATUSES, ISSUE_PRIORITY_RANK, MEGA_ISSUE_PRIORITIES, matchesIssueFilter } from "@megaui/core";
+import { generateCLPublicId, isCLPublicId, isLegacyCLNumber, ISSUE_TYPES, ISSUE_WORKFLOW_STATUSES, ISSUE_PRIORITY_RANK, MEGA_ISSUE_PRIORITIES, matchesIssueFilter } from "@megaui/core";
 import {
   megaClPublicIds,
   megaContent,
@@ -70,6 +70,7 @@ import {
   MegaBadRequestError,
   MegaConflictError,
   MegaForbiddenError,
+  MegaInternalError,
   MegaNotFoundError,
   MegaUnauthorizedError,
 } from "../../errors";
@@ -185,6 +186,7 @@ async function loadIssue(database: Database, number: number, actorUserId?: strin
 
   return {
     id: row.id,
+    publicId: row.publicId,
     number: row.number,
     title: row.title,
     body,
@@ -266,6 +268,15 @@ export function createIssuesService(database: Database) {
     const sorted = sortIssues(filtered, input.filter?.sort);
     const items = sorted.slice(offset, offset + limit);
     return { items, total: sorted.length, offset, limit };
+  }
+
+  async function resolveIssueNumber(ref: string): Promise<number> {
+    if (isLegacyCLNumber(ref)) return Number(ref);
+    if (!isCLPublicId(ref)) throw new MegaBadRequestError("Invalid issue reference");
+    const [row] = await database.select({ number: megaIssues.number }).from(megaIssues)
+      .where(eq(megaIssues.publicId, ref)).limit(1);
+    if (!row) throw new MegaNotFoundError("Issue", ref);
+    return row.number;
   }
 
   async function getIssue(number: number, actorUserId?: string | null): Promise<Issue> {
@@ -377,28 +388,34 @@ export function createIssuesService(database: Database) {
           .where(and(inArray(user.id, assignees), sql`${user.banned} IS NOT TRUE`)).for("share");
         if (eligible.length !== assignees.length) throw new MegaBadRequestError("Invalid issue assignee");
       }
-      await tx.insert(megaIssues).values({
-        id,
-        number: nextNumber,
-        title,
-        state: megaIssueStates.OPEN,
-        workflowStatus: input.workflowStatus ?? "backlog",
-        priority,
-        packageId,
-        authorId,
-        issueType: input.issueType,
-        projects,
-        milestone: milestone ? { id: milestone, title: milestone } : null,
-        labelIds: labels,
-        assigneeIds: assignees,
-        watcherIds: [authorId],
-        linkedCLs: [],
-        reactions: [],
-        commentCount: 0,
-        closedAt: null,
-        createdAt: now,
-        updatedAt: now,
-      });
+      let inserted = false;
+      for (let attempt = 0; attempt < 8 && !inserted; attempt++) {
+        const [created] = await tx.insert(megaIssues).values({
+          id,
+          publicId: generateCLPublicId(),
+          number: nextNumber,
+          title,
+          state: megaIssueStates.OPEN,
+          workflowStatus: input.workflowStatus ?? "backlog",
+          priority,
+          packageId,
+          authorId,
+          issueType: input.issueType,
+          projects,
+          milestone: milestone ? { id: milestone, title: milestone } : null,
+          labelIds: labels,
+          assigneeIds: assignees,
+          watcherIds: [authorId],
+          linkedCLs: [],
+          reactions: [],
+          commentCount: 0,
+          closedAt: null,
+          createdAt: now,
+          updatedAt: now,
+        }).onConflictDoNothing({ target: megaIssues.publicId }).returning({ id: megaIssues.id });
+        inserted = Boolean(created);
+      }
+      if (!inserted) throw new MegaInternalError("Unable to reserve an issue identifier");
       if (bodyText) {
         await upsertPlainBody(tx, megaContentContainerTypes.ISSUE, id, bodyText, now);
       }
@@ -579,6 +596,7 @@ export function createIssuesService(database: Database) {
 
   return {
     listPropertyOptions,
+    resolveIssueNumber,
     listIssues,
     getIssue,
     getIssueBody,

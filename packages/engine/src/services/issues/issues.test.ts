@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createDatabaseClient, megaIssues } from "@megaui/database";
@@ -62,6 +63,29 @@ describe.skipIf(!adminDatabaseUrl)("createIssuesService list/state/comments/watc
     await adminPool.end();
   });
 
+  it("backfills stable distinct public codes for existing issues", async () => {
+    const { Client } = await import("pg");
+    const connection = new Client({ connectionString });
+    await connection.connect();
+    try {
+      await connection.query("CREATE SCHEMA issue_id_migration_test");
+      await connection.query("SET search_path TO issue_id_migration_test, public");
+      await connection.query("CREATE TABLE mega_issues (id text PRIMARY KEY)");
+      await connection.query("INSERT INTO mega_issues SELECT 'issue' || n FROM generate_series(1, 100) n");
+      const migration = await readFile(path.join(migrationsFolder, "0029_issue_public_id.sql"), "utf8");
+      for (const statement of migration.split("--> statement-breakpoint")) await connection.query(statement);
+      const { rows } = await connection.query<{ id: string; public_id: string }>("SELECT id, public_id FROM mega_issues ORDER BY id");
+      expect(rows).toHaveLength(100);
+      expect(new Set(rows.map(row => row.public_id)).size).toBe(100);
+      expect(rows.every(row => /^[A-Za-z0-9]{12}$/.test(row.public_id))).toBe(true);
+      await expect(connection.query("UPDATE mega_issues SET public_id = 'bad' WHERE id = 'issue1'")).rejects.toThrow();
+    } finally {
+      await connection.query("SET search_path TO public");
+      await connection.query("DROP SCHEMA IF EXISTS issue_id_migration_test CASCADE");
+      await connection.end();
+    }
+  });
+
   it("creates an issue, seeds the author as watcher, and round-trips through getIssue", async () => {
     const client = createDatabaseClient({ connectionString });
     try {
@@ -70,6 +94,11 @@ describe.skipIf(!adminDatabaseUrl)("createIssuesService list/state/comments/watc
         { title: "  New pack regression  ", packageId: "git-internal", priority: "P1", body: "Repro steps", assigneeIds: [USERS.eleanor.id], labels: ["ui", "ui"], issueType: "bug", workflowStatus: "in_progress", projects: ["Checkout"], milestoneTitle: "First release" },
         USERS.tianjing.id,
       );
+      expect(created.publicId).toMatch(/^[A-Za-z0-9]{12}$/);
+      expect(await issues.resolveIssueNumber(created.publicId!)).toBe(created.number);
+      expect(await issues.resolveIssueNumber(String(created.number))).toBe(created.number);
+      await expect(issues.resolveIssueNumber("bad_code")).rejects.toBeInstanceOf(MegaBadRequestError);
+      await expect(issues.resolveIssueNumber("XXXXXXXXXXXX")).rejects.toBeInstanceOf(MegaNotFoundError);
       expect(created.title).toBe("New pack regression");
       expect(created.state).toBe("open");
       expect(created.priority).toBe("P1");

@@ -59,9 +59,9 @@ export function IssueDetailHeader({
       >
         <h1
           data-mega-issues="detail-title"
-          style={{ fontSize: "1.25rem", fontWeight: 700, margin: 0 }}
+          style={{ fontSize: "1.75rem", fontWeight: 700, margin: 0 }}
         >
-          #{issue.number} {issue.title}
+          {issue.title} <span style={{ color: MEGA_TOKENS.muted, fontWeight: 400 }}>{issue.publicId ?? `#${issue.number}`}</span>
         </h1>
         <span data-mega-issues="state-pill" data-state={issue.state}>
           {issue.state === "open" ? openLabel : closedLabel}

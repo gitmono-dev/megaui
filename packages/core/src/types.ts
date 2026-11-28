@@ -172,6 +172,7 @@ export interface IssuePropertyOptions {
 
 export interface Issue {
   id: string
+  publicId?: string
   number: number
   title: string
   body?: string

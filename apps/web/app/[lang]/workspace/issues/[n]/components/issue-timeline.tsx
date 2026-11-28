@@ -2,6 +2,7 @@ import type { IssueComment } from "@megaui/core";
 import { CommentThread } from "@megaui/ui/composites";
 import { MEGA_SPACING_TOKENS } from "@megaui/ui/tokens";
 
+import { IssueMarkdown } from "../../components/issue-markdown";
 import { ISSUE_REACTION_EMOJIS } from "../lib/issue-reactions";
 
 interface IssueTimelineProps {
@@ -58,7 +59,7 @@ export function IssueTimeline({
         >
           <CommentThread
             author={comment.author}
-            body={comment.body}
+            body={<IssueMarkdown text={comment.body} />}
             id={comment.id}
             reactions={
               canReact || comment.reactions.length > 0

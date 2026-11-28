@@ -40,7 +40,7 @@ export interface HomeDashboard {
       author: User;
     }[];
     recentCls: readonly Pick<CL, "publicId" | "title">[];
-    assignedIssues: readonly { number: number; title: string; priority: string }[];
+    assignedIssues: readonly { number: number; publicId?: string; title: string; priority: string }[];
     activity: readonly {
       id: string;
       actorName: string;
@@ -160,6 +160,7 @@ export async function getHomeDashboard(actorUserId: string | null, headers: Head
       recentCls: orderedCLs.slice(0, 3).map(({ publicId, title }) => ({ publicId, title })),
       assignedIssues: assignedIssues.slice(0, 3).map((issue) => ({
         number: issue.number,
+        publicId: issue.publicId,
         title: issue.title,
         priority: issue.priority,
       })),
@@ -212,7 +213,7 @@ export async function getHomeDashboard(actorUserId: string | null, headers: Head
         firstIssue && {
           id: `issue_${firstIssue.number}`,
           kind: "issue" as const,
-          href: `/workspace/issues/${firstIssue.number}`,
+          href: `/workspace/issues/${firstIssue.publicId ?? firstIssue.number}`,
         },
         firstReview && {
           id: `cl_${firstReview.number}`,

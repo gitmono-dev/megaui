@@ -13,7 +13,6 @@ import {
   invalidRoute,
   only,
   readJsonQuery,
-  segmentNumber,
   segmentText,
 } from "./shared";
 import { z } from "zod";
@@ -43,13 +42,13 @@ async function dispatchIssuesGet(context: MegaDispatchContext): Promise<unknown>
     return issues.listPropertyOptions(actorUserId);
   }
   if (segments[0] === "issues" && segments.length === 2) {
-    return issues.getIssue(segmentNumber(segments[1]), actorUserId);
+    return issues.getIssue(await issues.resolveIssueNumber(segmentText(segments[1])), actorUserId);
   }
   if (segments[0] === "issues" && segments[2] === "body" && segments.length === 3) {
-    return issues.getIssueBody(segmentNumber(segments[1]));
+    return issues.getIssueBody(await issues.resolveIssueNumber(segmentText(segments[1])));
   }
   if (segments[0] === "issues" && segments[2] === "comments" && segments.length === 3) {
-    return issues.listIssueComments(segmentNumber(segments[1]), actorUserId);
+    return issues.listIssueComments(await issues.resolveIssueNumber(segmentText(segments[1])), actorUserId);
   }
 
   return invalidRoute(segments);
@@ -64,18 +63,18 @@ async function dispatchIssuesPost(context: MegaDispatchContext): Promise<unknown
     return issues.createIssue(createIssueSchema.parse(body), actorUserId);
   }
   if (segments[0] === "issues" && segments[2] === "body" && segments.length === 3) {
-    const issueNumber = segmentNumber(segments[1]);
+    const issueNumber = await issues.resolveIssueNumber(segmentText(segments[1]));
     const savedBody = z.object({ body: z.string().trim().min(1) }).parse(body).body;
     return issues.saveIssueBody(issueNumber, savedBody, actorUserId);
   }
   if (segments[0] === "issues" && segments[2] === "comments" && segments.length === 3) {
-    const issueNumber = segmentNumber(segments[1]);
+    const issueNumber = await issues.resolveIssueNumber(segmentText(segments[1]));
     const commentBody = z.object({ body: z.string().trim().min(1) }).parse(body).body;
     return issues.addIssueComment(issueNumber, commentBody, actorUserId);
   }
   if (segments[0] === "issues" && segments[2] === "reactions" && segments.length === 3) {
     return issues.toggleIssueReaction(
-      segmentNumber(segments[1]),
+      await issues.resolveIssueNumber(segmentText(segments[1])),
       reactionEmojiSchema.parse(body).emoji,
       actorUserId,
     );
@@ -88,13 +87,13 @@ async function dispatchIssuesPost(context: MegaDispatchContext): Promise<unknown
     );
   }
   if (segments[0] === "issues" && segments[2] === "close" && segments.length === 3) {
-    return issues.closeIssue(segmentNumber(segments[1]), actorUserId);
+    return issues.closeIssue(await issues.resolveIssueNumber(segmentText(segments[1])), actorUserId);
   }
   if (segments[0] === "issues" && segments[2] === "reopen" && segments.length === 3) {
-    return issues.reopenIssue(segmentNumber(segments[1]), actorUserId);
+    return issues.reopenIssue(await issues.resolveIssueNumber(segmentText(segments[1])), actorUserId);
   }
   if (segments[0] === "issues" && segments[2] === "watch" && segments.length === 3) {
-    return issues.toggleIssueWatch(segmentNumber(segments[1]), actorUserId);
+    return issues.toggleIssueWatch(await issues.resolveIssueNumber(segmentText(segments[1])), actorUserId);
   }
 
   return invalidRoute(segments);

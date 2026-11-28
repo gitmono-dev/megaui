@@ -75,9 +75,9 @@ function mapSearchToGroups(
       heading: groupLabels.issues,
       items: data.issues.map((issue) => ({
         key: `issue-${issue.id}`,
-        href: `${workspaceBase}/issues/${issue.number}`,
+        href: `${workspaceBase}/issues/${issue.publicId ?? issue.number}`,
         icon: "bug" as const,
-        label: `#${issue.number} ${issue.title}`,
+        label: `${issue.publicId ?? `#${issue.number}`} ${issue.title}`,
         value: `issue-${issue.number}`,
       })),
     });

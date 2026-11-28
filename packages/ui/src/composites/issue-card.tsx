@@ -17,7 +17,7 @@ import { Badge } from "../ui/badge"
 import { Skeleton } from "../ui/skeleton"
 
 export type IssueSummary = Pick<Issue, "author" | "number" | "state" | "title"> &
-  Partial<Pick<Issue, "labels" | "priority">>
+  Partial<Pick<Issue, "labels" | "priority" | "publicId">>
 
 export interface IssueCardProps {
   actions?: ReactNode
@@ -95,7 +95,7 @@ export function IssueCard({
         data-issue-variant={variant}
         data-slot="issue-card"
       >
-        <span className="shrink-0 font-mono text-xs font-bold text-muted-foreground">#{issue.number}</span>
+        <span className="shrink-0 font-mono text-xs font-bold text-muted-foreground">{issue.publicId ?? `#${issue.number}`}</span>
         <a
           className="min-w-0 flex-1 truncate text-sm font-medium hover:underline"
           href={href}
@@ -123,7 +123,7 @@ export function IssueCard({
       data-slot="issue-card"
     >
       <header className="flex flex-wrap items-center gap-2">
-        <span className="font-mono text-xs font-bold text-muted-foreground">#{issue.number}</span>
+        <span className="font-mono text-xs font-bold text-muted-foreground">{issue.publicId ?? `#${issue.number}`}</span>
         <Badge className={cn(issueStateBadgeClassName[issue.state])} data-issue-state={issue.state}>
           {stateLabel}
         </Badge>

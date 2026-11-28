@@ -60,7 +60,7 @@ export interface WorkspaceSearchBodyResults {
 }
 
 export interface WorkspaceSearchResults {
-  issues: readonly Pick<Issue, "id" | "number" | "title" | "state">[];
+  issues: readonly Pick<Issue, "id" | "number" | "publicId" | "title" | "state">[];
   cls: readonly Pick<CL, "id" | "number" | "publicId" | "title" | "state">[];
   docs: readonly Pick<Doc, "id" | "title" | "updatedAt">[];
   files: [];
@@ -328,6 +328,7 @@ async function searchWorkspaceTitles(
       .map(({ item }) => ({
         id: item.id,
         number: item.number,
+        publicId: item.publicId,
         title: item.title,
         state: item.state,
       })),

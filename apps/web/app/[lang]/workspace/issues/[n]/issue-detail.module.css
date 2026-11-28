@@ -1,0 +1,5 @@
+.page { padding: 32px; }
+.layout { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 32px; align-items: start; }
+.conversation { min-width: 0; }
+@media (max-width: 900px) { .layout { grid-template-columns: minmax(0, 1fr); gap: 0; } }
+@media (max-width: 600px) { .page { padding: 16px; } }

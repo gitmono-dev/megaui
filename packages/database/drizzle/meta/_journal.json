@@ -204,6 +204,13 @@
       "when": 1795837473956,
       "tag": "0028_issue_workflow_status",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1795841071704,
+      "tag": "0029_issue_public_id",
+      "breakpoints": true
     }
   ]
 }

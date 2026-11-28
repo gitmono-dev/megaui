@@ -1,3 +1,6 @@
+import { useState } from "react";
+import { useTranslation } from "@/hooks/use-translation";
+import { IssueMarkdown } from "../../components/issue-markdown";
 import { MEGA_RADIUS_TOKENS, MEGA_SPACING_TOKENS, MEGA_TOKENS } from "@megaui/ui/tokens";
 
 interface IssueCommentComposerProps {
@@ -33,6 +36,8 @@ export function IssueCommentComposer({
   onReopen,
   onSubmit,
 }: IssueCommentComposerProps) {
+  const [preview, setPreview] = useState(false);
+  const labels = useTranslation().t.workspace.issues.create;
   return (
     <section
       data-mega-issues="composer"
@@ -43,14 +48,18 @@ export function IssueCommentComposer({
         padding: MEGA_SPACING_TOKENS[8],
       }}
     >
-      <textarea
+      <div role="group" aria-label={labels.descriptionLabel} style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
+        <button type="button" aria-pressed={!preview} onClick={() => setPreview(false)}>{labels.write}</button>
+        <button type="button" aria-pressed={preview} onClick={() => setPreview(true)}>{labels.preview}</button>
+      </div>
+      {preview ? <div style={{ minHeight: "96px" }}>{comment.trim() ? <IssueMarkdown text={comment} /> : labels.emptyPreview}</div> : <textarea
         data-mega-issues="comment-draft"
         onChange={(event) => onCommentChange(event.target.value)}
         placeholder={placeholder}
         rows={4}
         style={{ width: "100%" }}
         value={comment}
-      />
+      />}
       <div
         style={{
           display: "flex",

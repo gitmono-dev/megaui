@@ -52,7 +52,7 @@ export function IssueListResults({
             <li data-mega-issues="row" key={issue.id}>
               <IssueCard
                 commentCountLabel={`${issue.commentCount}`}
-                href={`${workspaceBase}/issues/${issue.number}`}
+                href={`${workspaceBase}/issues/${issue.publicId ?? issue.number}`}
                 issue={issue}
                 priorityLabel={issue.priority}
                 stateLabel={issue.state === "open" ? issuesText.openTab : issuesText.closedTab}
