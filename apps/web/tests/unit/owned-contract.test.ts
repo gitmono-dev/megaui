@@ -462,7 +462,7 @@ describe("owned legacy BFF contracts", () => {
     } finally {
       await cleanupOwnedPaths([candidateParent]);
     }
-  }, 900_000);
+  }, 300_000);
 
   it("ignores an external target, shares its DML DB with actual mint/Auth, and preserves foreign resources", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "megaui-contract-sentinel-"));
