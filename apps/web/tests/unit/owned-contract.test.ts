@@ -75,10 +75,25 @@ function oracleIncludes(sourceRoot: string, source: string): boolean {
 }
 
 type OracleEntry = `dir:${number}` | `link:${string}` | `file:${number}:${string}` | `forbidden:${string}`;
+
+// Walk multiple directories at once without opening an unbounded number of files.
+// The installed pnpm tree has hundreds of thousands of entries on CI.
+async function walkOracleDirectories(root: string, visit: (directory: string) => Promise<string[]>): Promise<void> {
+  const pending = [root];
+  while (pending.length) {
+    const batch = pending.splice(0, 32);
+    const results = await Promise.allSettled(batch.map(visit));
+    const failures = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
+    if (failures.length) throw new AggregateError(failures.map(result => result.reason), "Oracle walk failed");
+    for (const result of results) if (result.status === "fulfilled") pending.push(...result.value);
+  }
+}
+
 async function sourceOracleManifest(root: string, destinationRoot: string): Promise<Record<string, OracleEntry>> {
   const result: Record<string, OracleEntry> = {};
   const originalRoots = [root, await realpath(root)];
-  const visit = async (directory: string): Promise<void> => {
+  await walkOracleDirectories(root, async directory => {
+    const children: string[] = [];
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       const target = path.join(directory, entry.name);
       if (!oracleIncludes(root, target)) continue;
@@ -87,7 +102,7 @@ async function sourceOracleManifest(root: string, destinationRoot: string): Prom
       if (entry.isSymbolicLink()) result[relative] = `link:${await readlink(target)}`;
       else if (entry.isDirectory()) {
         result[relative] = `dir:${metadata.mode & 0o7777}`;
-        await visit(target);
+        children.push(target);
       } else if (entry.isFile()) {
         const bytes = await readFile(target);
         let comparable = bytes;
@@ -99,14 +114,15 @@ async function sourceOracleManifest(root: string, destinationRoot: string): Prom
         result[relative] = `file:${metadata.mode & 0o7777}:${createHash("sha256").update(comparable).digest("hex")}`;
       } else throw new Error(`Oracle encountered unsupported source entry: ${relative}`);
     }
-  };
-  await visit(root);
+    return children;
+  });
   return result;
 }
 
 async function candidateOracleManifest(root: string): Promise<Record<string, OracleEntry>> {
   const result: Record<string, OracleEntry> = {};
-  const visit = async (directory: string): Promise<void> => {
+  await walkOracleDirectories(root, async directory => {
+    const children: string[] = [];
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       const target = path.join(directory, entry.name);
       const relative = path.relative(root, target);
@@ -118,14 +134,14 @@ async function candidateOracleManifest(root: string): Promise<Record<string, Ora
       if (entry.isSymbolicLink()) result[relative] = `link:${await readlink(target)}`;
       else if (entry.isDirectory()) {
         result[relative] = `dir:${metadata.mode & 0o7777}`;
-        await visit(target);
+        children.push(target);
       } else if (entry.isFile()) {
         const bytes = await readFile(target);
         result[relative] = `file:${metadata.mode & 0o7777}:${createHash("sha256").update(bytes).digest("hex")}`;
       } else throw new Error(`Oracle encountered unsupported candidate entry: ${relative}`);
     }
-  };
-  await visit(root);
+    return children;
+  });
   return result;
 }
 
@@ -446,7 +462,7 @@ describe("owned legacy BFF contracts", () => {
     } finally {
       await cleanupOwnedPaths([candidateParent]);
     }
-  }, 300_000);
+  }, 900_000);
 
   it("ignores an external target, shares its DML DB with actual mint/Auth, and preserves foreign resources", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "megaui-contract-sentinel-"));

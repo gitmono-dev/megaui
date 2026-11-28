@@ -61,9 +61,9 @@ describe("WorkspaceRail (UI-05 AC1)", () => {
     expect(rail).toHaveStyle({ width: "220px", minWidth: "220px" })
 
     const rows = container.querySelectorAll('[data-mega-control="side-nav-item"]')
-    // 7 main nav rows + 3 channels + "new channel" + 2 DMs + "new chat" = 14
+    // 8 main nav rows + 3 channels + "new channel" + 2 DMs + "new chat" = 15
     // (the profile footer link is not a SideNavItem row).
-    expect(rows.length).toBe(14)
+    expect(rows.length).toBe(15)
     for (const row of Array.from(rows)) {
       expect(row.tagName).toBe("A")
     }

@@ -1,3 +1,4 @@
+// megaui-only: persistent public change-list identifiers.
 import { generateCLPublicId, isCLReference, isLegacyCLNumber } from "@megaui/core";
 import { megaClLinks, megaClPublicIds, megaCls, type Database } from "@megaui/database";
 import { eq, max, sql } from "drizzle-orm";
