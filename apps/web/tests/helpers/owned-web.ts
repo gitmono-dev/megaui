@@ -122,19 +122,30 @@ async function enumerateCopyTasks(sourceRoot: string, destinationRoot: string): 
   return { tasks, partitions };
 }
 
-async function scanCopiedTree(root: string): Promise<{ links: string[]; launchers: string[] }> {
+async function scanCopiedTree(root: string, signal?: AbortSignal): Promise<{ links: string[]; launchers: string[] }> {
   const links: string[] = [];
   const launchers: string[] = [];
-  const scan = async (directory: string): Promise<void> => {
-    for (const entry of await readdir(directory, { withFileTypes: true })) {
-      const target = path.join(directory, entry.name);
-      const relative = path.relative(root, target);
-      if (entry.isSymbolicLink()) links.push(relative);
-      else if (entry.isDirectory()) await scan(target);
-      else if (entry.isFile() && relative.split(path.sep).includes(".bin")) launchers.push(relative);
-    }
-  };
-  await scan(root);
+  const pending = [root];
+  while (pending.length) {
+    if (signal?.aborted) throw signal.reason ?? new Error("Owned source copy aborted");
+    const batch = pending.splice(0, 32);
+    // Wait for every directory read in the batch before reporting failure, so
+    // cleanup never races in-flight filesystem operations.
+    const results = await Promise.allSettled(batch.map(async directory => {
+      const children: string[] = [];
+      for (const entry of await readdir(directory, { withFileTypes: true })) {
+        const target = path.join(directory, entry.name);
+        const relative = path.relative(root, target);
+        if (entry.isSymbolicLink()) links.push(relative);
+        else if (entry.isDirectory()) children.push(target);
+        else if (entry.isFile() && relative.split(path.sep).includes(".bin")) launchers.push(relative);
+      }
+      return children;
+    }));
+    const failures = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
+    if (failures.length) throw new AggregateError(failures.map(result => result.reason), "Owned source scan failed");
+    for (const result of results) if (result.status === "fulfilled") pending.push(...result.value);
+  }
   return { links, launchers };
 }
 
@@ -164,7 +175,7 @@ export async function copyOwnedSource(sourceRoot: string, destinationRoot: strin
     }, signal, observer));
     if (signal?.aborted) throw signal.reason ?? new Error("Owned source copy aborted");
 
-    const { links, launchers } = await timedCopyPhase(observer, "scan", () => scanCopiedTree(destinationRoot));
+    const { links, launchers } = await timedCopyPhase(observer, "scan", () => scanCopiedTree(destinationRoot, signal));
     const originalRoots = new Set([sourceRoot, await realpath(sourceRoot)]);
     await timedCopyPhase(observer, "launcher", () => runBounded(launchers, async relative => {
       const target = path.join(destinationRoot, relative);
